@@ -20,12 +20,18 @@ thiserror.workspace = true
 tokio.workspace = true
 tysel-engine.workspace = true
 tysel-engine-qjs.workspace = true
+tysel-package.workspace = true
 tysel-task.workspace = true
 tysel-capability.workspace = true
 tracing.workspace = true
+
+[[bin]]
+name = "tysel-service"
+path = "src/bin/tysel-service.rs"
 
 [dev-dependencies]
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "io-util", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "net", "io-util", "rt-multi-thread", "process"] }
+tysel-package.workspace = true
