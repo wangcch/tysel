@@ -46,6 +46,143 @@ fn secret_ref_returns_opaque_handle() {
 }
 
 #[test]
+fn text_encoder_roundtrips_utf8() {
+    let value = eval(
+        r#"(() => {
+            const bytes = new TextEncoder().encode("你好");
+            return new TextDecoder().decode(bytes);
+        })()"#,
+        config(),
+    )
+    .expect("eval");
+    assert_eq!(value, Value::String("你好".into()));
+}
+
+#[test]
+fn text_decoder_rejects_non_utf8() {
+    let value = eval(
+        r#"(() => {
+            try {
+                new TextDecoder("latin1");
+                return "accepted";
+            } catch (err) {
+                return String(err);
+            }
+        })()"#,
+        config(),
+    )
+    .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(message.contains("utf-8"), "unexpected error: {message}");
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
+fn crypto_get_random_values_fills_buffer() {
+    let value = eval(
+        r#"(() => {
+            const first = crypto.getRandomValues(new Uint8Array(16));
+            const second = crypto.getRandomValues(new Uint8Array(16));
+            return Array.from(first).join(",") !== Array.from(second).join(",");
+        })()"#,
+        config(),
+    )
+    .expect("eval");
+    assert_eq!(value, Value::Bool(true));
+}
+
+#[test]
+fn crypto_get_random_values_enforces_quota() {
+    let value = eval(
+        r#"(() => {
+            try {
+                crypto.getRandomValues(new Uint8Array(65537));
+                return "accepted";
+            } catch (err) {
+                return String(err);
+            }
+        })()"#,
+        config(),
+    )
+    .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(message.contains("QuotaExceededError"), "unexpected error: {message}");
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
+fn set_timeout_resolves_after_delay() {
+    let value = eval(
+        r#"(async () => {
+            const started = Date.now();
+            const result = await new Promise((resolve) => setTimeout(resolve, 20, "ok"));
+            if (result !== "ok") return "bad";
+            return Date.now() - started >= 15 ? "ok" : "early";
+        })()"#,
+        config(),
+    )
+    .expect("eval");
+    assert_eq!(value, Value::String("ok".into()));
+}
+
+#[test]
+fn clear_timeout_skips_callback() {
+    let value = eval(
+        r#"(async () => {
+            let fired = 0;
+            const id = setTimeout(() => { fired = 1; }, 30);
+            clearTimeout(id);
+            await tysel.sleep(50);
+            return fired;
+        })()"#,
+        config(),
+    )
+    .expect("eval");
+    assert_eq!(value, Value::Number(0.0));
+}
+
+#[test]
+fn set_interval_can_be_cleared() {
+    let value = eval(
+        r#"(async () => {
+            let n = 0;
+            await new Promise((resolve) => {
+                const id = setInterval(() => {
+                    n += 1;
+                    if (n >= 2) {
+                        clearInterval(id);
+                        resolve();
+                    }
+                }, 15);
+            });
+            return n;
+        })()"#,
+        config(),
+    )
+    .expect("eval");
+    assert_eq!(value, Value::Number(2.0));
+}
+
+#[test]
+fn await_set_timeout_does_not_consume_cpu_budget() {
+    let value = eval(
+        r#"(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 80));
+            return "ok";
+        })()"#,
+        IsolateConfig { cpu_ms_per_turn: 20, request_timeout_ms: 2_000, ..config() },
+    )
+    .expect("I/O wait should not exhaust the JS CPU budget");
+    assert_eq!(value, Value::String("ok".into()));
+}
+
+#[test]
 fn cancel_stops_pending_io() {
     let cancel = IsolateCancel::new();
     let cancel_for_eval = cancel.clone();

@@ -1,4 +1,4 @@
-use rquickjs::{Ctx, Function, IntoJs, Object, Promise};
+use rquickjs::{Ctx, Exception, Function, IntoJs, Object, Promise, TypedArray};
 use tysel_engine::{InterruptReason, Value};
 
 use crate::queue::{IoHandle, IoRequest, OpId};
@@ -57,6 +57,39 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
         "envKeys",
         Function::new(ctx.clone(), || {
             std::env::vars().map(|(key, _)| key).collect::<Vec<_>>().join(",")
+        })?,
+    )?;
+    tysel.set(
+        "_utf8Encode",
+        Function::new(ctx.clone(), |ctx, text: String| {
+            TypedArray::<u8>::new(ctx, text.into_bytes())
+        })?,
+    )?;
+    tysel.set(
+        "_utf8Decode",
+        Function::new(ctx.clone(), |ctx, bytes: TypedArray<u8>, fatal: bool| {
+            let Some(raw) = bytes.as_bytes() else {
+                return Ok(String::new());
+            };
+            if fatal {
+                String::from_utf8(raw.to_vec())
+                    .map_err(|_| Exception::throw_type(&ctx, "UTF-8 decode failed"))
+            } else {
+                Ok(String::from_utf8_lossy(raw).into_owned())
+            }
+        })?,
+    )?;
+    tysel.set(
+        "_randomBytes",
+        Function::new(ctx.clone(), |ctx, len: f64| {
+            if !len.is_finite() || len < 0.0 {
+                return Err(Exception::throw_type(&ctx, "byte length must be a number"));
+            }
+            let n = len.min(65536.0) as usize;
+            let mut buf = vec![0u8; n];
+            getrandom::fill(&mut buf)
+                .map_err(|err| Exception::throw_type(&ctx, &err.to_string()))?;
+            TypedArray::<u8>::new(ctx, buf)
         })?,
     )?;
     ctx.globals().set("tysel", tysel)?;
@@ -137,10 +170,17 @@ pub fn reject_all(ctx: &Ctx<'_>, reason: InterruptReason) -> rquickjs::Result<()
 }
 
 pub fn drop_host(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+    let _ = reset_timers(ctx);
     let globals = ctx.globals();
     globals.remove(PENDING)?;
     globals.remove("tysel")?;
     Ok(())
+}
+
+pub fn reset_timers(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        "if (typeof globalThis.__tysel_resetTimers === 'function') globalThis.__tysel_resetTimers();",
+    )
 }
 
 fn pending<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {

@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 bytes.workspace = true
+getrandom = "0.4"
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true

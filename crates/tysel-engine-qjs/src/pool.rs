@@ -181,6 +181,7 @@ fn run_worker(
             handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, &cpu);
         reactor.io.inbound.clear();
         let _ = context.with(|ctx| {
+            let _ = host::reset_timers(&ctx);
             let _ = ctx.globals().remove("__tysel_response");
             let _ = ctx.globals().remove("__tysel_result");
             Ok::<_, EngineError>(())

@@ -234,11 +234,122 @@ const BOOTSTRAP: &str = r##"
     }
   }
 
+  class TextEncoder {
+    constructor() {
+      this.encoding = "utf-8";
+    }
+    encode(input) {
+      return tysel._utf8Encode(input == null ? "" : String(input));
+    }
+  }
+
+  class TextDecoder {
+    constructor(label, options) {
+      const encoding = String(label == null ? "utf-8" : label)
+        .trim()
+        .toLowerCase()
+        .replace(/[_-]/g, "");
+      if (encoding !== "utf8") {
+        throw new RangeError("TextDecoder only supports utf-8");
+      }
+      this.encoding = "utf-8";
+      this.fatal = Boolean(options && options.fatal);
+      this.ignoreBOM = Boolean(options && options.ignoreBOM);
+    }
+    decode(input) {
+      if (input == null) return "";
+      let view;
+      if (input instanceof ArrayBuffer) view = new Uint8Array(input);
+      else if (ArrayBuffer.isView(input)) {
+        view = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+      } else {
+        throw new TypeError("expected BufferSource");
+      }
+      let text = tysel._utf8Decode(view, this.fatal);
+      if (this.ignoreBOM && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      return text;
+    }
+  }
+
+  const timers = new Map();
+  let nextTimerId = 1;
+  let timerGeneration = 0;
+
+  function scheduleTimer(fn, ms, interval, args) {
+    if (typeof fn !== "function") {
+      throw new TypeError("timer callback must be a function");
+    }
+    const id = nextTimerId++;
+    const delay = Math.max(0, Number(ms) || 0);
+    const generation = timerGeneration;
+    let cleared = false;
+    timers.set(id, () => {
+      cleared = true;
+    });
+    const tick = async () => {
+      try {
+        await tysel.sleep(delay);
+      } catch {
+        timers.delete(id);
+        return;
+      }
+      if (cleared || generation !== timerGeneration) {
+        timers.delete(id);
+        return;
+      }
+      if (interval) tick();
+      else timers.delete(id);
+      fn.apply(undefined, args);
+    };
+    tick();
+    return id;
+  }
+
+  globalThis.setTimeout = function (fn, ms) {
+    return scheduleTimer(fn, ms, false, Array.prototype.slice.call(arguments, 2));
+  };
+  globalThis.setInterval = function (fn, ms) {
+    return scheduleTimer(fn, ms, true, Array.prototype.slice.call(arguments, 2));
+  };
+  globalThis.clearTimeout = function (id) {
+    const clear = timers.get(id);
+    if (clear) {
+      clear();
+      timers.delete(id);
+    }
+  };
+  globalThis.clearInterval = globalThis.clearTimeout;
+  globalThis.__tysel_resetTimers = function () {
+    timerGeneration++;
+    timers.forEach((clear) => clear());
+    timers.clear();
+  };
+
+  globalThis.crypto = {
+    getRandomValues(typedArray) {
+      if (typedArray == null || typedArray.buffer == null) {
+        throw new TypeError("expected TypedArray");
+      }
+      const view = new Uint8Array(
+        typedArray.buffer,
+        typedArray.byteOffset,
+        typedArray.byteLength,
+      );
+      if (view.byteLength > 65536) {
+        throw new Error("QuotaExceededError");
+      }
+      view.set(tysel._randomBytes(view.byteLength));
+      return typedArray;
+    },
+  };
+
   globalThis.Headers = Headers;
   globalThis.Request = Request;
   globalThis.Response = Response;
   globalThis.URL = URL;
   globalThis.URLSearchParams = URLSearchParams;
+  globalThis.TextEncoder = TextEncoder;
+  globalThis.TextDecoder = TextDecoder;
 })();
 "##;
 

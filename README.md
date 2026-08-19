@@ -69,6 +69,8 @@ cargo run -p tysel-cli -- build --manifest tysel.toml --stub /path/to/tysel-serv
 
 Trusted-path `fetch` supports HTTP and HTTPS GET/HEAD, follows redirects (max 20), and honors isolate timeout and cancel. `tysel.httpGet(url)` is a GET wrapper. Isolated workers cannot open outbound HTTP. Request bodies are not implemented yet.
 
+`setTimeout` / `setInterval` run while the current request or eval is pending; leftover timers are dropped when the request ends. `TextEncoder` / `TextDecoder` are UTF-8 only. `crypto.getRandomValues` fills at most 65536 bytes. WebSocket and `crypto.subtle` are not implemented yet.
+
 Isolate hot-swap and `tysel run` are not implemented yet.
 
 ## License
