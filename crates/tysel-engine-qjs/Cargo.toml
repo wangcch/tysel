@@ -11,4 +11,6 @@ description = "QuickJS-ng execution engine (v0.x compatibility engine)."
 workspace = true
 
 [dependencies]
+rquickjs.workspace = true
+tokio.workspace = true
 tysel-engine.workspace = true

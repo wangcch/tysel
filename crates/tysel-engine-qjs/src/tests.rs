@@ -1,0 +1,83 @@
+use std::thread;
+use std::time::{Duration, Instant};
+
+use tysel_engine::{EngineError, InterruptReason, IsolateConfig, Value};
+
+use crate::{IsolateCancel, eval, eval_cancellable};
+
+fn config() -> IsolateConfig {
+    IsolateConfig {
+        request_timeout_ms: 2_000,
+        cpu_ms_per_turn: 50,
+        memory_limit_bytes: 8 * 1024 * 1024,
+    }
+}
+
+#[test]
+fn promise_resolves_from_rust_async_echo() {
+    let value = eval(
+        r#"
+        (async () => {
+            const first = await tysel.echo("hello");
+            const second = await tysel.sleep(10);
+            return first;
+        })()
+        "#,
+        config(),
+    )
+    .expect("eval");
+    assert_eq!(value, Value::String("hello".into()));
+}
+
+#[test]
+fn cancel_stops_pending_io() {
+    let cancel = IsolateCancel::new();
+    let cancel_for_eval = cancel.clone();
+    let started = Instant::now();
+    let handle = thread::spawn(move || {
+        eval_cancellable("(async () => tysel.sleep(5000))()", config(), cancel_for_eval)
+    });
+    thread::sleep(Duration::from_millis(30));
+    cancel.cancel();
+    let err = handle.join().expect("join").expect_err("cancelled");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(matches!(err, EngineError::Interrupted(InterruptReason::Cancelled)));
+}
+
+#[test]
+fn request_timeout_interrupts_sleep() {
+    let err = eval(
+        "(async () => tysel.sleep(5000))()",
+        IsolateConfig { request_timeout_ms: 40, ..config() },
+    )
+    .expect_err("timeout");
+    assert!(matches!(err, EngineError::Interrupted(InterruptReason::Timeout)));
+}
+
+#[test]
+fn cpu_interrupt_stops_busy_loop() {
+    let started = Instant::now();
+    let err = eval(
+        "(() => { let x = 0; for (;;) { x++; } })()",
+        IsolateConfig { cpu_ms_per_turn: 15, request_timeout_ms: 1_000, ..config() },
+    )
+    .expect_err("cpu interrupt");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(matches!(
+        err,
+        EngineError::Interrupted(InterruptReason::Timeout | InterruptReason::Cancelled)
+    ));
+}
+
+#[test]
+fn memory_limit_rejects_large_allocation() {
+    let err = eval(
+        "(() => { const chunks = []; for (let i = 0; i < 64; i++) { chunks.push(new Uint8Array(1024 * 1024)); } return chunks.length; })()",
+        IsolateConfig { memory_limit_bytes: 2 * 1024 * 1024, ..config() },
+    )
+    .expect_err("memory limit");
+    match err {
+        EngineError::Interrupted(InterruptReason::MemoryLimit) | EngineError::Isolate(_) => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+}

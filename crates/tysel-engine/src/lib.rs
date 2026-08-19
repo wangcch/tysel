@@ -18,11 +18,16 @@ pub struct HandlerId(pub u64);
 pub struct IsolateConfig {
     pub memory_limit_bytes: usize,
     pub cpu_ms_per_turn: u64,
+    pub request_timeout_ms: u64,
 }
 
 impl Default for IsolateConfig {
     fn default() -> Self {
-        Self { memory_limit_bytes: 32 * 1024 * 1024, cpu_ms_per_turn: 50 }
+        Self {
+            memory_limit_bytes: 32 * 1024 * 1024,
+            cpu_ms_per_turn: 50,
+            request_timeout_ms: 30_000,
+        }
     }
 }
 

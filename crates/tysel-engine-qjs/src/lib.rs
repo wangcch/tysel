@@ -1,20 +1,14 @@
-//! QuickJS-ng execution engine (v0.x compatibility engine).
+//! QuickJS-ng compatibility engine.
 //!
-//! This crate is a scaffolding stub. Behavior lands with the M0 spikes and later
-//! milestones in `roadmap.md`.
+//! Spike A (`roadmap.md` §26) pins a runtime to one worker thread, runs native
+//! I/O on a Tokio reactor, and posts only bounded values through a completion
+//! queue. JavaScript objects never leave the worker.
 
-#![allow(dead_code)]
+mod host;
+mod isolate;
+mod queue;
 
-pub fn crate_name() -> &'static str {
-    env!("CARGO_PKG_NAME")
-}
+pub use isolate::{IsolateCancel, eval, eval_cancellable};
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crate_is_named() {
-        assert!(!crate_name().is_empty());
-    }
-}
+mod tests;
