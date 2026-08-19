@@ -7,7 +7,7 @@ mod sourcemap;
 mod tap;
 
 pub use sourcemap::{OriginalPosition, SourceMap, identity_source_map};
-pub use tap::{PackageError, PackageManifest, Tap, TAP_VERSION};
+pub use tap::{default_max_request_bytes, PackageError, PackageManifest, TAP_VERSION, Tap};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

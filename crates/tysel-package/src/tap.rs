@@ -37,6 +37,12 @@ pub struct PackageManifest {
     pub cpu_ms_per_turn: u64,
     pub request_timeout_ms: u64,
     pub bundle_hash: String,
+    #[serde(default = "default_max_request_bytes")]
+    pub max_request_bytes: usize,
+}
+
+pub fn default_max_request_bytes() -> usize {
+    16 * 1024 * 1024
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +61,8 @@ impl Tap {
 
     pub fn encode(&self) -> Result<Vec<u8>, PackageError> {
         let manifest = serde_json::to_vec(&self.manifest)?;
-        let mut body = Vec::with_capacity(32 + manifest.len() + self.bundle.len() + self.source_map.len());
+        let mut body =
+            Vec::with_capacity(32 + manifest.len() + self.bundle.len() + self.source_map.len());
         body.extend_from_slice(TAP_MAGIC);
         body.extend_from_slice(&TAP_VERSION.to_le_bytes());
         body.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
@@ -73,9 +80,11 @@ impl Tap {
         if magic != TAP_MAGIC {
             return Err(PackageError::Invalid("missing TYSELTAP magic".into()));
         }
-        let version = u32::from_le_bytes(take(&mut rest, 4)?.try_into().map_err(|_| {
-            PackageError::Invalid("truncated version".into())
-        })?);
+        let version = u32::from_le_bytes(
+            take(&mut rest, 4)?
+                .try_into()
+                .map_err(|_| PackageError::Invalid("truncated version".into()))?,
+        );
         if version != TAP_VERSION {
             return Err(PackageError::Version(version));
         }
@@ -162,9 +171,8 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn read_u64(rest: &mut &[u8]) -> Result<u64, PackageError> {
-    let bytes: [u8; 8] = take(rest, 8)?
-        .try_into()
-        .map_err(|_| PackageError::Invalid("truncated length".into()))?;
+    let bytes: [u8; 8] =
+        take(rest, 8)?.try_into().map_err(|_| PackageError::Invalid("truncated length".into()))?;
     Ok(u64::from_le_bytes(bytes))
 }
 

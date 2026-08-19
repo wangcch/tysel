@@ -5,13 +5,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Empty};
-use hyper::body::Bytes;
 use hyper::Request;
+use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::Command;
-use tysel_package::{identity_source_map, PackageManifest, Tap};
+use tysel_package::{PackageManifest, Tap, identity_source_map};
 
 const HANDLER: &str = r#"
 export default {
@@ -37,10 +37,7 @@ export default {
 
 #[tokio::test]
 async fn unpackaged_stub_exits_without_payload() {
-    let output = Command::new(stub_exe())
-        .output()
-        .await
-        .expect("run stub");
+    let output = Command::new(stub_exe()).output().await.expect("run stub");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no tap payload"), "stderr was {stderr}");
@@ -134,6 +131,7 @@ fn package_stub() -> PathBuf {
             cpu_ms_per_turn: 200,
             request_timeout_ms: 2_000,
             bundle_hash: String::new(),
+            max_request_bytes: 16 * 1024 * 1024,
         },
         HANDLER.as_bytes().to_vec(),
         map,

@@ -93,6 +93,8 @@ pub struct Limits {
     pub max_in_flight: u32,
     #[serde(default = "default_response_mb")]
     pub max_response_mb: u32,
+    #[serde(default = "default_request_mb")]
+    pub max_request_mb: u32,
 }
 
 impl Default for Limits {
@@ -103,6 +105,7 @@ impl Default for Limits {
             request_timeout_ms: default_timeout_ms(),
             max_in_flight: default_in_flight(),
             max_response_mb: default_response_mb(),
+            max_request_mb: default_request_mb(),
         }
     }
 }
@@ -120,6 +123,9 @@ fn default_in_flight() -> u32 {
     1000
 }
 fn default_response_mb() -> u32 {
+    16
+}
+fn default_request_mb() -> u32 {
     16
 }
 

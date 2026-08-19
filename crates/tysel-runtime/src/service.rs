@@ -7,7 +7,7 @@ use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::IsolatePool;
 use tysel_package::Tap;
 
-use crate::http::{serve, HttpError};
+use crate::http::{HttpError, serve};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StubError {
@@ -28,11 +28,8 @@ pub async fn run_stub() -> Result<(), StubError> {
 }
 
 pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
-    let addr: SocketAddr = tap
-        .manifest
-        .listen
-        .parse()
-        .map_err(|_| StubError::Listen(tap.manifest.listen.clone()))?;
+    let addr: SocketAddr =
+        tap.manifest.listen.parse().map_err(|_| StubError::Listen(tap.manifest.listen.clone()))?;
     let config = IsolateConfig {
         memory_limit_bytes: tap.manifest.memory_limit_bytes,
         cpu_ms_per_turn: tap.manifest.cpu_ms_per_turn,
@@ -44,6 +41,6 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     let bound = listener.local_addr()?;
     println!("tysel listen {bound}");
     io::stdout().flush()?;
-    serve(listener, Arc::new(pool)).await?;
+    serve(listener, Arc::new(pool), tap.manifest.max_request_bytes).await?;
     Ok(())
 }

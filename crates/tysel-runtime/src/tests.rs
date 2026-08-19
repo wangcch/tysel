@@ -2,14 +2,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use http_body_util::{BodyExt, Empty};
-use hyper::body::Bytes;
 use hyper::Request;
+use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::IsolatePool;
 
-use crate::http::bind;
+use crate::http::{bind, bind_with_request_limit};
 
 const HANDLER: &str = r#"
 export default {
@@ -92,6 +92,29 @@ async fn multi_isolate_handles_concurrent_requests() {
         }
     }
     assert!(isolates.len() >= 2, "expected both isolates, got {isolates:?}");
+}
+
+#[tokio::test]
+async fn oversized_request_body_is_rejected() {
+    let pool = IsolatePool::spawn(1, HANDLER, config()).unwrap();
+    let addr =
+        bind_with_request_limit("127.0.0.1:0".parse().unwrap(), Arc::new(pool), 32).await.unwrap();
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake::<_, http_body_util::Full<Bytes>>(TokioIo::new(
+            stream,
+        ))
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/")
+        .header(hyper::header::HOST, "localhost")
+        .body(http_body_util::Full::new(Bytes::from(vec![0u8; 64])))
+        .unwrap();
+    let response = sender.send_request(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 413);
 }
 
 async fn spawn_server(workers: usize) -> std::net::SocketAddr {

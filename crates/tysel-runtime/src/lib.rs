@@ -6,8 +6,8 @@
 mod http;
 mod service;
 
-pub use http::{bind, serve, HttpError};
-pub use service::{run_stub, run_tap, StubError};
+pub use http::{HttpError, bind, bind_with_request_limit, serve};
+pub use service::{StubError, run_stub, run_tap};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Limited};
 use hyper::body::{Body, Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -14,6 +14,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tysel_engine::{EngineError, HttpRequest};
 use tysel_engine_qjs::IsolatePool;
+use tysel_package::default_max_request_bytes;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
@@ -23,9 +24,15 @@ pub enum HttpError {
     Io(#[from] std::io::Error),
     #[error("hyper: {0}")]
     Hyper(String),
+    #[error("request body exceeds {0} bytes")]
+    BodyTooLarge(usize),
 }
 
-pub async fn serve(listener: TcpListener, pool: Arc<IsolatePool>) -> Result<(), HttpError> {
+pub async fn serve(
+    listener: TcpListener,
+    pool: Arc<IsolatePool>,
+    max_request_bytes: usize,
+) -> Result<(), HttpError> {
     loop {
         let (stream, _peer) = listener.accept().await?;
         let pool = pool.clone();
@@ -33,7 +40,7 @@ pub async fn serve(listener: TcpListener, pool: Arc<IsolatePool>) -> Result<(), 
             let io = TokioIo::new(stream);
             let service = service_fn(move |request| {
                 let pool = pool.clone();
-                async move { Ok::<_, Infallible>(dispatch(pool, request).await) }
+                async move { Ok::<_, Infallible>(dispatch(pool, request, max_request_bytes).await) }
             });
             let _ = hyper::server::conn::http1::Builder::new()
                 .keep_alive(true)
@@ -44,17 +51,34 @@ pub async fn serve(listener: TcpListener, pool: Arc<IsolatePool>) -> Result<(), 
 }
 
 pub async fn bind(addr: SocketAddr, pool: Arc<IsolatePool>) -> Result<SocketAddr, HttpError> {
+    bind_with_request_limit(addr, pool, default_max_request_bytes()).await
+}
+
+pub async fn bind_with_request_limit(
+    addr: SocketAddr,
+    pool: Arc<IsolatePool>,
+    max_request_bytes: usize,
+) -> Result<SocketAddr, HttpError> {
     let listener = TcpListener::bind(addr).await?;
     let local = listener.local_addr()?;
     tokio::spawn(async move {
-        let _ = serve(listener, pool).await;
+        let _ = serve(listener, pool, max_request_bytes).await;
     });
     Ok(local)
 }
 
-async fn dispatch(pool: Arc<IsolatePool>, request: Request<Incoming>) -> Response<HttpBody> {
-    match dispatch_inner(pool, request).await {
+async fn dispatch(
+    pool: Arc<IsolatePool>,
+    request: Request<Incoming>,
+    max_request_bytes: usize,
+) -> Response<HttpBody> {
+    match dispatch_inner(pool, request, max_request_bytes).await {
         Ok(response) => response,
+        Err(HttpError::BodyTooLarge(limit)) => Response::builder()
+            .status(StatusCode::PAYLOAD_TOO_LARGE)
+            .header(hyper::header::CONTENT_TYPE, "text/plain")
+            .body(HttpBody::once(format!("request body exceeds {limit} bytes").into_bytes()))
+            .unwrap_or_else(|_| Response::new(HttpBody::once(b"payload too large".to_vec()))),
         Err(err) => {
             let body = format!("{err}");
             Response::builder()
@@ -69,38 +93,42 @@ async fn dispatch(pool: Arc<IsolatePool>, request: Request<Incoming>) -> Respons
 async fn dispatch_inner(
     pool: Arc<IsolatePool>,
     request: Request<Incoming>,
+    max_request_bytes: usize,
 ) -> Result<Response<HttpBody>, HttpError> {
     let method = request.method().as_str().to_owned();
     let uri = request.uri().clone();
     let headers = request
         .headers()
         .iter()
-        .map(|(name, value)| (name.as_str().to_owned(), String::from_utf8_lossy(value.as_bytes()).into_owned()))
+        .map(|(name, value)| {
+            (name.as_str().to_owned(), String::from_utf8_lossy(value.as_bytes()).into_owned())
+        })
         .collect();
-    let body = request
-        .into_body()
+    let body = Limited::new(request.into_body(), max_request_bytes)
         .collect()
         .await
-        .map_err(|err| HttpError::Hyper(err.to_string()))?
+        .map_err(|err| {
+            let message = err.to_string();
+            if message.to_ascii_lowercase().contains("length")
+                || message.to_ascii_lowercase().contains("limit")
+            {
+                HttpError::BodyTooLarge(max_request_bytes)
+            } else {
+                HttpError::Hyper(message)
+            }
+        })?
         .to_bytes();
     let url = uri.to_string();
-    let url = if url.starts_with('/') {
-        format!("http://tysel.local{url}")
-    } else {
-        url
-    };
+    let url = if url.starts_with('/') { format!("http://tysel.local{url}") } else { url };
 
-    let (head, chunks) = pool
-        .dispatch(HttpRequest { method, url, headers, body: body.to_vec() })
-        .await?;
+    let (head, chunks) =
+        pool.dispatch(HttpRequest { method, url, headers, body: body.to_vec() }).await?;
 
     let mut builder = Response::builder().status(head.status);
     for (name, value) in head.headers {
         builder = builder.header(name, value);
     }
-    builder
-        .body(HttpBody::stream(chunks))
-        .map_err(|err| HttpError::Hyper(err.to_string()))
+    builder.body(HttpBody::stream(chunks)).map_err(|err| HttpError::Hyper(err.to_string()))
 }
 
 pub enum HttpBody {

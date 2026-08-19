@@ -32,6 +32,7 @@ pub fn tap_from_app(
         cpu_ms_per_turn: manifest.limits.cpu_ms_per_turn,
         request_timeout_ms: manifest.limits.request_timeout_ms,
         bundle_hash: String::new(),
+        max_request_bytes: (manifest.limits.max_request_mb as usize).saturating_mul(1024 * 1024),
     };
     Tap::new(packaged, bundle, source_map)
 }
