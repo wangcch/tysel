@@ -1815,6 +1815,10 @@ dependencies = [
 name = "tysel-engine-qjs"
 version = "0.0.1"
 dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "rquickjs",
  "tokio",
  "tysel-build",

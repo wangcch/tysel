@@ -51,7 +51,7 @@ pub enum Value {
     Record(Vec<(String, Value)>),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum EngineError {
     #[error("isolate error: {0}")]
     Isolate(String),
@@ -59,6 +59,8 @@ pub enum EngineError {
     Module(String),
     #[error("interrupted: {0:?}")]
     Interrupted(InterruptReason),
+    #[error("request body exceeds limit")]
+    BodyTooLarge,
 }
 
 #[derive(Debug, Clone)]

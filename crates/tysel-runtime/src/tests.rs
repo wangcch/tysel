@@ -1,9 +1,12 @@
 use std::collections::HashSet;
+use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Empty, Full};
 use hyper::Request;
-use hyper::body::Bytes;
+use hyper::body::{Body, Bytes, Frame};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use tysel_engine::IsolateConfig;
@@ -17,6 +20,9 @@ export default {
     const path = new URL(request.url).pathname;
     if (path === "/stream") {
       return new Response(["alpha", "beta", "gamma"]);
+    }
+    if (path === "/echo") {
+      return new Response(await request.text());
     }
     return Response.json({
       message: "Hello from Tysel",
@@ -115,6 +121,66 @@ async fn oversized_request_body_is_rejected() {
         .unwrap();
     let response = sender.send_request(request).await.unwrap();
     assert_eq!(response.status().as_u16(), 413);
+}
+
+#[tokio::test]
+async fn streamed_post_body_reaches_the_handler() {
+    let addr = spawn_server(1).await;
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake::<_, Full<Bytes>>(TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(conn);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/echo")
+        .header(hyper::header::HOST, "localhost")
+        .body(Full::new(Bytes::from_static(b"hello")))
+        .unwrap();
+    let response = sender.send_request(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..], b"hello");
+}
+
+#[tokio::test]
+async fn chunked_oversized_body_is_rejected() {
+    let pool = IsolatePool::spawn(1, HANDLER, config()).unwrap();
+    let addr =
+        bind_with_request_limit("127.0.0.1:0".parse().unwrap(), Arc::new(pool), 32).await.unwrap();
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake::<_, ChunkList>(TokioIo::new(stream)).await.unwrap();
+    tokio::spawn(conn);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/echo")
+        .header(hyper::header::HOST, "localhost")
+        .header(hyper::header::TRANSFER_ENCODING, "chunked")
+        .body(ChunkList { parts: vec![Bytes::from(vec![b'x'; 16]); 4].into_iter() })
+        .unwrap();
+    let response = sender.send_request(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 413);
+}
+
+struct ChunkList {
+    parts: std::vec::IntoIter<Bytes>,
+}
+
+impl Body for ChunkList {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.get_mut().parts.next() {
+            Some(data) => Poll::Ready(Some(Ok(Frame::data(data)))),
+            None => Poll::Ready(None),
+        }
+    }
 }
 
 async fn spawn_server(workers: usize) -> std::net::SocketAddr {

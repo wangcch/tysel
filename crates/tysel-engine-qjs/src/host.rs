@@ -13,6 +13,9 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     let io_sleep = io.clone();
     let io_echo = io.clone();
     let io_secret = io.clone();
+    let io_body = io.clone();
+    let io_http_start = io.clone();
+    let io_http_read = io.clone();
     tysel.set(
         "sleep",
         Function::new(ctx.clone(), move |ctx, millis: f64| {
@@ -32,12 +35,49 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
         })?,
     )?;
     tysel.set(
+        "readBody",
+        Function::new(ctx.clone(), move |ctx| {
+            submit(ctx, &io_body, |id| IoRequest::ReadBody { id })
+        })?,
+    )?;
+    tysel.set(
+        "_httpStart",
+        Function::new(ctx.clone(), move |ctx, url: String| {
+            submit(ctx, &io_http_start, |id| IoRequest::HttpGet { id, url })
+        })?,
+    )?;
+    tysel.set(
+        "_httpRead",
+        Function::new(ctx.clone(), move |ctx| {
+            submit(ctx, &io_http_read, |id| IoRequest::HttpRead { id })
+        })?,
+    )?;
+    tysel.set(
         "envKeys",
         Function::new(ctx.clone(), || {
             std::env::vars().map(|(key, _)| key).collect::<Vec<_>>().join(",")
         })?,
     )?;
     ctx.globals().set("tysel", tysel)?;
+    ctx.eval::<(), _>(
+        r#"
+        globalThis.tysel.httpGet = async function(url) {
+          const status = await tysel._httpStart(String(url));
+          return {
+            status,
+            async text() {
+              const chunks = [];
+              for (;;) {
+                const chunk = await tysel._httpRead();
+                if (chunk == null) break;
+                chunks.push(chunk);
+              }
+              return chunks.join("");
+            },
+          };
+        };
+        "#,
+    )?;
     Ok(())
 }
 
@@ -69,7 +109,14 @@ pub fn settle(ctx: &Ctx<'_>, id: OpId, result: Result<Value, String>) -> rquickj
         }
         Err(error) => {
             if let Ok(reject) = entry.get::<_, Function>("reject") {
-                let _ = reject.call::<(String,), ()>((error,));
+                let error_ctor: Function = ctx.globals().get("Error")?;
+                if let Ok(exception) =
+                    error_ctor.call::<(String,), rquickjs::Value>((error.clone(),))
+                {
+                    let _ = reject.call::<(rquickjs::Value<'_>,), ()>((exception,));
+                } else {
+                    let _ = reject.call::<(String,), ()>((error,));
+                }
             }
         }
     }

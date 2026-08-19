@@ -122,21 +122,41 @@ const BOOTSTRAP: &str = r##"
         this.method = String(init.method || "GET").toUpperCase();
         this.headers = new Headers(init.headers);
         this.body = init.body == null ? null : init.body;
+        this._stream = init.bodyStream === true;
+        this._text = null;
       } else {
         this.url = input.url;
         this.method = String(init.method || input.method || "GET").toUpperCase();
         this.headers = new Headers(init.headers || input.headers);
         this.body = init.body == null ? input.body : init.body;
+        this._stream = init.bodyStream === true || (init.body == null && input._stream === true);
+        this._text = input._text || null;
       }
     }
     async text() {
-      return this.body == null ? "" : String(this.body);
+      if (this._text != null) return this._text;
+      if (this._stream) {
+        const chunks = [];
+        for (;;) {
+          const chunk = await tysel.readBody();
+          if (chunk == null) break;
+          chunks.push(chunk);
+        }
+        this._text = chunks.join("");
+        this._stream = false;
+        return this._text;
+      }
+      this._text = this.body == null ? "" : String(this.body);
+      return this._text;
     }
     async json() {
       const text = await this.text();
       return text ? JSON.parse(text) : null;
     }
     clone() {
+      if (this._stream) {
+        throw new TypeError("cannot clone a streaming request");
+      }
       return new Request(this.url, { method: this.method, headers: this.headers, body: this.body });
     }
   }
@@ -310,9 +330,7 @@ fn to_js_request<'js>(ctx: &Ctx<'js>, request: &HttpRequest) -> Result<Object<'j
     let factory: Function = ctx.eval("(url, init) => new Request(url, init)").map_err(js_err)?;
     let init = Object::new(ctx.clone()).map_err(js_err)?;
     init.set("method", request.method.as_str()).map_err(js_err)?;
-    if !request.body.is_empty() {
-        init.set("body", String::from_utf8_lossy(&request.body).into_owned()).map_err(js_err)?;
-    }
+    init.set("bodyStream", true).map_err(js_err)?;
     let headers = Object::new(ctx.clone()).map_err(js_err)?;
     for (key, value) in &request.headers {
         headers.set(key.as_str(), value.as_str()).map_err(js_err)?;

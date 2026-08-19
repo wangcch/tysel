@@ -11,10 +11,28 @@ use crate::cpu::CpuBudget;
 use crate::fetch;
 use crate::host;
 use crate::isolate::{self, IsolateCancel};
-use crate::queue;
+use crate::queue::{self, STREAM_WINDOW};
+
+pub struct IncomingHttp {
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: mpsc::Receiver<Result<Vec<u8>, String>>,
+}
+
+impl From<HttpRequest> for IncomingHttp {
+    fn from(request: HttpRequest) -> Self {
+        Self {
+            method: request.method,
+            url: request.url,
+            headers: request.headers,
+            body: sealed_body(request.body),
+        }
+    }
+}
 
 struct Job {
-    request: HttpRequest,
+    request: IncomingHttp,
     head_tx: oneshot::Sender<Result<HttpHead, EngineError>>,
     body_tx: mpsc::Sender<Vec<u8>>,
 }
@@ -60,8 +78,15 @@ impl IsolatePool {
         &self,
         request: HttpRequest,
     ) -> Result<(HttpHead, mpsc::Receiver<Vec<u8>>), EngineError> {
+        self.dispatch_incoming(IncomingHttp::from(request)).await
+    }
+
+    pub async fn dispatch_incoming(
+        &self,
+        request: IncomingHttp,
+    ) -> Result<(HttpHead, mpsc::Receiver<Vec<u8>>), EngineError> {
         let (head_tx, head_rx) = oneshot::channel();
-        let (body_tx, body_rx) = mpsc::channel(16);
+        let (body_tx, body_rx) = mpsc::channel(STREAM_WINDOW);
         let index = self.next.fetch_add(1, Ordering::Relaxed) % self.workers.len();
         self.workers[index]
             .send(Job { request, head_tx, body_tx })
@@ -155,6 +180,7 @@ fn run_worker(
         *budgets.lock().expect("budgets") = Budgets { cpu: cpu.clone(), request: request_deadline };
         let job_result =
             handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, &cpu);
+        reactor.io.inbound.clear();
         let _ = context.with(|ctx| {
             let _ = ctx.globals().remove("__tysel_response");
             let _ = ctx.globals().remove("__tysel_result");
@@ -175,6 +201,14 @@ fn run_worker(
     Ok(())
 }
 
+fn sealed_body(bytes: Vec<u8>) -> mpsc::Receiver<Result<Vec<u8>, String>> {
+    let (tx, rx) = mpsc::channel(1);
+    if !bytes.is_empty() {
+        let _ = tx.try_send(Ok(bytes));
+    }
+    rx
+}
+
 fn handle_job(
     runtime: &Runtime,
     context: &Context,
@@ -185,10 +219,21 @@ fn handle_job(
     cpu: &CpuBudget,
 ) -> Result<(), EngineError> {
     let Job { request, head_tx, body_tx } = job;
-    let pending = match context.with(|ctx| fetch::begin_fetch(ctx, &request)) {
+    reactor.io.inbound.install(request.body);
+    let pending = match context.with(|ctx| {
+        fetch::begin_fetch(
+            ctx,
+            &HttpRequest {
+                method: request.method,
+                url: request.url,
+                headers: request.headers,
+                body: Vec::new(),
+            },
+        )
+    }) {
         Ok(pending) => pending,
         Err(err) => {
-            let _ = head_tx.send(Err(EngineError::Isolate(err.to_string())));
+            let _ = head_tx.send(Err(err.clone()));
             return Err(err);
         }
     };
@@ -196,11 +241,11 @@ fn handle_job(
         if let Err(err) =
             isolate::wait_until_settled(runtime, context, reactor, cancel, request_deadline, cpu)
         {
-            let _ = head_tx.send(Err(EngineError::Isolate(err.to_string())));
+            let _ = head_tx.send(Err(err.clone()));
             return Err(err);
         }
         if let Err(err) = context.with(fetch::take_response_into_globals) {
-            let _ = head_tx.send(Err(EngineError::Isolate(err.to_string())));
+            let _ = head_tx.send(Err(err.clone()));
             return Err(err);
         }
     }

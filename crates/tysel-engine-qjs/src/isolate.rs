@@ -171,7 +171,11 @@ pub(crate) fn wait_until_settled(
         match reactor.completions.recv_timeout(Duration::from_millis(5)) {
             Ok(IoCompletion { id, result }) => {
                 cpu.resume();
+                let too_large = matches!(&result, Err(message) if message.contains("request body exceeds limit"));
                 context.with(|ctx| host::settle(&ctx, id, result).map_err(js_err))?;
+                if too_large {
+                    return Err(EngineError::BodyTooLarge);
+                }
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
@@ -265,6 +269,9 @@ pub(crate) fn map_eval_error(
         return EngineError::Interrupted(InterruptReason::Timeout);
     }
     let message = err.to_string();
+    if message.contains("request body exceeds limit") {
+        return EngineError::BodyTooLarge;
+    }
     if message.to_ascii_lowercase().contains("out of memory")
         || message.to_ascii_lowercase().contains("memory")
     {

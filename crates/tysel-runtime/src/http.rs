@@ -12,8 +12,8 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tysel_engine::{EngineError, HttpRequest};
-use tysel_engine_qjs::IsolatePool;
+use tysel_engine::EngineError;
+use tysel_engine_qjs::{IncomingHttp, IsolatePool, STREAM_WINDOW};
 use tysel_package::default_max_request_bytes;
 
 #[derive(Debug, thiserror::Error)]
@@ -95,6 +95,16 @@ async fn dispatch_inner(
     request: Request<Incoming>,
     max_request_bytes: usize,
 ) -> Result<Response<HttpBody>, HttpError> {
+    if let Some(len) = request
+        .headers()
+        .get(hyper::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        if len > max_request_bytes as u64 {
+            return Err(HttpError::BodyTooLarge(max_request_bytes));
+        }
+    }
     let method = request.method().as_str().to_owned();
     let uri = request.uri().clone();
     let headers = request
@@ -104,28 +114,55 @@ async fn dispatch_inner(
             (name.as_str().to_owned(), String::from_utf8_lossy(value.as_bytes()).into_owned())
         })
         .collect();
-    let body = Limited::new(request.into_body(), max_request_bytes)
-        .collect()
-        .await
-        .map_err(|err| {
-            if err.downcast_ref::<LengthLimitError>().is_some() {
-                HttpError::BodyTooLarge(max_request_bytes)
-            } else {
-                HttpError::Hyper(err.to_string())
-            }
-        })?
-        .to_bytes();
     let url = uri.to_string();
     let url = if url.starts_with('/') { format!("http://tysel.local{url}") } else { url };
+    let (tx, rx) = mpsc::channel(STREAM_WINDOW);
+    let incoming = request.into_body();
+    tokio::spawn(async move {
+        pump_request_body(Limited::new(incoming, max_request_bytes), tx).await;
+    });
 
-    let (head, chunks) =
-        pool.dispatch(HttpRequest { method, url, headers, body: body.to_vec() }).await?;
+    let (head, chunks) = match pool
+        .dispatch_incoming(IncomingHttp { method, url, headers, body: rx })
+        .await
+    {
+        Ok(pair) => pair,
+        Err(EngineError::BodyTooLarge) => return Err(HttpError::BodyTooLarge(max_request_bytes)),
+        Err(err) => return Err(err.into()),
+    };
 
     let mut builder = Response::builder().status(head.status);
     for (name, value) in head.headers {
         builder = builder.header(name, value);
     }
     builder.body(HttpBody::stream(chunks)).map_err(|err| HttpError::Hyper(err.to_string()))
+}
+
+async fn pump_request_body(mut body: Limited<Incoming>, tx: mpsc::Sender<Result<Vec<u8>, String>>) {
+    loop {
+        match body.frame().await {
+            Some(Ok(frame)) => {
+                if let Ok(data) = frame.into_data() {
+                    if data.is_empty() {
+                        continue;
+                    }
+                    if tx.send(Ok(data.to_vec())).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            Some(Err(err)) => {
+                let message = if err.downcast_ref::<LengthLimitError>().is_some() {
+                    EngineError::BodyTooLarge.to_string()
+                } else {
+                    err.to_string()
+                };
+                let _ = tx.send(Err(message)).await;
+                return;
+            }
+            None => return,
+        }
+    }
 }
 
 pub enum HttpBody {

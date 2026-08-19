@@ -95,7 +95,16 @@ fn eval_source(
                         let _ = complete_caps.send(IoCompletion { id, result });
                     }
                     other => {
-                        let _ = write_locked(&stdout_caps, &cap_call(&other));
+                        if let Some(message) = cap_call(&other) {
+                            let _ = write_locked(&stdout_caps, &message);
+                        } else {
+                            let _ = complete_caps.send(IoCompletion {
+                                id: other.id(),
+                                result: Err(
+                                    "capability is not available in the isolated worker".into()
+                                ),
+                            });
+                        }
                     }
                 }
             }
@@ -167,19 +176,20 @@ fn wait_interruptible(
     }
 }
 
-fn cap_call(request: &IoRequest) -> Message {
+fn cap_call(request: &IoRequest) -> Option<Message> {
     match request {
         IoRequest::Sleep { .. } => unreachable!("sleep stays in the worker"),
-        IoRequest::Echo { id, value } => Message::CapCall {
+        IoRequest::Echo { id, value } => Some(Message::CapCall {
             id: id.0,
             op: "echo".into(),
             args: vec![WireValue::String { v: value.clone() }],
-        },
-        IoRequest::SecretRef { id, name } => Message::CapCall {
+        }),
+        IoRequest::SecretRef { id, name } => Some(Message::CapCall {
             id: id.0,
             op: "secret.ref".into(),
             args: vec![WireValue::String { v: name.clone() }],
-        },
+        }),
+        IoRequest::ReadBody { .. } | IoRequest::HttpGet { .. } | IoRequest::HttpRead { .. } => None,
     }
 }
 
