@@ -1,20 +1,15 @@
 //! Supervisor, reactor, and trusted-service data plane.
 //!
-//! This crate is a scaffolding stub. Behavior lands with the M0 spikes and later
-//! milestones in `roadmap.md`.
+//! Spike B owns the native HTTP listener and dispatches each request to a
+//! QuickJS fetch handler through `tysel-engine-qjs`.
 
-#![allow(dead_code)]
+mod http;
+
+pub use http::{bind, serve, HttpError};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crate_is_named() {
-        assert!(!crate_name().is_empty());
-    }
-}
+mod tests;

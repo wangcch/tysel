@@ -11,7 +11,21 @@ description = "Supervisor, reactor, and trusted-service data plane."
 workspace = true
 
 [dependencies]
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 tysel-engine.workspace = true
+tysel-engine-qjs.workspace = true
 tysel-task.workspace = true
 tysel-capability.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "io-util", "rt-multi-thread"] }

@@ -1,0 +1,125 @@
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use http_body_util::{BodyExt, Empty};
+use hyper::body::Bytes;
+use hyper::Request;
+use hyper_util::rt::TokioIo;
+use tokio::net::TcpStream;
+use tysel_engine::IsolateConfig;
+use tysel_engine_qjs::IsolatePool;
+
+use crate::http::bind;
+
+const HANDLER: &str = r#"
+export default {
+  async fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/stream") {
+      return new Response(["alpha", "beta", "gamma"]);
+    }
+    return Response.json({
+      message: "Hello from Tysel",
+      path,
+      isolate: tysel.isolateId,
+    });
+  },
+};
+"#;
+
+fn config() -> IsolateConfig {
+    IsolateConfig {
+        request_timeout_ms: 2_000,
+        cpu_ms_per_turn: 200,
+        memory_limit_bytes: 8 * 1024 * 1024,
+    }
+}
+
+#[test]
+fn crate_is_named() {
+    assert!(!super::crate_name().is_empty());
+}
+
+#[tokio::test]
+async fn fetch_handler_serves_json() {
+    let addr = spawn_server(1).await;
+    let (status, body) = request(addr, "/hello").await;
+    assert_eq!(status, 200);
+    assert!(body.contains("\"path\":\"/hello\""));
+    assert!(body.contains("Hello from Tysel"));
+}
+
+#[tokio::test]
+async fn streaming_response_is_concatenated_from_chunks() {
+    let addr = spawn_server(1).await;
+    let (status, body) = request(addr, "/stream").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, "alphabetagamma");
+}
+
+#[tokio::test]
+async fn keep_alive_reuses_http1_connection() {
+    let addr = spawn_server(1).await;
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake::<_, Empty<Bytes>>(TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(conn);
+    let (first_status, first) = send(&mut sender, "/one").await;
+    let (second_status, second) = send(&mut sender, "/two").await;
+    assert_eq!(first_status, 200);
+    assert_eq!(second_status, 200);
+    assert!(first.contains("/one"));
+    assert!(second.contains("/two"));
+}
+
+#[tokio::test]
+async fn multi_isolate_handles_concurrent_requests() {
+    let addr = spawn_server(2).await;
+    let mut tasks = Vec::new();
+    for _ in 0..8 {
+        tasks.push(tokio::spawn(async move { request(addr, "/hello").await.1 }));
+    }
+    let mut isolates = HashSet::new();
+    for task in tasks {
+        let body = task.await.unwrap();
+        if body.contains("\"isolate\":0") {
+            isolates.insert(0);
+        }
+        if body.contains("\"isolate\":1") {
+            isolates.insert(1);
+        }
+    }
+    assert!(isolates.len() >= 2, "expected both isolates, got {isolates:?}");
+}
+
+async fn spawn_server(workers: usize) -> std::net::SocketAddr {
+    let pool = IsolatePool::spawn(workers, HANDLER, config()).unwrap();
+    bind("127.0.0.1:0".parse().unwrap(), Arc::new(pool)).await.unwrap()
+}
+
+async fn request(addr: std::net::SocketAddr, path: &str) -> (u16, String) {
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake::<_, Empty<Bytes>>(TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(conn);
+    send(&mut sender, path).await
+}
+
+async fn send(
+    sender: &mut hyper::client::conn::http1::SendRequest<Empty<Bytes>>,
+    path: &str,
+) -> (u16, String) {
+    let request = Request::builder()
+        .uri(path)
+        .header(hyper::header::HOST, "localhost")
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let response = sender.send_request(request).await.unwrap();
+    let status = response.status().as_u16();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}

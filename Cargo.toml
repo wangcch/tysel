@@ -41,11 +41,17 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
 rquickjs = "0.12"
+bytes = "1"
+http = "1"
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 
 tysel-manifest = { path = "crates/tysel-manifest" }
 tysel-engine = { path = "crates/tysel-engine" }
+tysel-engine-qjs = { path = "crates/tysel-engine-qjs" }
 tysel-package = { path = "crates/tysel-package" }
 tysel-capability = { path = "crates/tysel-capability" }
 tysel-task = { path = "crates/tysel-task" }
