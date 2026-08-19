@@ -91,7 +91,8 @@ pub fn format_report(report: &BenchReport) -> String {
     let memory = report.idle_memory_mb();
     let size = report.artifact_mb();
     let start_ok = start <= COLD_START_MS;
-    let memory_ok = memory <= IDLE_MEMORY_MB;
+    let memory_ok =
+        memory <= IDLE_MEMORY_MB && (!cfg!(target_os = "linux") || report.memory_kind == "pss");
     let size_ok = size <= ARTIFACT_MB;
     format!(
         "§30 hello-service ({})\n\
@@ -108,9 +109,9 @@ pub fn format_report(report: &BenchReport) -> String {
 }
 
 pub fn gates_passed(report: &BenchReport) -> bool {
-    report.cold_start_p50_ms() <= COLD_START_MS
-        && report.idle_memory_mb() <= IDLE_MEMORY_MB
-        && report.artifact_mb() <= ARTIFACT_MB
+    let memory_ok = report.idle_memory_mb() <= IDLE_MEMORY_MB
+        && (!cfg!(target_os = "linux") || report.memory_kind == "pss");
+    report.cold_start_p50_ms() <= COLD_START_MS && memory_ok && report.artifact_mb() <= ARTIFACT_MB
 }
 
 fn timed_cold_start(bin: &Path) -> Result<Duration> {
@@ -153,21 +154,34 @@ fn wait_listen(child: &mut Child, timeout: Duration) -> Result<String> {
 fn process_memory_kb(pid: u32) -> Result<(u64, &'static str)> {
     #[cfg(target_os = "linux")]
     {
-        if let Ok(text) = fs::read_to_string(format!("/proc/{pid}/smaps_rollup")) {
-            for line in text.lines() {
-                if let Some(rest) = line.strip_prefix("Pss:") {
-                    let kb = rest.split_whitespace().next().context("pss value")?.parse::<u64>()?;
-                    return Ok((kb, "pss"));
-                }
-            }
+        let path = format!("/proc/{pid}/smaps_rollup");
+        let text = fs::read_to_string(&path).with_context(|| format!("read {path}"))?;
+        let kb =
+            pss_kb_from_smaps_rollup(&text).ok_or_else(|| anyhow!("Pss: missing from {path}"))?;
+        Ok((kb, "pss"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let output = Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output()?;
+        if !output.status.success() {
+            return Err(anyhow!("ps failed"));
         }
+        let kb = String::from_utf8_lossy(&output.stdout).trim().parse::<u64>()?;
+        Ok((kb, "rss"))
     }
-    let output = Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output()?;
-    if !output.status.success() {
-        return Err(anyhow!("ps failed"));
+}
+
+pub(crate) fn pss_kb_from_smaps_rollup(text: &str) -> Option<u64> {
+    for line in text.lines() {
+        let Some((key, rest)) = line.split_once(':') else {
+            continue;
+        };
+        if key != "Pss" {
+            continue;
+        }
+        return rest.split_whitespace().next()?.parse().ok();
     }
-    let kb = String::from_utf8_lossy(&output.stdout).trim().parse::<u64>()?;
-    Ok((kb, "rss"))
+    None
 }
 
 fn percentile(samples: &[f64], q: f64) -> f64 {
@@ -189,6 +203,11 @@ pub fn find_stub() -> Result<PathBuf> {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("tysel-service"));
         }
+    }
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        let dir = PathBuf::from(dir);
+        candidates.push(dir.join("release/tysel-service"));
+        candidates.push(dir.join("debug/tysel-service"));
     }
     candidates.push(workspace_root().join("target/release/tysel-service"));
     candidates.push(workspace_root().join("target/debug/tysel-service"));
@@ -217,5 +236,31 @@ mod tests {
     #[test]
     fn percentile_picks_middle_sample() {
         assert_eq!(percentile(&[1.0, 10.0, 3.0], 0.5), 3.0);
+    }
+
+    #[test]
+    fn pss_ignores_pss_dirty_and_reads_total() {
+        let text = "\
+Rss:                 8000 kB
+Pss_Dirty:            999 kB
+Pss:                 4321 kB
+Pss_Anon:            1111 kB
+";
+        assert_eq!(pss_kb_from_smaps_rollup(text), Some(4321));
+    }
+
+    #[test]
+    fn linux_gate_requires_pss_kind() {
+        let report = BenchReport {
+            artifact_bytes: 1_000_000,
+            cold_start_ms: vec![8.0; 11],
+            idle_memory_kb: 10 * 1024,
+            memory_kind: "rss",
+        };
+        if cfg!(target_os = "linux") {
+            assert!(!gates_passed(&report));
+        } else {
+            assert!(gates_passed(&report));
+        }
     }
 }
