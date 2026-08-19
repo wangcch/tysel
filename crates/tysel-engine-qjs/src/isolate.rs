@@ -21,7 +21,7 @@ impl IsolateCancel {
         self.0.store(true, Ordering::SeqCst);
     }
 
-    fn flag(&self) -> Arc<AtomicBool> {
+    pub(crate) fn flag(&self) -> Arc<AtomicBool> {
         self.0.clone()
     }
 }
@@ -80,7 +80,17 @@ fn run_on_worker(
     let result = match started_async {
         Some(value) => Ok(value),
         None => {
-            wait_for_result(&runtime, &context, &reactor, &cancel, request_deadline, cpu_deadline)
+            wait_until_settled(
+                &runtime,
+                &context,
+                &reactor,
+                &cancel,
+                request_deadline,
+                cpu_deadline,
+            )?;
+            context.with(|ctx| take_settled(&ctx, &cancel, request_deadline, cpu_deadline))?.ok_or_else(
+                || EngineError::Isolate("async script did not settle".into()),
+            )
         }
     };
 
@@ -103,7 +113,7 @@ fn start_script(
     request_deadline: Instant,
     cpu_deadline: Instant,
 ) -> Result<Option<Value>, EngineError> {
-    host::install(ctx.clone(), io).map_err(js_err)?;
+    host::install(ctx.clone(), io, 0).map_err(js_err)?;
     let evaluated = ctx
         .eval::<rquickjs::Value, _>(script)
         .map_err(|err| map_eval_error(err, cancel, request_deadline, cpu_deadline))?;
@@ -115,20 +125,21 @@ fn start_script(
     }
 }
 
-fn wait_for_result(
+pub(crate) fn wait_until_settled(
     runtime: &Runtime,
     context: &Context,
     reactor: &queue::Reactor,
     cancel: &IsolateCancel,
     request_deadline: Instant,
     cpu_deadline: Instant,
-) -> Result<Value, EngineError> {
+) -> Result<(), EngineError> {
     loop {
         drain_jobs(runtime)?;
-        if let Some(value) =
-            context.with(|ctx| take_settled(&ctx, cancel, request_deadline, cpu_deadline))?
-        {
-            return Ok(value);
+        if context.with(|ctx| promise_is_settled(&ctx))? {
+            return context.with(|ctx| match take_raw(&ctx) {
+                Some(Err(err)) => Err(map_eval_error(err, cancel, request_deadline, cpu_deadline)),
+                _ => Ok(()),
+            });
         }
         if let Some(reason) = wait_reason(cancel, request_deadline) {
             context.with(|ctx| host::reject_all(&ctx, reason).map_err(js_err))?;
@@ -141,15 +152,25 @@ fn wait_for_result(
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 drain_jobs(runtime)?;
-                if let Some(value) = context
-                    .with(|ctx| take_settled(&ctx, cancel, request_deadline, cpu_deadline))?
-                {
-                    return Ok(value);
+                if context.with(|ctx| promise_is_settled(&ctx))? {
+                    return Ok(());
                 }
                 return Err(EngineError::Isolate("io reactor stopped".into()));
             }
         }
     }
+}
+
+fn promise_is_settled(ctx: &Ctx<'_>) -> Result<bool, EngineError> {
+    let promise: Promise = ctx.globals().get("__tysel_result").map_err(js_err)?;
+    Ok(promise.result::<rquickjs::Value>().is_some())
+}
+
+fn take_raw<'js>(ctx: &Ctx<'js>) -> Option<rquickjs::Result<rquickjs::Value<'js>>> {
+    let Ok(promise) = ctx.globals().get::<_, Promise>("__tysel_result") else {
+        return None;
+    };
+    promise.result()
 }
 
 fn take_settled(
@@ -166,7 +187,7 @@ fn take_settled(
     }
 }
 
-fn drain_jobs(runtime: &Runtime) -> Result<(), EngineError> {
+pub(crate) fn drain_jobs(runtime: &Runtime) -> Result<(), EngineError> {
     loop {
         match runtime.execute_pending_job() {
             Ok(true) => {}
@@ -176,7 +197,7 @@ fn drain_jobs(runtime: &Runtime) -> Result<(), EngineError> {
     }
 }
 
-fn wait_reason(cancel: &IsolateCancel, request_deadline: Instant) -> Option<InterruptReason> {
+pub(crate) fn wait_reason(cancel: &IsolateCancel, request_deadline: Instant) -> Option<InterruptReason> {
     if cancel.0.load(Ordering::SeqCst) {
         return Some(InterruptReason::Cancelled);
     }
@@ -203,7 +224,7 @@ fn from_js(ctx: &Ctx<'_>, value: rquickjs::Value<'_>) -> Result<Value, EngineErr
     Err(EngineError::Isolate(format!("unsupported js type: {}", value.type_name())))
 }
 
-fn map_eval_error(
+pub(crate) fn map_eval_error(
     err: rquickjs::Error,
     cancel: &IsolateCancel,
     request_deadline: Instant,
@@ -224,6 +245,6 @@ fn map_eval_error(
     EngineError::Isolate(message)
 }
 
-fn js_err(err: impl std::fmt::Display) -> EngineError {
+pub(crate) fn js_err(err: impl std::fmt::Display) -> EngineError {
     EngineError::Isolate(err.to_string())
 }

@@ -14,7 +14,7 @@ pub struct ModuleId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HandlerId(pub u64);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct IsolateConfig {
     pub memory_limit_bytes: usize,
     pub cpu_ms_per_turn: u64,
@@ -61,9 +61,21 @@ pub enum EngineError {
     Interrupted(InterruptReason),
 }
 
+#[derive(Debug, Clone)]
+pub struct HttpRequest {
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HttpHead {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+}
+
 /// JavaScript / Wasm / AOT execution backend.
-///
-/// `invoke` stays out of this trait until Spike A lands a completion queue.
 pub trait ExecutionEngine: Send + Sync {
     fn create_isolate(&self, config: IsolateConfig) -> Result<IsolateId, EngineError>;
     fn load_module(&self, isolate: IsolateId, bundle: &[u8]) -> Result<ModuleId, EngineError>;

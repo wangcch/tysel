@@ -61,6 +61,10 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
     }
 }
 
+pub fn spawn_reactor_until_cancel(cancel: Arc<AtomicBool>) -> Reactor {
+    spawn_reactor(cancel, Instant::now() + Duration::from_secs(60 * 60 * 24 * 365))
+}
+
 async fn run_reactor(
     mut requests: UnboundedReceiver<IoRequest>,
     completions: std::sync::mpsc::Sender<IoCompletion>,

@@ -5,10 +5,11 @@ use crate::queue::{IoHandle, IoRequest, OpId};
 
 const PENDING: &str = "__tysel_pending";
 
-pub fn install(ctx: Ctx<'_>, io: IoHandle) -> rquickjs::Result<()> {
+pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<()> {
     ctx.globals().set(PENDING, Object::new(ctx.clone())?)?;
 
     let tysel = Object::new(ctx.clone())?;
+    tysel.set("isolateId", isolate_id)?;
     let io_sleep = io.clone();
     tysel.set(
         "sleep",

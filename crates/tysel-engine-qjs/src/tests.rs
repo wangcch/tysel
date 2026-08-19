@@ -1,9 +1,9 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tysel_engine::{EngineError, InterruptReason, IsolateConfig, Value};
+use tysel_engine::{EngineError, HttpRequest, InterruptReason, IsolateConfig, Value};
 
-use crate::{IsolateCancel, eval, eval_cancellable};
+use crate::{IsolateCancel, IsolatePool, eval, eval_cancellable};
 
 fn config() -> IsolateConfig {
     IsolateConfig {
@@ -80,4 +80,40 @@ fn memory_limit_rejects_large_allocation() {
         EngineError::Interrupted(InterruptReason::MemoryLimit) | EngineError::Isolate(_) => {}
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+const FETCH_HANDLER: &str = r#"
+export default {
+  async fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/stream") {
+      return new Response(["alpha", "beta", "gamma"]);
+    }
+    return Response.json({
+      message: "Hello from Tysel",
+      path,
+      isolate: tysel.isolateId,
+    });
+  },
+};
+"#;
+
+#[tokio::test]
+async fn fetch_handler_streams_body_chunks() {
+    let pool = IsolatePool::spawn(1, FETCH_HANDLER, config()).expect("spawn isolate");
+    let (head, mut body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/stream".into(),
+            headers: vec![],
+            body: vec![],
+        })
+        .await
+        .expect("dispatch");
+    assert_eq!(head.status, 200);
+    let mut chunks = Vec::new();
+    while let Some(chunk) = body.recv().await {
+        chunks.push(String::from_utf8(chunk).expect("utf8 chunk"));
+    }
+    assert_eq!(chunks, ["alpha", "beta", "gamma"]);
 }
