@@ -5,9 +5,16 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "Shared helpers for runtime, capability, and example tests."
+description = "Shared helpers and the M0 §30 measurement harness."
 
 [lints]
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
+tysel-build.workspace = true
+tysel-manifest.workspace = true
+
+[[bin]]
+name = "tysel-bench"
+path = "src/bin/tysel-bench.rs"
