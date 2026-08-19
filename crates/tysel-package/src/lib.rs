@@ -1,20 +1,17 @@
-//! Tysel App Package (TAP) format: CBOR manifest, zstd payload, hashes.
+//! Tysel App Package (TAP) trailer used by the single-file spike.
 //!
-//! This crate is a scaffolding stub. Behavior lands with the M0 spikes and later
-//! milestones in `roadmap.md`.
+//! Spike C appends an uncompressed TAP blob and a 16-byte footer to a runtime
+//! stub. CBOR, zstd, and signatures stay out of this spike.
 
-#![allow(dead_code)]
+mod sourcemap;
+mod tap;
+
+pub use sourcemap::{OriginalPosition, SourceMap, identity_source_map};
+pub use tap::{PackageError, PackageManifest, Tap, TAP_VERSION};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crate_is_named() {
-        assert!(!crate_name().is_empty());
-    }
-}
+mod tests;

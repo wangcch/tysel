@@ -11,3 +11,7 @@ description = "Tysel App Package (TAP) format: CBOR manifest, zstd payload, hash
 workspace = true
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
