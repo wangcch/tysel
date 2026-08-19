@@ -350,7 +350,9 @@ async fn cancel_stops_outbound_fetch() {
 #[tokio::test(flavor = "multi_thread")]
 async fn outbound_fetch_body_applies_backpressure() {
     let polled = std::sync::Arc::new(AtomicUsize::new(0));
-    let chunks = 32;
+    // More payload than a typical localhost TCP window so Linux cannot hide
+    // a missing mpsc bound behind kernel buffering (32 × 128KiB ≈ 4MiB).
+    let chunks = STREAM_WINDOW * 16;
     let addr = serve_counted(chunks, polled.clone());
     let url = format!("http://{addr}/");
     let eval = tokio::task::spawn_blocking(move || {
@@ -401,7 +403,13 @@ fn serve_slow() -> SocketAddr {
 fn serve_counted(chunks: usize, polled: std::sync::Arc<AtomicUsize>) -> SocketAddr {
     spawn_origin(move |_| {
         let polled = polled.clone();
-        async move { Ok::<_, Infallible>(Response::new(CountedBody { left: chunks, polled })) }
+        async move {
+            Ok::<_, Infallible>(Response::new(CountedBody {
+                left: chunks,
+                polled,
+                yield_next: false,
+            }))
+        }
     })
 }
 
@@ -443,6 +451,7 @@ const COUNTED_CHUNK_LEN: usize = 128 * 1024;
 struct CountedBody {
     left: usize,
     polled: std::sync::Arc<AtomicUsize>,
+    yield_next: bool,
 }
 
 impl hyper::body::Body for CountedBody {
@@ -451,14 +460,20 @@ impl hyper::body::Body for CountedBody {
 
     fn poll_frame(
         self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         let this = self.get_mut();
+        if this.yield_next {
+            this.yield_next = false;
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
         if this.left == 0 {
             return Poll::Ready(None);
         }
         this.left -= 1;
         this.polled.fetch_add(1, AtomicOrdering::SeqCst);
+        this.yield_next = true;
         Poll::Ready(Some(Ok(Frame::data(Bytes::from(vec![b'x'; COUNTED_CHUNK_LEN])))))
     }
 }
