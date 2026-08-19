@@ -1,0 +1,5 @@
+package tysel:mcp@0.0.1;
+
+interface tool {
+    call: func(name: string, input: string) -> result<string, string>;
+}

@@ -1,0 +1,14 @@
+[package]
+name = "tysel-capability"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Capability registry, WIT ABI handles, and permission intersection"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true

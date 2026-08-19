@@ -1,0 +1,13 @@
+[package]
+name = "tysel-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Bounded IPC between supervisor and isolated workers."
+
+[lints]
+workspace = true
+
+[dependencies]

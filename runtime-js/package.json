@@ -1,0 +1,20 @@
+{
+  "name": "@tysel/runtime-js",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "JavaScript bootstrap, Web API shims, capability client, and durable helpers loaded into isolates.",
+  "exports": {
+    "./bootstrap": "./bootstrap/index.ts",
+    "./web-api": "./web-api/index.ts",
+    "./capability-client": "./capability-client/index.ts",
+    "./durable": "./durable/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

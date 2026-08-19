@@ -1,0 +1,5 @@
+package tysel:llm@0.0.1;
+
+interface generate {
+    complete: func(model: string, input: string) -> result<string, string>;
+}

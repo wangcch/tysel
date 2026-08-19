@@ -1,0 +1,31 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node / pnpm
+node_modules
+.pnpm-store
+*.tsbuildinfo
+
+# Build outputs
+/dist
+**/dist/
+examples/*/data/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# Test / bench artifacts
+/tmp
+*.profraw
+*.profdata

@@ -1,0 +1,13 @@
+[package]
+name = "tysel-durable"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Durable task history, replay, and wakeup store."
+
+[lints]
+workspace = true
+
+[dependencies]

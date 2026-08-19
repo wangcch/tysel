@@ -1,0 +1,5 @@
+package tysel:database@0.0.1;
+
+interface sqlite {
+    query: func(sql: string) -> result<string, string>;
+}

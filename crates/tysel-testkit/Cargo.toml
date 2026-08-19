@@ -1,0 +1,13 @@
+[package]
+name = "tysel-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Shared helpers for runtime, capability, and example tests."
+
+[lints]
+workspace = true
+
+[dependencies]

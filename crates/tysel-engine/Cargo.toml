@@ -1,0 +1,14 @@
+[package]
+name = "tysel-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Execution engine trait for QuickJS, Wasm, and future AOT backends"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true

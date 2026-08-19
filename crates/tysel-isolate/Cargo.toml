@@ -1,0 +1,13 @@
+[package]
+name = "tysel-isolate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Process-isolated worker and Linux sandbox (M2)."
+
+[lints]
+workspace = true
+
+[dependencies]

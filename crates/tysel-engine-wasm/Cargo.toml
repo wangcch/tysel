@@ -1,0 +1,14 @@
+[package]
+name = "tysel-engine-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Wasmtime Component execution engine (M4)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tysel-engine.workspace = true

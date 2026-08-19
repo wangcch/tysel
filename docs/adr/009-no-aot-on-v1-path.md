@@ -1,0 +1,7 @@
+# ADR-009：完整 TypeScript AOT Compiler 不进入 v1 关键路径
+
+状态：Accepted
+
+## 决策
+
+v1 采用 TypeScript → JavaScript Bundle → Compact JS Engine。完整 TS→Native 编译器不阻塞 Runtime 主线。初期用 TypeScript 7 CLI 做 `noEmit` 类型检查，不嵌入其内部实现。

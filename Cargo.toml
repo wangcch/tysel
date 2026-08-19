@@ -1,0 +1,58 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/tysel-cli",
+    "crates/tysel-build",
+    "crates/tysel-package",
+    "crates/tysel-manifest",
+    "crates/tysel-runtime",
+    "crates/tysel-engine",
+    "crates/tysel-engine-qjs",
+    "crates/tysel-engine-wasm",
+    "crates/tysel-scheduler",
+    "crates/tysel-task",
+    "crates/tysel-durable",
+    "crates/tysel-policy",
+    "crates/tysel-capability",
+    "crates/tysel-cap-http",
+    "crates/tysel-cap-fs",
+    "crates/tysel-cap-sqlite",
+    "crates/tysel-cap-postgres",
+    "crates/tysel-cap-llm",
+    "crates/tysel-cap-mcp",
+    "crates/tysel-isolate",
+    "crates/tysel-ipc",
+    "crates/tysel-observability",
+    "crates/tysel-testkit",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.85.0"
+authors = ["Tysel Contributors"]
+description = "A lightweight native runtime for TypeScript services and agents."
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+
+tysel-manifest = { path = "crates/tysel-manifest" }
+tysel-engine = { path = "crates/tysel-engine" }
+tysel-package = { path = "crates/tysel-package" }
+tysel-capability = { path = "crates/tysel-capability" }
+tysel-task = { path = "crates/tysel-task" }
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

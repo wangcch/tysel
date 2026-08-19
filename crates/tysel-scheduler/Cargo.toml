@@ -1,0 +1,13 @@
+[package]
+name = "tysel-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Task queueing, deadlines, cancellation, and worker dispatch."
+
+[lints]
+workspace = true
+
+[dependencies]

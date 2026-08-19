@@ -1,0 +1,17 @@
+[package]
+name = "tysel-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "TypeScript type-check, transpile, bundle, and native executable assembly."
+
+[lints]
+workspace = true
+
+[dependencies]
+tysel-manifest.workspace = true
+tysel-package.workspace = true
+tysel-capability.workspace = true
+anyhow.workspace = true

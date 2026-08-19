@@ -1,0 +1,13 @@
+[package]
+name = "tysel-cap-sqlite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Official SQLite capability."
+
+[lints]
+workspace = true
+
+[dependencies]

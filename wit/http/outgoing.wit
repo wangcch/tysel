@@ -1,0 +1,5 @@
+package tysel:http@0.0.1;
+
+interface outgoing {
+    request: func(url: string) -> result<string, string>;
+}

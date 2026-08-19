@@ -1,0 +1,13 @@
+[package]
+name = "tysel-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Four-layer capability intersection and deny-by-default policy."
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -1,0 +1,13 @@
+[package]
+name = "tysel-cap-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Official MCP capability."
+
+[lints]
+workspace = true
+
+[dependencies]

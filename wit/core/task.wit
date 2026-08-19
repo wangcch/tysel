@@ -1,0 +1,7 @@
+package tysel:core@0.0.1;
+
+/// Experimental Capability ABI. Unstable until v1.
+
+interface task {
+    id: func() -> string;
+}

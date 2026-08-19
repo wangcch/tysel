@@ -1,0 +1,13 @@
+[package]
+name = "tysel-task"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Unified task model for HTTP, cron, queue, MCP, and agent work"
+
+[lints]
+workspace = true
+
+[dependencies]

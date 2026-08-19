@@ -1,0 +1,17 @@
+[package]
+name = "tysel-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Supervisor, reactor, and trusted-service data plane."
+
+[lints]
+workspace = true
+
+[dependencies]
+tysel-engine.workspace = true
+tysel-task.workspace = true
+tysel-capability.workspace = true
+tracing.workspace = true

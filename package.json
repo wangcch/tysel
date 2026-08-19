@@ -1,0 +1,15 @@
+{
+  "name": "tysel-monorepo",
+  "private": true,
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "pnpm -r --if-present check",
+    "cli": "cargo run -p tysel-cli --"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

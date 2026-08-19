@@ -1,0 +1,26 @@
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+http1 = true
+http2 = false
+websocket = false
+
+[permissions]
+
+[limits]
+memory_mb = 64
+cpu_ms_per_turn = 50
+request_timeout_ms = 30000
+max_in_flight = 256
+max_response_mb = 4
+
+[durable]
+store = "sqlite"
+path = "./data/tysel.db"
+
+[observability]
+logs = "json"
