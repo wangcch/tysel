@@ -3,11 +3,13 @@
 //! Spike C copies a prebuilt runtime stub and appends a TAP trailer containing
 //! the ESM bundle, embedded manifest, and source map.
 
+mod transpile;
+
 use std::fs;
 use std::path::Path;
 
 use tysel_manifest::Manifest;
-use tysel_package::{identity_source_map, PackageManifest, Tap};
+use tysel_package::{PackageManifest, Tap, identity_source_map};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
@@ -60,9 +62,11 @@ pub fn read_bundle(entry: impl AsRef<Path>) -> anyhow::Result<(Vec<u8>, Vec<u8>)
             let map = identity_source_map(&display, text)?;
             Ok((source, map))
         }
-        "ts" | "mts" => anyhow::bail!(
-            "TypeScript bundling is not part of spike C; supply a JavaScript ESM file"
-        ),
+        "ts" | "mts" => {
+            let text = std::str::from_utf8(&source)
+                .map_err(|_| anyhow::anyhow!("TypeScript source must be utf-8"))?;
+            transpile::transpile_typescript(entry, text)
+        }
         other => anyhow::bail!("unsupported entry extension '.{other}'"),
     }
 }
@@ -117,5 +121,31 @@ listen = "127.0.0.1:0"
         assert_eq!(extracted.bundle, bundle);
         assert_eq!(extracted.manifest.application_id, "hello-service");
         assert_eq!(extracted.manifest.listen, "127.0.0.1:0");
+    }
+
+    #[test]
+    fn transpiles_typescript_entry_and_maps_back_to_source() {
+        let dir = std::env::temp_dir().join(format!("tysel-build-ts-{}", std::process::id()));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        let entry = dir.join("src/index.ts");
+        fs::write(
+            &entry,
+            r#"
+export default {
+  async fetch(request: Request): Promise<Response> {
+    return Response.json({ message: "Hello from Tysel" });
+  },
+};
+"#,
+        )
+        .unwrap();
+        let (bundle, map) = read_bundle(&entry).unwrap();
+        let js = String::from_utf8(bundle).unwrap();
+        assert!(js.contains("export default"));
+        assert!(!js.contains("Promise<Response>"));
+        let parsed = tysel_package::SourceMap::parse(&map).unwrap();
+        let origin = parsed.original_position(1, 1).unwrap();
+        assert!(origin.source.ends_with("src/index.ts"));
+        assert!(origin.content.unwrap().contains("request: Request"));
     }
 }

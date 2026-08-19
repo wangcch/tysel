@@ -53,6 +53,61 @@ listen = "127.0.0.1:0"
     assert!(origin.source.ends_with("src/index.js"));
 }
 
+#[test]
+fn build_strips_typescript_and_embeds_original_source() {
+    let dir = std::env::temp_dir().join(format!("tysel-cli-build-ts-{}", std::process::id()));
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        r#"
+export default {
+  async fetch(request: Request): Promise<Response> {
+    return new Response("ok");
+  },
+};
+"#,
+    )
+    .unwrap();
+    let stub = dir.join("tysel-service");
+    fs::write(&stub, b"stub-runtime").unwrap();
+    let output = dir.join("dist").join("hello-service");
+
+    let status = Command::new(cli_exe())
+        .args([
+            "build",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            stub.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run tysel build");
+    assert!(status.success());
+
+    let tap = Tap::from_path(&output).expect("extract tap");
+    let bundle = tap.bundle_source().unwrap();
+    assert!(bundle.contains("export default"));
+    assert!(!bundle.contains("Promise<Response>"));
+    let origin = tap.parsed_source_map().unwrap().original_position(1, 1).unwrap();
+    assert!(origin.source.ends_with("src/index.ts"));
+    assert!(origin.content.unwrap().contains("request: Request"));
+}
+
 fn cli_exe() -> PathBuf {
     if let Some(path) = std::env::var_os("CARGO_BIN_EXE_tysel") {
         return PathBuf::from(path);

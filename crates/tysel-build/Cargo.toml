@@ -15,3 +15,5 @@ tysel-manifest.workspace = true
 tysel-package.workspace = true
 tysel-capability.workspace = true
 anyhow.workspace = true
+oxc.workspace = true
+serde_json.workspace = true
