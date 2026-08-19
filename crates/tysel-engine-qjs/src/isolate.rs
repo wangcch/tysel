@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use rquickjs::{Context, Ctx, Promise, Runtime};
 use tysel_engine::{EngineError, InterruptReason, IsolateConfig, Value};
 
+use crate::cpu::CpuBudget;
 use crate::host;
 use crate::queue::{self, IoCompletion};
 
@@ -55,11 +56,10 @@ fn run_on_worker(
     config: IsolateConfig,
     cancel: IsolateCancel,
 ) -> Result<Value, EngineError> {
-    let started = Instant::now();
-    let cpu_deadline = started + Duration::from_millis(config.cpu_ms_per_turn.max(1));
-    let request_deadline = started + Duration::from_millis(config.request_timeout_ms.max(1));
+    let request_deadline = Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
+    let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
     let reactor = queue::spawn_reactor(cancel.flag(), request_deadline);
-    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu_deadline)
+    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu)
 }
 
 /// Evaluate `script` using a caller-supplied I/O reactor (local or IPC proxy).
@@ -69,10 +69,9 @@ pub fn eval_with_reactor(
     cancel: IsolateCancel,
     reactor: queue::Reactor,
 ) -> Result<Value, EngineError> {
-    let started = Instant::now();
-    let cpu_deadline = started + Duration::from_millis(config.cpu_ms_per_turn.max(1));
-    let request_deadline = started + Duration::from_millis(config.request_timeout_ms.max(1));
-    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu_deadline)
+    let request_deadline = Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
+    let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
+    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu)
 }
 
 fn run_with_reactor(
@@ -81,7 +80,7 @@ fn run_with_reactor(
     cancel: IsolateCancel,
     reactor: queue::Reactor,
     request_deadline: Instant,
-    cpu_deadline: Instant,
+    cpu: Arc<CpuBudget>,
 ) -> Result<Value, EngineError> {
     let cancel_flag = cancel.flag();
 
@@ -89,30 +88,24 @@ fn run_with_reactor(
     runtime.set_memory_limit(config.memory_limit_bytes);
     {
         let cancel_flag = cancel_flag.clone();
+        let cpu = cpu.clone();
         runtime.set_interrupt_handler(Some(Box::new(move || {
             cancel_flag.load(Ordering::SeqCst)
-                || Instant::now() >= cpu_deadline
+                || cpu.exhausted()
                 || Instant::now() >= request_deadline
         })));
     }
     let context = Context::full(&runtime).map_err(js_err)?;
     let started_async = context.with(|ctx| {
-        start_script(ctx, script, reactor.io.clone(), &cancel, request_deadline, cpu_deadline)
+        start_script(ctx, script, reactor.io.clone(), &cancel, request_deadline, &cpu)
     })?;
 
     let result = match started_async {
         Some(value) => Ok(value),
         None => {
-            wait_until_settled(
-                &runtime,
-                &context,
-                &reactor,
-                &cancel,
-                request_deadline,
-                cpu_deadline,
-            )?;
+            wait_until_settled(&runtime, &context, &reactor, &cancel, request_deadline, &cpu)?;
             context
-                .with(|ctx| take_settled(&ctx, &cancel, request_deadline, cpu_deadline))?
+                .with(|ctx| take_settled(&ctx, &cancel, request_deadline, &cpu))?
                 .ok_or_else(|| EngineError::Isolate("async script did not settle".into()))
         }
     };
@@ -134,12 +127,12 @@ fn start_script(
     io: crate::queue::IoHandle,
     cancel: &IsolateCancel,
     request_deadline: Instant,
-    cpu_deadline: Instant,
+    cpu: &CpuBudget,
 ) -> Result<Option<Value>, EngineError> {
     host::install(ctx.clone(), io, 0).map_err(js_err)?;
     let evaluated = ctx
         .eval::<rquickjs::Value, _>(script)
-        .map_err(|err| map_eval_error(err, cancel, request_deadline, cpu_deadline))?;
+        .map_err(|err| map_eval_error(err, cancel, request_deadline, cpu))?;
     if evaluated.is_promise() {
         ctx.globals().set("__tysel_result", evaluated).map_err(js_err)?;
         Ok(None)
@@ -154,13 +147,14 @@ pub(crate) fn wait_until_settled(
     reactor: &queue::Reactor,
     cancel: &IsolateCancel,
     request_deadline: Instant,
-    cpu_deadline: Instant,
+    cpu: &CpuBudget,
 ) -> Result<(), EngineError> {
     loop {
+        cpu.resume();
         drain_jobs(runtime)?;
         if context.with(|ctx| promise_is_settled(&ctx))? {
             return context.with(|ctx| match take_raw(&ctx) {
-                Some(Err(err)) => Err(map_eval_error(err, cancel, request_deadline, cpu_deadline)),
+                Some(Err(err)) => Err(map_eval_error(err, cancel, request_deadline, cpu)),
                 _ => Ok(()),
             });
         }
@@ -168,12 +162,15 @@ pub(crate) fn wait_until_settled(
             context.with(|ctx| host::reject_all(&ctx, reason).map_err(js_err))?;
             return Err(EngineError::Interrupted(reason));
         }
+        cpu.pause();
         match reactor.completions.recv_timeout(Duration::from_millis(5)) {
             Ok(IoCompletion { id, result }) => {
+                cpu.resume();
                 context.with(|ctx| host::settle(&ctx, id, result).map_err(js_err))?;
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
+                cpu.resume();
                 drain_jobs(runtime)?;
                 if context.with(|ctx| promise_is_settled(&ctx))? {
                     return Ok(());
@@ -200,12 +197,12 @@ fn take_settled(
     ctx: &Ctx<'_>,
     cancel: &IsolateCancel,
     request_deadline: Instant,
-    cpu_deadline: Instant,
+    cpu: &CpuBudget,
 ) -> Result<Option<Value>, EngineError> {
     let promise: Promise = ctx.globals().get("__tysel_result").map_err(js_err)?;
     match promise.result::<rquickjs::Value>() {
         Some(Ok(value)) => from_js(ctx, value).map(Some),
-        Some(Err(err)) => Err(map_eval_error(err, cancel, request_deadline, cpu_deadline)),
+        Some(Err(err)) => Err(map_eval_error(err, cancel, request_deadline, cpu)),
         None => Ok(None),
     }
 }
@@ -254,12 +251,12 @@ pub(crate) fn map_eval_error(
     err: rquickjs::Error,
     cancel: &IsolateCancel,
     request_deadline: Instant,
-    cpu_deadline: Instant,
+    cpu: &CpuBudget,
 ) -> EngineError {
     if cancel.0.load(Ordering::SeqCst) {
         return EngineError::Interrupted(InterruptReason::Cancelled);
     }
-    if Instant::now() >= request_deadline || Instant::now() >= cpu_deadline {
+    if Instant::now() >= request_deadline || cpu.exhausted() {
         return EngineError::Interrupted(InterruptReason::Timeout);
     }
     let message = err.to_string();

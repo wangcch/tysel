@@ -1,9 +1,29 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use tokio::runtime::{Handle, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tysel_engine::{InterruptReason, Value};
+
+static IO_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+/// Process-wide Tokio runtime for isolate host I/O. Multi-thread workers poll
+/// independently, so `IsolatePool::spawn` can submit work from a blocked
+/// `#[tokio::test]` current-thread runtime without deadlocking.
+fn io_handle() -> Handle {
+    IO_RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_time()
+                .thread_name("tysel-io")
+                .build()
+                .expect("shared io runtime")
+        })
+        .handle()
+        .clone()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OpId(pub u64);
@@ -43,18 +63,9 @@ pub struct Reactor {
 pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
     let (req_tx, req_rx) = unbounded_channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("tysel-io".into())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_time()
-                .thread_name("tysel-io-worker")
-                .build()
-                .expect("tokio runtime");
-            runtime.block_on(run_reactor(req_rx, done_tx, cancel, deadline));
-        })
-        .expect("spawn io reactor");
+    io_handle().spawn(async move {
+        run_reactor(req_rx, done_tx, cancel, deadline).await;
+    });
 
     Reactor {
         io: IoHandle { tx: req_tx, next_id: Arc::new(AtomicU64::new(1)) },

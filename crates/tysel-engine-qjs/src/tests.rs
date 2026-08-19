@@ -61,6 +61,16 @@ fn request_timeout_interrupts_sleep() {
 }
 
 #[test]
+fn await_does_not_consume_cpu_budget() {
+    let value = eval(
+        r#"(async () => { await tysel.sleep(80); return "ok"; })()"#,
+        IsolateConfig { cpu_ms_per_turn: 20, request_timeout_ms: 2_000, ..config() },
+    )
+    .expect("I/O wait should not exhaust the JS CPU budget");
+    assert_eq!(value, Value::String("ok".into()));
+}
+
+#[test]
 fn cpu_interrupt_stops_busy_loop() {
     let started = Instant::now();
     let err = eval(
@@ -122,4 +132,38 @@ async fn fetch_handler_streams_body_chunks() {
         chunks.push(String::from_utf8(chunk).expect("utf8 chunk"));
     }
     assert_eq!(chunks, ["alpha", "beta", "gamma"]);
+}
+
+const SLEEP_HANDLER: &str = r#"
+export default {
+  async fetch() {
+    await tysel.sleep(80);
+    return new Response("slept");
+  },
+};
+"#;
+
+#[tokio::test]
+async fn fetch_handler_sleep_does_not_exhaust_cpu_budget() {
+    let pool = IsolatePool::spawn(
+        1,
+        SLEEP_HANDLER,
+        IsolateConfig { cpu_ms_per_turn: 20, request_timeout_ms: 2_000, ..config() },
+    )
+    .expect("spawn isolate");
+    let (head, mut body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/".into(),
+            headers: vec![],
+            body: vec![],
+        })
+        .await
+        .expect("dispatch");
+    assert_eq!(head.status, 200);
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(String::from_utf8(bytes).expect("utf8"), "slept");
 }

@@ -1,11 +1,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use rquickjs::{Context, Function, Runtime};
 use tokio::sync::{mpsc, oneshot};
 use tysel_engine::{EngineError, HttpHead, HttpRequest, IsolateConfig};
 
+use crate::cpu::CpuBudget;
 use crate::fetch;
 use crate::host;
 use crate::isolate::{self, IsolateCancel};
@@ -17,30 +19,33 @@ struct Job {
     body_tx: mpsc::Sender<Vec<u8>>,
 }
 
-#[derive(Clone)]
+struct Budgets {
+    cpu: Arc<CpuBudget>,
+    request: Instant,
+}
+
 pub struct IsolatePool {
     workers: Vec<mpsc::Sender<Job>>,
     next: Arc<AtomicUsize>,
+    threads: Vec<JoinHandle<()>>,
 }
 
 impl IsolatePool {
-    pub fn spawn(
-        workers: usize,
-        source: &str,
-        config: IsolateConfig,
-    ) -> Result<Self, EngineError> {
+    pub fn spawn(workers: usize, source: &str, config: IsolateConfig) -> Result<Self, EngineError> {
         let workers = workers.max(1);
         let mut senders = Vec::with_capacity(workers);
+        let mut threads = Vec::with_capacity(workers);
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         for id in 0..workers {
             let (tx, rx) = mpsc::channel(32);
             let source = source.to_owned();
             let ready_tx = ready_tx.clone();
-            std::thread::Builder::new()
+            let thread = std::thread::Builder::new()
                 .name(format!("tysel-qjs-{id}"))
                 .spawn(move || worker_loop(id as u32, source, config, rx, ready_tx))
                 .map_err(|err| EngineError::Isolate(err.to_string()))?;
             senders.push(tx);
+            threads.push(thread);
         }
         drop(ready_tx);
         for _ in 0..workers {
@@ -48,7 +53,7 @@ impl IsolatePool {
                 .recv()
                 .map_err(|_| EngineError::Isolate("isolate worker failed to start".into()))??;
         }
-        Ok(Self { workers: senders, next: Arc::new(AtomicUsize::new(0)) })
+        Ok(Self { workers: senders, next: Arc::new(AtomicUsize::new(0)), threads })
     }
 
     pub async fn dispatch(
@@ -66,6 +71,15 @@ impl IsolatePool {
             Ok(Ok(head)) => Ok((head, body_rx)),
             Ok(Err(err)) => Err(err),
             Err(_) => Err(EngineError::Isolate("isolate dropped the response head".into())),
+        }
+    }
+}
+
+impl Drop for IsolatePool {
+    fn drop(&mut self) {
+        self.workers.clear();
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
         }
     }
 }
@@ -94,10 +108,10 @@ fn run_worker(
     jobs: &mut mpsc::Receiver<Job>,
     ready: &std::sync::mpsc::Sender<Result<(), EngineError>>,
 ) -> Result<(), EngineError> {
-    let budgets = Arc::new(Mutex::new((
-        Instant::now() + Duration::from_secs(60),
-        Instant::now() + Duration::from_secs(60),
-    )));
+    let budgets = Arc::new(Mutex::new(Budgets {
+        cpu: CpuBudget::new(Duration::from_secs(60)),
+        request: Instant::now() + Duration::from_secs(60),
+    }));
     let runtime = Runtime::new().map_err(isolate::js_err)?;
     runtime.set_memory_limit(config.memory_limit_bytes);
     {
@@ -107,13 +121,14 @@ fn run_worker(
             if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
                 return true;
             }
-            let (cpu, request) = *budgets.lock().expect("budgets");
-            Instant::now() >= cpu || Instant::now() >= request
+            let budgets = budgets.lock().expect("budgets");
+            budgets.cpu.exhausted() || Instant::now() >= budgets.request
         })));
     }
 
     let reactor = queue::spawn_reactor_until_cancel(cancel.flag());
     let context = Context::full(&runtime).map_err(isolate::js_err)?;
+    let load_cpu = CpuBudget::new(Duration::from_secs(5));
     context.with(|ctx| {
         fetch::install_web_api(ctx.clone())?;
         host::install(ctx.clone(), reactor.io.clone(), id).map_err(isolate::js_err)?;
@@ -125,7 +140,7 @@ fn run_worker(
         &reactor,
         &cancel,
         Instant::now() + Duration::from_secs(5),
-        Instant::now() + Duration::from_secs(5),
+        &load_cpu,
     )?;
     context.with(|ctx| {
         let _: Function = ctx.globals().get("__tysel_fetch").map_err(isolate::js_err)?;
@@ -134,12 +149,12 @@ fn run_worker(
     let _ = ready.send(Ok(()));
 
     while let Some(job) = jobs.blocking_recv() {
-        let cpu_deadline = Instant::now() + Duration::from_millis(config.cpu_ms_per_turn.max(1));
+        let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
         let request_deadline =
             Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
-        *budgets.lock().expect("budgets") = (cpu_deadline, request_deadline);
+        *budgets.lock().expect("budgets") = Budgets { cpu: cpu.clone(), request: request_deadline };
         if let Err(err) =
-            handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, cpu_deadline)
+            handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, &cpu)
         {
             let _ = err;
         }
@@ -165,7 +180,7 @@ fn handle_job(
     cancel: &IsolateCancel,
     job: Job,
     request_deadline: Instant,
-    cpu_deadline: Instant,
+    cpu: &CpuBudget,
 ) -> Result<(), EngineError> {
     let Job { request, head_tx, body_tx } = job;
     let pending = match context.with(|ctx| fetch::begin_fetch(ctx, &request)) {
@@ -177,7 +192,7 @@ fn handle_job(
     };
     if pending {
         if let Err(err) =
-            isolate::wait_until_settled(runtime, context, reactor, cancel, request_deadline, cpu_deadline)
+            isolate::wait_until_settled(runtime, context, reactor, cancel, request_deadline, cpu)
         {
             let _ = head_tx.send(Err(EngineError::Isolate(err.to_string())));
             return Err(err);

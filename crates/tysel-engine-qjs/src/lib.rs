@@ -4,6 +4,7 @@
 //! completion queue. Spike B reuses that isolate as a fetch-handler pool behind
 //! a native HTTP listener.
 
+mod cpu;
 mod fetch;
 mod host;
 mod isolate;
