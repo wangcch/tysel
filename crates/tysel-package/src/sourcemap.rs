@@ -97,6 +97,99 @@ pub fn identity_source_map(source_path: &str, source: &str) -> Result<Vec<u8>, P
     Ok(serde_json::to_vec_pretty(&json)?)
 }
 
+/// Incremental VLQ source-map writer. Columns and lines are 0-based.
+pub struct SourceMapWriter {
+    mappings: String,
+    need_comma: bool,
+    gen_col: i64,
+    source: i64,
+    orig_line: i64,
+    orig_col: i64,
+}
+
+impl Default for SourceMapWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SourceMapWriter {
+    pub fn new() -> Self {
+        Self {
+            mappings: String::new(),
+            need_comma: false,
+            gen_col: 0,
+            source: 0,
+            orig_line: 0,
+            orig_col: 0,
+        }
+    }
+
+    pub fn end_line(&mut self) {
+        self.mappings.push(';');
+        self.gen_col = 0;
+        self.need_comma = false;
+    }
+
+    pub fn add(
+        &mut self,
+        generated_column: u32,
+        source_index: u32,
+        original_line: u32,
+        original_column: u32,
+    ) {
+        if self.need_comma {
+            self.mappings.push(',');
+        }
+        self.need_comma = true;
+        let gen_col = i64::from(generated_column);
+        let source = i64::from(source_index);
+        let orig_line = i64::from(original_line);
+        let orig_col = i64::from(original_column);
+        self.mappings.push_str(&encode_vlq(gen_col - self.gen_col));
+        self.mappings.push_str(&encode_vlq(source - self.source));
+        self.mappings.push_str(&encode_vlq(orig_line - self.orig_line));
+        self.mappings.push_str(&encode_vlq(orig_col - self.orig_col));
+        self.gen_col = gen_col;
+        self.source = source;
+        self.orig_line = orig_line;
+        self.orig_col = orig_col;
+    }
+
+    pub fn into_json(
+        self,
+        file: &str,
+        sources: Vec<String>,
+        sources_content: Vec<String>,
+    ) -> Result<Vec<u8>, PackageError> {
+        let json = serde_json::json!({
+            "version": 3,
+            "file": file,
+            "sources": sources,
+            "sourcesContent": sources_content,
+            "mappings": self.mappings,
+        });
+        serde_json::to_vec_pretty(&json).map_err(PackageError::from)
+    }
+}
+
+fn encode_vlq(value: i64) -> String {
+    let mut vlq = if value < 0 { ((-value) << 1) | 1 } else { value << 1 };
+    let mut out = String::new();
+    loop {
+        let mut digit = (vlq & 31) as u8;
+        vlq >>= 5;
+        if vlq != 0 {
+            digit |= 32;
+        }
+        out.push(b64_char(digit));
+        if vlq == 0 {
+            break;
+        }
+    }
+    out
+}
+
 fn parse_mappings(mappings: &str) -> Result<Vec<Mapping>, PackageError> {
     let mut out = Vec::new();
     let mut source_index = 0i64;
@@ -156,4 +249,9 @@ fn b64(digit: u8) -> Option<u8> {
         b'/' => Some(63),
         _ => None,
     }
+}
+
+fn b64_char(digit: u8) -> char {
+    let index = (digit & 63) as usize;
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[index] as char
 }

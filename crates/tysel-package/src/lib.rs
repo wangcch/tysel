@@ -6,7 +6,7 @@
 mod sourcemap;
 mod tap;
 
-pub use sourcemap::{OriginalPosition, SourceMap, identity_source_map};
+pub use sourcemap::{OriginalPosition, SourceMap, SourceMapWriter, identity_source_map};
 pub use tap::{PackageError, PackageManifest, TAP_VERSION, Tap, default_max_request_bytes};
 
 pub fn crate_name() -> &'static str {

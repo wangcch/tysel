@@ -22,8 +22,10 @@ pub fn transpile_typescript(path: &Path, source: &str) -> Result<(Vec<u8>, Vec<u
     Ok((code.into_bytes(), serde_json::to_vec_pretty(&map_json)?))
 }
 
-pub(crate) fn to_javascript(path: &Path, source: &str) -> Result<String> {
-    Ok(emit_javascript(path, source, false)?.0)
+pub(crate) fn to_javascript(path: &Path, source: &str) -> Result<(String, Vec<u8>)> {
+    let (code, map) = transpile_typescript(path, source)?;
+    let javascript = String::from_utf8(code).context("oxc emitted non-utf8 javascript")?;
+    Ok((javascript, map))
 }
 
 pub(crate) fn source_type_for(path: &Path) -> Result<SourceType> {

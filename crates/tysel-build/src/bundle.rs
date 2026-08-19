@@ -11,7 +11,7 @@ use oxc::ast::ast::{
 use oxc::parser::Parser;
 use oxc::span::{GetSpan, Span};
 use oxc_resolver::{ResolveError, ResolveOptions, Resolver};
-use serde_json::json;
+use tysel_package::{SourceMap, SourceMapWriter};
 
 use crate::transpile;
 
@@ -71,7 +71,6 @@ pub fn bundle(entry: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut pending = VecDeque::from([entry.to_path_buf()]);
     let mut seen = HashSet::new();
     let mut modules = Vec::new();
-    let mut originals: Vec<(String, String)> = Vec::new();
 
     while let Some(path) = pending.pop_front() {
         let path = canonicalize_existing(&path)?;
@@ -84,21 +83,30 @@ pub fn bundle(entry: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
 
         let source = fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        originals.push((display_path(&path), source.clone()));
+        let source_path = display_path(&path);
 
         let id = module_id(&path);
         if is_json(&path) {
             let _: serde_json::Value = serde_json::from_str(&source)
                 .with_context(|| format!("invalid JSON module {}", path.display()))?;
+            let factory = format!("module.exports = JSON.parse({});", js_string(&source));
             modules.push(CompiledModule {
                 id,
-                factory: format!("module.exports = JSON.parse({});", js_string(&source)),
+                factory,
+                source_path,
+                source_content: source,
+                origins: vec![OrigPos { line: 0, column: 0 }],
+                js_to_ts: None,
             });
             continue;
         }
 
-        let javascript =
-            if needs_transpile(&path) { transpile::to_javascript(&path, &source)? } else { source };
+        let (javascript, js_to_ts) = if needs_transpile(&path) {
+            let (javascript, map) = transpile::to_javascript(&path, &source)?;
+            (javascript, Some(SourceMap::parse(&map)?))
+        } else {
+            (source.clone(), None)
+        };
         let analysis = analyze_source(&path, &javascript)?;
         if !analysis.dynamic_imports.is_empty() {
             anyhow::bail!("dynamic import is not supported in {}", path.display());
@@ -111,37 +119,38 @@ pub fn bundle(entry: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
             pending.push_back(resolved_path);
         }
 
-        let factory = if analysis.has_module_syntax {
+        let (factory, origins) = if analysis.has_module_syntax {
             rewrite_esm(&javascript, &resolved)?
         } else {
-            javascript
+            identity_origins(&javascript)
         };
-        modules.push(CompiledModule { id, factory });
+        modules.push(CompiledModule {
+            id,
+            factory,
+            source_path,
+            source_content: source,
+            origins,
+            js_to_ts,
+        });
     }
 
     let entry_id = module_id(&canonicalize_existing(entry)?);
-    let mut out = String::from(RUNTIME);
-    for module in &modules {
-        out.push_str("  define(");
-        out.push_str(&js_string(&module.id));
-        out.push_str(", function (module, exports, require) {\n");
-        out.push_str(&indent(&module.factory, 2));
-        if !module.factory.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str("  });\n");
-    }
-    out.push_str("  return require;\n})();\n");
-    out.push_str("var __tysel_entry = __tysel_require(");
-    out.push_str(&js_string(&entry_id));
-    out.push_str(");\nexport default __tysel_entry.default !== void 0 ? __tysel_entry.default : __tysel_entry;\n");
-
-    Ok((out.into_bytes(), bundle_source_map(&originals)?))
+    emit_bundle(&modules, &entry_id)
 }
 
 struct CompiledModule {
     id: String,
     factory: String,
+    source_path: String,
+    source_content: String,
+    origins: Vec<OrigPos>,
+    js_to_ts: Option<SourceMap>,
+}
+
+#[derive(Clone, Copy)]
+struct OrigPos {
+    line: u32,
+    column: u32,
 }
 
 struct Analysis {
@@ -180,7 +189,10 @@ fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
     })
 }
 
-fn rewrite_esm(javascript: &str, resolved: &HashMap<String, String>) -> Result<String> {
+fn rewrite_esm(
+    javascript: &str,
+    resolved: &HashMap<String, String>,
+) -> Result<(String, Vec<OrigPos>)> {
     let path = Path::new("module.js");
     let source_type = transpile::source_type_for(path)?;
     let allocator = Allocator::default();
@@ -272,6 +284,15 @@ fn rewrite_esm(javascript: &str, resolved: &HashMap<String, String>) -> Result<S
         }
     }
     apply_replacements(javascript, replacements)
+}
+
+fn identity_origins(source: &str) -> (String, Vec<OrigPos>) {
+    let origins = source
+        .lines()
+        .enumerate()
+        .map(|(line, _)| OrigPos { line: line as u32, column: 0 })
+        .collect();
+    (source.to_string(), origins)
 }
 
 fn rewrite_import(
@@ -404,25 +425,61 @@ fn resolved_id(resolved: &HashMap<String, String>, specifier: &str) -> Result<St
     resolved.get(specifier).cloned().ok_or_else(|| anyhow!("missing resolved id for '{specifier}'"))
 }
 
-fn apply_replacements(source: &str, mut replacements: Vec<(Span, String)>) -> Result<String> {
+fn apply_replacements(
+    source: &str,
+    mut replacements: Vec<(Span, String)>,
+) -> Result<(String, Vec<OrigPos>)> {
     replacements.sort_by_key(|(span, _)| span.start);
     let mut out = String::with_capacity(source.len() + 64);
+    let mut origins = Vec::new();
+    let mut at_line_start = true;
     let mut cursor = 0usize;
+
+    let mut append = |text: &str, origin_at: &dyn Fn(usize) -> OrigPos| {
+        for (index, ch) in text.char_indices() {
+            if at_line_start {
+                origins.push(origin_at(index));
+                at_line_start = false;
+            }
+            out.push(ch);
+            if ch == '\n' {
+                at_line_start = true;
+            }
+        }
+    };
+
     for (span, text) in replacements {
         let start = span.start as usize;
         let end = span.end as usize;
         if start < cursor || end > source.len() || start > end {
             anyhow::bail!("overlapping or invalid module rewrite spans");
         }
-        out.push_str(&source[cursor..start]);
-        out.push_str(&text);
+        let copy = &source[cursor..start];
+        append(copy, &|index| pos_at(source, cursor + index));
+        let span_origin = pos_at(source, start);
+        append(&text, &|_| span_origin);
         if !text.is_empty() && !text.ends_with('\n') {
-            out.push('\n');
+            append("\n", &|_| span_origin);
         }
         cursor = end;
     }
-    out.push_str(&source[cursor..]);
-    Ok(out)
+    append(&source[cursor..], &|index| pos_at(source, cursor + index));
+    Ok((out, origins))
+}
+
+fn pos_at(source: &str, byte: usize) -> OrigPos {
+    let byte = byte.min(source.len());
+    let mut line = 0u32;
+    let mut column = 0u32;
+    for ch in source[..byte].chars() {
+        if ch == '\n' {
+            line += 1;
+            column = 0;
+        } else {
+            column += ch.len_utf16() as u32;
+        }
+    }
+    OrigPos { line, column }
 }
 
 fn star_reexport(req: &str, n: u32) -> String {
@@ -460,24 +517,6 @@ fn js_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
 }
 
-fn indent(source: &str, spaces: usize) -> String {
-    let pad = " ".repeat(spaces);
-    let mut out = String::new();
-    for (index, line) in source.lines().enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
-        if !line.is_empty() {
-            out.push_str(&pad);
-            out.push_str(line);
-        }
-    }
-    if source.ends_with('\n') {
-        out.push('\n');
-    }
-    out
-}
-
 fn module_id(path: &Path) -> String {
     display_path(path)
 }
@@ -498,15 +537,64 @@ fn needs_transpile(path: &Path) -> bool {
     matches!(path.extension().and_then(|ext| ext.to_str()), Some("ts" | "mts" | "cts" | "tsx"))
 }
 
-fn bundle_source_map(originals: &[(String, String)]) -> Result<Vec<u8>> {
-    let sources: Vec<&str> = originals.iter().map(|(path, _)| path.as_str()).collect();
-    let contents: Vec<&str> = originals.iter().map(|(_, source)| source.as_str()).collect();
-    let json = json!({
-        "version": 3,
-        "file": "bundle.js",
-        "sources": sources,
-        "sourcesContent": contents,
-        "mappings": "AAAA",
-    });
-    Ok(serde_json::to_vec_pretty(&json)?)
+fn emit_bundle(modules: &[CompiledModule], entry_id: &str) -> Result<(Vec<u8>, Vec<u8>)> {
+    let mut out = String::new();
+    let mut map = SourceMapWriter::new();
+    push_unmapped(&mut out, &mut map, RUNTIME);
+    for (source_index, module) in modules.iter().enumerate() {
+        push_unmapped(
+            &mut out,
+            &mut map,
+            &format!(
+                "  define({}, function (module, exports, require) {{\n",
+                js_string(&module.id)
+            ),
+        );
+        for (line_index, line) in module.factory.lines().enumerate() {
+            out.push_str("  ");
+            out.push_str(line);
+            if let Some((orig_line, orig_column)) = original_for_factory_line(module, line_index) {
+                let generated_column = if line.is_empty() { 0 } else { 2 };
+                map.add(generated_column, source_index as u32, orig_line, orig_column);
+            }
+            out.push('\n');
+            map.end_line();
+        }
+        if module.factory.lines().next().is_none() {
+            out.push('\n');
+            map.end_line();
+        }
+        push_unmapped(&mut out, &mut map, "  });\n");
+    }
+    push_unmapped(&mut out, &mut map, "  return require;\n})();\n");
+    push_unmapped(&mut out, &mut map, "var __tysel_entry = __tysel_require(");
+    push_unmapped(&mut out, &mut map, &js_string(entry_id));
+    push_unmapped(
+        &mut out,
+        &mut map,
+        ");\nexport default __tysel_entry.default !== void 0 ? __tysel_entry.default : __tysel_entry;\n",
+    );
+
+    let sources = modules.iter().map(|module| module.source_path.clone()).collect();
+    let contents = modules.iter().map(|module| module.source_content.clone()).collect();
+    Ok((out.into_bytes(), map.into_json("bundle.js", sources, contents)?))
+}
+
+fn original_for_factory_line(module: &CompiledModule, line_index: usize) -> Option<(u32, u32)> {
+    let pos = *module.origins.get(line_index)?;
+    if let Some(map) = &module.js_to_ts {
+        if let Some(found) = map.original_position(pos.line + 1, pos.column + 1) {
+            return Some((found.line.saturating_sub(1), found.column.saturating_sub(1)));
+        }
+    }
+    Some((pos.line, pos.column))
+}
+
+fn push_unmapped(out: &mut String, map: &mut SourceMapWriter, text: &str) {
+    for ch in text.chars() {
+        out.push(ch);
+        if ch == '\n' {
+            map.end_line();
+        }
+    }
 }

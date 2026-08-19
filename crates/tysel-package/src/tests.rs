@@ -90,6 +90,23 @@ fn source_map_locates_typescript_origin() {
 }
 
 #[test]
+fn source_map_writer_roundtrips_line_mappings() {
+    let mut writer = SourceMapWriter::new();
+    writer.add(0, 0, 0, 0);
+    writer.end_line();
+    writer.add(0, 0, 1, 0);
+    let json = writer
+        .into_json("app.js", vec!["src/index.ts".into()], vec!["a\nb\n".into()])
+        .expect("json");
+    let map = SourceMap::parse(&json).expect("parse");
+    let first = map.original_position(1, 1).expect("line 1");
+    assert_eq!(first.source, "src/index.ts");
+    assert_eq!(first.line, 1);
+    let second = map.original_position(2, 1).expect("line 2");
+    assert_eq!(second.line, 2);
+}
+
+#[test]
 fn bundle_hash_mismatch_is_rejected() {
     let mut tap = sample_tap();
     tap.manifest.bundle_hash = "deadbeef".into();

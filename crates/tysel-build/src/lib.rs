@@ -94,6 +94,7 @@ fn set_executable(path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tysel_package::SourceMap;
 
     #[test]
     fn crate_is_named() {
@@ -181,6 +182,52 @@ export default {
         assert!(js.contains("bundled"));
         assert!(!js.contains("from \"./util.ts\""));
         assert!(js.contains("export default"));
+    }
+
+    #[test]
+    fn bundled_source_map_locates_imported_typescript() {
+        let dir = std::env::temp_dir().join(format!("tysel-build-smap-{}", std::process::id()));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("src/helper.ts"),
+            r#"
+export function marker(): string {
+  return "SOURCEMAP_MARKER";
+}
+"#,
+        )
+        .unwrap();
+        let entry = dir.join("src/index.ts");
+        fs::write(
+            &entry,
+            r#"
+import { marker } from "./helper.ts";
+export default {
+  fetch() {
+    return new Response(marker());
+  },
+};
+"#,
+        )
+        .unwrap();
+        let (bundle, map_bytes) = read_bundle(&entry).unwrap();
+        let js = String::from_utf8(bundle).unwrap();
+        let map_json = String::from_utf8(map_bytes.clone()).unwrap();
+        assert!(!map_json.contains("\"mappings\": \"AAAA\""), "bundled map was a stub: {map_json}");
+        let map = SourceMap::parse(&map_bytes).expect("parse bundled map");
+        let line = line_of(&js, "SOURCEMAP_MARKER");
+        let origin = map.original_position(line, 3).expect("locate marker");
+        assert!(origin.source.ends_with("src/helper.ts"), "source was {}", origin.source);
+        assert!(
+            origin.content.as_deref().unwrap().contains("SOURCEMAP_MARKER"),
+            "missing original helper source"
+        );
+        assert!(origin.content.as_deref().unwrap().contains("marker(): string"));
+    }
+
+    fn line_of(source: &str, needle: &str) -> u32 {
+        let offset = source.find(needle).unwrap_or_else(|| panic!("missing {needle}"));
+        source[..offset].bytes().filter(|byte| *byte == b'\n').count() as u32 + 1
     }
 
     #[test]
