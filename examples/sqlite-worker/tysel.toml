@@ -1,0 +1,11 @@
+[app]
+name = "sqlite-worker"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+
+[durable]
+store = "sqlite"
+path = "./data/tysel.db"

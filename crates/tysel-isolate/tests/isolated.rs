@@ -48,6 +48,32 @@ fn isolated_sleep_resolves_without_broker() {
 }
 
 #[test]
+fn sqlite_is_denied_in_isolated_worker() {
+    let mut supervisor = supervisor();
+    let value = supervisor
+        .eval(
+            r#"(async () => {
+                try {
+                    await tysel.sqlite.exec("SELECT 1");
+                    return "allowed";
+                } catch (err) {
+                    return String(err);
+                }
+            })()"#,
+        )
+        .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(
+                message.contains("capability is not available in the isolated worker"),
+                "unexpected error: {message}"
+            );
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
 fn sleep_timeout_keeps_supervisor_live() {
     let mut supervisor =
         Supervisor::spawn(worker_exe(), WorkerSpec { request_timeout_ms: 80, ..spec() }, secrets())

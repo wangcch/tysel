@@ -66,6 +66,7 @@ tysel-build = { path = "crates/tysel-build" }
 tysel-ipc = { path = "crates/tysel-ipc" }
 tysel-isolate = { path = "crates/tysel-isolate" }
 tysel-capability = { path = "crates/tysel-capability" }
+tysel-cap-sqlite = { path = "crates/tysel-cap-sqlite" }
 tysel-task = { path = "crates/tysel-task" }
 
 [workspace.lints.rust]

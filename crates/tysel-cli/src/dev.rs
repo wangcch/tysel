@@ -61,6 +61,7 @@ fn load(
     let (bundle, source_map) = tysel_build::read_bundle(&entry)
         .with_context(|| format!("failed to bundle {}", entry.display()))?;
     let tap = tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), bundle, source_map);
+    tysel_engine_qjs::configure_sqlite_path(&tap.manifest.sqlite_path, Some(root));
     let source = tap.bundle_source()?.to_owned();
     let config = IsolateConfig {
         memory_limit_bytes: tap.manifest.memory_limit_bytes,

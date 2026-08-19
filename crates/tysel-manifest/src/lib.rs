@@ -205,6 +205,10 @@ impl Manifest {
                 out.push_str(&format!("    {secret}\n"));
             }
         }
+        if self.durable.store == "sqlite" {
+            out.push_str("  SQLite\n");
+            out.push_str(&format!("    {}\n", self.durable.path));
+        }
         if !self.permissions.fs_read.is_empty() {
             out.push_str("\nFilesystem\n  Read\n");
             for path in &self.permissions.fs_read {
@@ -239,5 +243,7 @@ listen = "127.0.0.1:3000"
         assert_eq!(manifest.app.name, "hello-service");
         assert_eq!(manifest.server.listen, "127.0.0.1:3000");
         assert!(manifest.permissions.fetch.is_empty());
+        assert!(manifest.inspect_report().contains("SQLite"));
+        assert!(manifest.inspect_report().contains("./data/tysel.db"));
     }
 }

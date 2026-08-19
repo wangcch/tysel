@@ -35,6 +35,11 @@ pub fn tap_from_app(
         bundle_hash: String::new(),
         max_request_bytes: (manifest.limits.max_request_mb as usize).saturating_mul(1024 * 1024),
         websocket: manifest.server.websocket,
+        sqlite_path: if manifest.durable.store == "sqlite" {
+            manifest.durable.path.clone()
+        } else {
+            String::new()
+        },
     };
     Tap::new(packaged, bundle, source_map)
 }
@@ -130,6 +135,7 @@ listen = "127.0.0.1:0"
         assert_eq!(extracted.bundle, bundle);
         assert_eq!(extracted.manifest.application_id, "hello-service");
         assert_eq!(extracted.manifest.listen, "127.0.0.1:0");
+        assert_eq!(extracted.manifest.sqlite_path, "./data/tysel.db");
     }
 
     #[test]

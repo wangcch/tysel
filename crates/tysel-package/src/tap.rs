@@ -42,6 +42,8 @@ pub struct PackageManifest {
     pub max_request_bytes: usize,
     #[serde(default)]
     pub websocket: bool,
+    #[serde(default)]
+    pub sqlite_path: String,
 }
 
 pub fn default_max_request_bytes() -> usize {

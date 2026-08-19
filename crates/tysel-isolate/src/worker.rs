@@ -194,7 +194,9 @@ fn cap_call(request: &IoRequest) -> Option<Message> {
         | IoRequest::HttpRead { .. }
         | IoRequest::WsRead { .. }
         | IoRequest::WsSend { .. }
-        | IoRequest::WsClose { .. } => None,
+        | IoRequest::WsClose { .. }
+        | IoRequest::SqliteExec { .. }
+        | IoRequest::SqliteQuery { .. } => None,
     }
 }
 

@@ -11,3 +11,6 @@ description = "Official SQLite capability."
 workspace = true
 
 [dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json.workspace = true
+tysel-engine.workspace = true

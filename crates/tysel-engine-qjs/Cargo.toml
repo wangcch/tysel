@@ -20,6 +20,7 @@ native-tls.workspace = true
 rquickjs.workspace = true
 tokio.workspace = true
 tokio-native-tls.workspace = true
+tysel-cap-sqlite.workspace = true
 tysel-engine.workspace = true
 
 [dev-dependencies]

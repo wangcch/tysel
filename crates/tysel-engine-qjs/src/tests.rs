@@ -46,6 +46,70 @@ fn secret_ref_returns_opaque_handle() {
 }
 
 #[test]
+fn sqlite_query_roundtrips_bound_params() {
+    let value = eval(
+        r#"
+        (async () => {
+            const t = "t_" + Math.random().toString(16).slice(2);
+            await tysel.sqlite.exec("CREATE TABLE " + t + " (id INTEGER, name TEXT)");
+            const changes = await tysel.sqlite.exec(
+                "INSERT INTO " + t + " (id, name) VALUES (?, ?)",
+                [1, "o'reilly"]
+            );
+            if (changes !== 1) return "changes=" + changes;
+            const rows = await tysel.sqlite.query(
+                "SELECT id, name FROM " + t + " WHERE name = ?",
+                ["o'reilly"]
+            );
+            return JSON.stringify(rows);
+        })()
+        "#,
+        config(),
+    )
+    .expect("eval");
+    assert_eq!(value, Value::String(r#"[{"id":1,"name":"o'reilly"}]"#.into()));
+}
+
+#[test]
+fn sqlite_timeout_keeps_the_connection_usable() {
+    let started = Instant::now();
+    let result = eval(
+        r#"(async () => tysel.sqlite.query(
+            "WITH RECURSIVE t(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM t WHERE x < 200000000)
+             SELECT COUNT(*) AS n FROM t"
+        ))()"#,
+        IsolateConfig { request_timeout_ms: 80, ..config() },
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "sqlite query was not interrupted ({:?})",
+        started.elapsed()
+    );
+    match result {
+        Err(EngineError::Interrupted(InterruptReason::Timeout)) => {}
+        Err(EngineError::Isolate(_)) => {}
+        Ok(Value::String(message))
+            if message.to_ascii_lowercase().contains("timeout")
+                || message.to_ascii_lowercase().contains("interrupt") => {}
+        other => panic!("unexpected result: {other:?}"),
+    }
+    let value = eval(
+        r#"
+        (async () => {
+            const t = "t_after_" + Math.random().toString(16).slice(2);
+            await tysel.sqlite.exec("CREATE TABLE " + t + " (id INTEGER)");
+            await tysel.sqlite.exec("INSERT INTO " + t + " (id) VALUES (7)");
+            const rows = await tysel.sqlite.query("SELECT id FROM " + t);
+            return JSON.stringify(rows);
+        })()
+        "#,
+        config(),
+    )
+    .expect("sqlite after timeout");
+    assert_eq!(value, Value::String(r#"[{"id":7}]"#.into()));
+}
+
+#[test]
 fn text_encoder_roundtrips_utf8() {
     let value = eval(
         r#"(() => {
@@ -313,6 +377,42 @@ async fn fetch_handler_sleep_does_not_exhaust_cpu_budget() {
         bytes.extend(chunk);
     }
     assert_eq!(String::from_utf8(bytes).expect("utf8"), "slept");
+}
+
+const SQLITE_HANDLER: &str = r#"
+export default {
+  async fetch() {
+    await tysel.sqlite.exec(
+      "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value INTEGER NOT NULL)"
+    );
+    await tysel.sqlite.exec(
+      "INSERT INTO kv(key, value) VALUES ('hits', 1) ON CONFLICT(key) DO UPDATE SET value = value + 1"
+    );
+    const rows = await tysel.sqlite.query("SELECT value FROM kv WHERE key = ?", ["hits"]);
+    return Response.json({ value: rows[0].value });
+  },
+};
+"#;
+
+#[tokio::test]
+async fn fetch_handler_sqlite_increments_counter() {
+    let pool = IsolatePool::spawn(1, SQLITE_HANDLER, config()).expect("spawn isolate");
+    let (head, mut body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/".into(),
+            headers: vec![],
+            body: vec![],
+        })
+        .await
+        .expect("dispatch");
+    assert_eq!(head.status, 200);
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.recv().await {
+        bytes.extend(chunk);
+    }
+    let json = String::from_utf8(bytes).expect("utf8");
+    assert_eq!(json, r#"{"value":1}"#);
 }
 
 const HEADERS_HANDLER: &str = r#"

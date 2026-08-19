@@ -52,6 +52,8 @@ pub enum IoRequest {
     WsRead { id: OpId },
     WsSend { id: OpId, data: String },
     WsClose { id: OpId },
+    SqliteExec { id: OpId, sql: String, params_json: String },
+    SqliteQuery { id: OpId, sql: String, params_json: String },
 }
 
 impl IoRequest {
@@ -65,7 +67,9 @@ impl IoRequest {
             | Self::HttpRead { id }
             | Self::WsRead { id }
             | Self::WsSend { id, .. }
-            | Self::WsClose { id } => *id,
+            | Self::WsClose { id }
+            | Self::SqliteExec { id, .. }
+            | Self::SqliteQuery { id, .. } => *id,
         }
     }
 }
@@ -298,6 +302,69 @@ async fn execute(
         IoRequest::WsClose { id } => {
             slots.ws_out.close().await;
             IoCompletion { id, result: Ok(Value::Null) }
+        }
+        IoRequest::SqliteExec { id, sql, params_json } => {
+            IoCompletion { id, result: sqlite_op(sql, params_json, false, cancel, deadline).await }
+        }
+        IoRequest::SqliteQuery { id, sql, params_json } => {
+            IoCompletion { id, result: sqlite_op(sql, params_json, true, cancel, deadline).await }
+        }
+    }
+}
+
+async fn sqlite_op(
+    sql: String,
+    params_json: String,
+    query: bool,
+    cancel: Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<Value, String> {
+    wait_or_interrupt(cancel.clone(), deadline, tysel_cap_sqlite::ensure_ready).await?;
+    wait_or_interrupt(cancel, deadline, move || {
+        if query {
+            tysel_cap_sqlite::query(&sql, &params_json)
+        } else {
+            tysel_cap_sqlite::exec(&sql, &params_json).map(Value::Number)
+        }
+    })
+    .await
+}
+
+async fn wait_or_interrupt<T, F>(
+    cancel: Arc<AtomicBool>,
+    deadline: Instant,
+    work: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    if cancel.load(Ordering::SeqCst) {
+        return Err(io_err(InterruptReason::Cancelled));
+    }
+    if Instant::now() >= deadline {
+        return Err(io_err(InterruptReason::Timeout));
+    }
+    let cancel_flag = cancel.clone();
+    let task = tokio::task::spawn_blocking(move || {
+        if cancel_flag.load(Ordering::SeqCst) {
+            return Err(io_err(InterruptReason::Cancelled));
+        }
+        if Instant::now() >= deadline {
+            return Err(io_err(InterruptReason::Timeout));
+        }
+        work()
+    });
+    tokio::pin!(task);
+    tokio::select! {
+        biased;
+        result = &mut task => result.map_err(|err| err.to_string())?,
+        _ = cancelled(&cancel, deadline) => {
+            tysel_cap_sqlite::interrupt();
+            match task.await {
+                Ok(Ok(value)) => Ok(value),
+                Ok(Err(_)) | Err(_) => Err(interrupt_err(&cancel, deadline)),
+            }
         }
     }
 }

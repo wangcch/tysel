@@ -20,6 +20,8 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     let io_ws_read = io.clone();
     let io_ws_send = io.clone();
     let io_ws_close = io.clone();
+    let io_sqlite_exec = io.clone();
+    let io_sqlite_query = io.clone();
     tysel.set(
         "sleep",
         Function::new(ctx.clone(), move |ctx, millis: f64| {
@@ -113,6 +115,18 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
             submit(ctx, &io_ws_close, |id| IoRequest::WsClose { id })
         })?,
     )?;
+    tysel.set(
+        "_sqliteExec",
+        Function::new(ctx.clone(), move |ctx, sql: String, params_json: String| {
+            submit(ctx, &io_sqlite_exec, |id| IoRequest::SqliteExec { id, sql, params_json })
+        })?,
+    )?;
+    tysel.set(
+        "_sqliteQuery",
+        Function::new(ctx.clone(), move |ctx, sql: String, params_json: String| {
+            submit(ctx, &io_sqlite_query, |id| IoRequest::SqliteQuery { id, sql, params_json })
+        })?,
+    )?;
     ctx.globals().set("tysel", tysel)?;
     ctx.eval::<(), _>(
         r#"
@@ -161,6 +175,14 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
             }
           })();
           return socket;
+        };
+        globalThis.tysel.sqlite = {
+          exec(sql, params) {
+            return tysel._sqliteExec(String(sql), JSON.stringify(params == null ? [] : params));
+          },
+          query(sql, params) {
+            return tysel._sqliteQuery(String(sql), JSON.stringify(params == null ? [] : params));
+          },
         };
         "#,
     )?;
