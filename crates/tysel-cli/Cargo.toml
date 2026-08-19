@@ -18,3 +18,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 tysel-manifest.workspace = true
+tysel-build.workspace = true
+
+[dev-dependencies]
+tysel-package.workspace = true
