@@ -40,6 +40,8 @@ pub struct PackageManifest {
     pub bundle_hash: String,
     #[serde(default = "default_max_request_bytes")]
     pub max_request_bytes: usize,
+    #[serde(default)]
+    pub websocket: bool,
 }
 
 pub fn default_max_request_bytes() -> usize {

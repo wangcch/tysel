@@ -49,6 +49,9 @@ pub enum IoRequest {
     ReadBody { id: OpId },
     HttpGet { id: OpId, url: String, method: String },
     HttpRead { id: OpId },
+    WsRead { id: OpId },
+    WsSend { id: OpId, data: String },
+    WsClose { id: OpId },
 }
 
 impl IoRequest {
@@ -59,7 +62,10 @@ impl IoRequest {
             | Self::SecretRef { id, .. }
             | Self::ReadBody { id }
             | Self::HttpGet { id, .. }
-            | Self::HttpRead { id } => *id,
+            | Self::HttpRead { id }
+            | Self::WsRead { id }
+            | Self::WsSend { id, .. }
+            | Self::WsClose { id } => *id,
         }
     }
 }
@@ -108,12 +114,45 @@ impl StreamSlot {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct SendSlot {
+    inner: Arc<Mutex<Option<mpsc::Sender<Vec<u8>>>>>,
+}
+
+impl SendSlot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn install(&self, tx: mpsc::Sender<Vec<u8>>) {
+        *self.inner.blocking_lock() = Some(tx);
+    }
+
+    pub fn clear(&self) {
+        *self.inner.blocking_lock() = None;
+    }
+
+    async fn send(&self, bytes: Vec<u8>) -> Result<(), String> {
+        let tx = {
+            let guard = self.inner.lock().await;
+            guard.clone().ok_or_else(|| "websocket is not connected".to_string())?
+        };
+        tx.send(bytes).await.map_err(|_| "websocket closed".into())
+    }
+
+    async fn close(&self) {
+        *self.inner.lock().await = None;
+    }
+}
+
 #[derive(Clone)]
 pub struct IoHandle {
     tx: UnboundedSender<IoRequest>,
     next_id: Arc<AtomicU64>,
     pub inbound: StreamSlot,
     pub outbound: StreamSlot,
+    pub ws_in: StreamSlot,
+    pub ws_out: SendSlot,
 }
 
 impl IoHandle {
@@ -132,16 +171,39 @@ pub struct Reactor {
 pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
     let inbound = StreamSlot::new();
     let outbound = StreamSlot::new();
+    let ws_in = StreamSlot::new();
+    let ws_out = SendSlot::new();
     let (req_tx, req_rx) = unbounded_channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let inbound_task = inbound.clone();
     let outbound_task = outbound.clone();
+    let ws_in_task = ws_in.clone();
+    let ws_out_task = ws_out.clone();
     io_handle().spawn(async move {
-        run_reactor(req_rx, done_tx, cancel, deadline, inbound_task, outbound_task).await;
+        run_reactor(
+            req_rx,
+            done_tx,
+            cancel,
+            deadline,
+            IoSlots {
+                inbound: inbound_task,
+                outbound: outbound_task,
+                ws_in: ws_in_task,
+                ws_out: ws_out_task,
+            },
+        )
+        .await;
     });
 
     Reactor {
-        io: IoHandle { tx: req_tx, next_id: Arc::new(AtomicU64::new(1)), inbound, outbound },
+        io: IoHandle {
+            tx: req_tx,
+            next_id: Arc::new(AtomicU64::new(1)),
+            inbound,
+            outbound,
+            ws_in,
+            ws_out,
+        },
         completions: done_rx,
     }
 }
@@ -162,6 +224,8 @@ pub fn open_bridge()
                 next_id: Arc::new(AtomicU64::new(1)),
                 inbound: StreamSlot::new(),
                 outbound: StreamSlot::new(),
+                ws_in: StreamSlot::new(),
+                ws_out: SendSlot::new(),
             },
             completions: done_rx,
         },
@@ -170,21 +234,31 @@ pub fn open_bridge()
     )
 }
 
+struct IoSlots {
+    inbound: StreamSlot,
+    outbound: StreamSlot,
+    ws_in: StreamSlot,
+    ws_out: SendSlot,
+}
+
 async fn run_reactor(
     mut requests: UnboundedReceiver<IoRequest>,
     completions: std::sync::mpsc::Sender<IoCompletion>,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
-    inbound: StreamSlot,
-    outbound: StreamSlot,
+    slots: IoSlots,
 ) {
     while let Some(request) = requests.recv().await {
         let completions = completions.clone();
         let cancel = cancel.clone();
-        let inbound = inbound.clone();
-        let outbound = outbound.clone();
+        let slots = IoSlots {
+            inbound: slots.inbound.clone(),
+            outbound: slots.outbound.clone(),
+            ws_in: slots.ws_in.clone(),
+            ws_out: slots.ws_out.clone(),
+        };
         tokio::spawn(async move {
-            let completion = execute(request, cancel, deadline, inbound, outbound).await;
+            let completion = execute(request, cancel, deadline, slots).await;
             let _ = completions.send(completion);
         });
     }
@@ -194,8 +268,7 @@ async fn execute(
     request: IoRequest,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
-    inbound: StreamSlot,
-    outbound: StreamSlot,
+    slots: IoSlots,
 ) -> IoCompletion {
     match request {
         IoRequest::Sleep { id, millis } => IoCompletion {
@@ -209,12 +282,23 @@ async fn execute(
         IoRequest::SecretRef { id, name } => {
             IoCompletion { id, result: Ok(Value::String(format!("secret:{name}"))) }
         }
-        IoRequest::ReadBody { id } => IoCompletion { id, result: read_chunk(&inbound).await },
-        IoRequest::HttpRead { id } => IoCompletion { id, result: read_chunk(&outbound).await },
+        IoRequest::ReadBody { id } => IoCompletion { id, result: read_chunk(&slots.inbound).await },
+        IoRequest::HttpRead { id } => {
+            IoCompletion { id, result: read_chunk(&slots.outbound).await }
+        }
         IoRequest::HttpGet { id, url, method } => IoCompletion {
             id,
-            result: outbound_fetch(&method, &url, cancel, deadline, outbound).await,
+            result: outbound_fetch(&method, &url, cancel, deadline, slots.outbound).await,
         },
+        IoRequest::WsRead { id } => IoCompletion { id, result: read_chunk(&slots.ws_in).await },
+        IoRequest::WsSend { id, data } => IoCompletion {
+            id,
+            result: slots.ws_out.send(data.into_bytes()).await.map(|()| Value::Null),
+        },
+        IoRequest::WsClose { id } => {
+            slots.ws_out.close().await;
+            IoCompletion { id, result: Ok(Value::Null) }
+        }
     }
 }
 

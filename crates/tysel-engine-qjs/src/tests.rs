@@ -375,6 +375,8 @@ async fn fetch_handler_reads_streamed_request_body() {
         url: "http://tysel.local/".into(),
         headers: vec![],
         body: rx,
+        ws_in: None,
+        ws_out: None,
     });
     tx.send(Ok(b"hel".to_vec())).await.unwrap();
     tx.send(Ok(b"lo".to_vec())).await.unwrap();
@@ -407,6 +409,8 @@ async fn streamed_request_body_applies_backpressure() {
             url: "http://tysel.local/".into(),
             headers: vec![],
             body: rx,
+            ws_in: None,
+            ws_out: None,
         })
         .await
     });
@@ -438,6 +442,8 @@ async fn oversized_streamed_body_is_body_too_large() {
         url: "http://tysel.local/".into(),
         headers: vec![],
         body: rx,
+        ws_in: None,
+        ws_out: None,
     });
     tx.send(Ok(b"ok".to_vec())).await.unwrap();
     tx.send(Err(EngineError::BodyTooLarge.to_string())).await.unwrap();
@@ -575,6 +581,42 @@ async fn fetch_rejects_post() {
         }
         other => panic!("expected error string, got {other:?}"),
     }
+}
+
+const WS_ECHO: &str = r#"
+export default {
+  async fetch() {
+    const socket = tysel.acceptWebSocket();
+    socket.addEventListener("message", (event) => {
+      socket.send(event.data);
+    });
+    return new Response(null, { status: 101 });
+  },
+};
+"#;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn accepted_websocket_echoes_text() {
+    let pool = IsolatePool::spawn(1, WS_ECHO, config()).expect("spawn isolate");
+    let (to_js_tx, to_js_rx) = tokio::sync::mpsc::channel(STREAM_WINDOW);
+    let (from_js_tx, mut from_js_rx) = tokio::sync::mpsc::channel(STREAM_WINDOW);
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    drop(tx);
+    let dispatch = pool.dispatch_incoming(IncomingHttp {
+        method: "GET".into(),
+        url: "http://tysel.local/ws".into(),
+        headers: vec![],
+        body: rx,
+        ws_in: Some(to_js_rx),
+        ws_out: Some(from_js_tx),
+    });
+    let (head, _body) = dispatch.await.expect("dispatch");
+    assert_eq!(head.status, 101);
+    assert!(head.websocket);
+    to_js_tx.send(Ok(b"ping".to_vec())).await.unwrap();
+    let echoed = from_js_rx.recv().await.expect("echo");
+    assert_eq!(echoed, b"ping");
+    drop(to_js_tx);
 }
 
 fn serve_bytes(body: Bytes) -> SocketAddr {

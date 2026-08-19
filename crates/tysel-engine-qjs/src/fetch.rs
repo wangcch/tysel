@@ -403,10 +403,22 @@ pub fn emit_response(
     let response: Object = ctx.globals().get("__tysel_response").map_err(js_err)?;
     let status: i32 = response.get("status").unwrap_or(200);
     let headers = read_headers(&response)?;
-    let _ = head_tx.send(Ok(HttpHead { status: status.max(0) as u16, headers }));
+    let _ = head_tx.send(Ok(HttpHead {
+        status: status.max(0) as u16,
+        headers,
+        websocket: ctx.globals().get::<_, bool>("__tysel_ws_accepted").unwrap_or(false),
+    }));
     let body: rquickjs::Value = response.get("body").map_err(js_err)?;
     send_body(body, &body_tx)?;
     Ok(())
+}
+
+pub fn arm_websocket(ctx: Ctx<'_>) -> Result<bool, EngineError> {
+    let Ok(promise) = ctx.globals().get::<_, rquickjs::Promise>("__tysel_ws_done") else {
+        return Ok(false);
+    };
+    ctx.globals().set("__tysel_result", promise).map_err(js_err)?;
+    Ok(true)
 }
 
 fn read_headers(response: &Object<'_>) -> Result<Vec<(String, String)>, EngineError> {

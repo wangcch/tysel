@@ -132,6 +132,7 @@ fn package_stub() -> PathBuf {
             request_timeout_ms: 2_000,
             bundle_hash: String::new(),
             max_request_bytes: 16 * 1024 * 1024,
+            websocket: false,
         },
         HANDLER.as_bytes().to_vec(),
         map,

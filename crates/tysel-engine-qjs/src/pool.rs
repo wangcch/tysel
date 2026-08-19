@@ -18,6 +18,8 @@ pub struct IncomingHttp {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: mpsc::Receiver<Result<Vec<u8>, String>>,
+    pub ws_in: Option<mpsc::Receiver<Result<Vec<u8>, String>>>,
+    pub ws_out: Option<mpsc::Sender<Vec<u8>>>,
 }
 
 impl From<HttpRequest> for IncomingHttp {
@@ -27,6 +29,8 @@ impl From<HttpRequest> for IncomingHttp {
             url: request.url,
             headers: request.headers,
             body: sealed_body(request.body),
+            ws_in: None,
+            ws_out: None,
         }
     }
 }
@@ -180,10 +184,14 @@ fn run_worker(
         let job_result =
             handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, &cpu);
         reactor.io.inbound.clear();
+        reactor.io.ws_in.clear();
+        reactor.io.ws_out.clear();
         let _ = context.with(|ctx| {
             let _ = host::reset_timers(&ctx);
             let _ = ctx.globals().remove("__tysel_response");
             let _ = ctx.globals().remove("__tysel_result");
+            let _ = ctx.globals().remove("__tysel_ws_done");
+            let _ = ctx.globals().set("__tysel_ws_accepted", false);
             Ok::<_, EngineError>(())
         });
         let _ = job_result;
@@ -220,6 +228,13 @@ fn handle_job(
 ) -> Result<(), EngineError> {
     let Job { request, head_tx, body_tx } = job;
     reactor.io.inbound.install(request.body);
+    if let Some(ws_in) = request.ws_in {
+        reactor.io.ws_in.install(ws_in);
+    }
+    if let Some(ws_out) = request.ws_out {
+        reactor.io.ws_out.install(ws_out);
+    }
+    let _ = context.with(|ctx| ctx.globals().set("__tysel_ws_accepted", false));
     let pending = match context.with(|ctx| {
         fetch::begin_fetch(
             ctx,
@@ -249,5 +264,9 @@ fn handle_job(
             return Err(err);
         }
     }
-    context.with(|ctx| fetch::emit_response(ctx, head_tx, body_tx))
+    context.with(|ctx| fetch::emit_response(ctx, head_tx, body_tx))?;
+    if context.with(fetch::arm_websocket)? {
+        isolate::wait_until_settled(runtime, context, reactor, cancel, request_deadline, cpu)?;
+    }
+    Ok(())
 }

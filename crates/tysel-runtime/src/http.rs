@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
+use futures_util::{SinkExt, StreamExt};
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::body::{Body, Frame, Incoming};
 use hyper::service::service_fn;
@@ -12,6 +13,10 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::tungstenite::protocol::Role;
 use tysel_engine::EngineError;
 use tysel_engine_qjs::{IncomingHttp, IsolatePool, STREAM_WINDOW};
 use tysel_package::default_max_request_bytes;
@@ -30,18 +35,30 @@ pub enum HttpError {
 
 #[derive(Clone)]
 pub struct SharedPool {
-    inner: Arc<RwLock<(Arc<IsolatePool>, usize)>>,
+    inner: Arc<RwLock<(Arc<IsolatePool>, usize, bool)>>,
 }
 
 impl SharedPool {
     pub fn new(pool: Arc<IsolatePool>, max_request_bytes: usize) -> Self {
-        Self { inner: Arc::new(RwLock::new((pool, max_request_bytes))) }
+        Self::with_websocket(pool, max_request_bytes, false)
+    }
+
+    pub fn with_websocket(
+        pool: Arc<IsolatePool>,
+        max_request_bytes: usize,
+        websocket: bool,
+    ) -> Self {
+        Self { inner: Arc::new(RwLock::new((pool, max_request_bytes, websocket))) }
     }
 
     pub fn replace(&self, pool: Arc<IsolatePool>, max_request_bytes: usize) {
+        self.replace_with(pool, max_request_bytes, self.websocket());
+    }
+
+    pub fn replace_with(&self, pool: Arc<IsolatePool>, max_request_bytes: usize, websocket: bool) {
         let previous = {
             let mut guard = self.inner.write().expect("pool lock");
-            std::mem::replace(&mut *guard, (pool, max_request_bytes))
+            std::mem::replace(&mut *guard, (pool, max_request_bytes, websocket))
         };
         drop(previous);
     }
@@ -50,6 +67,10 @@ impl SharedPool {
         let guard = self.inner.read().expect("pool lock");
         (guard.0.clone(), guard.1)
     }
+
+    pub fn websocket(&self) -> bool {
+        self.inner.read().expect("pool lock").2
+    }
 }
 
 pub async fn serve(
@@ -57,7 +78,16 @@ pub async fn serve(
     pool: Arc<IsolatePool>,
     max_request_bytes: usize,
 ) -> Result<(), HttpError> {
-    let pool = SharedPool::new(pool, max_request_bytes);
+    serve_with_websocket(listener, pool, max_request_bytes, false).await
+}
+
+pub async fn serve_with_websocket(
+    listener: TcpListener,
+    pool: Arc<IsolatePool>,
+    max_request_bytes: usize,
+    websocket: bool,
+) -> Result<(), HttpError> {
+    let pool = SharedPool::with_websocket(pool, max_request_bytes, websocket);
     loop {
         let (stream, _peer) = listener.accept().await?;
         handle_stream(stream, pool.clone());
@@ -71,12 +101,15 @@ pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
             let pool = pool.clone();
             async move {
                 let (isolate, max_request_bytes) = pool.current();
-                Ok::<_, Infallible>(dispatch(isolate, request, max_request_bytes).await)
+                Ok::<_, Infallible>(
+                    dispatch(isolate, request, max_request_bytes, pool.websocket()).await,
+                )
             }
         });
         let _ = hyper::server::conn::http1::Builder::new()
             .keep_alive(true)
             .serve_connection(io, service)
+            .with_upgrades()
             .await;
     });
 }
@@ -90,10 +123,19 @@ pub async fn bind_with_request_limit(
     pool: Arc<IsolatePool>,
     max_request_bytes: usize,
 ) -> Result<SocketAddr, HttpError> {
+    bind_with(addr, pool, max_request_bytes, false).await
+}
+
+pub async fn bind_with(
+    addr: SocketAddr,
+    pool: Arc<IsolatePool>,
+    max_request_bytes: usize,
+    websocket: bool,
+) -> Result<SocketAddr, HttpError> {
     let listener = TcpListener::bind(addr).await?;
     let local = listener.local_addr()?;
     tokio::spawn(async move {
-        let _ = serve(listener, pool, max_request_bytes).await;
+        let _ = serve_with_websocket(listener, pool, max_request_bytes, websocket).await;
     });
     Ok(local)
 }
@@ -102,8 +144,9 @@ async fn dispatch(
     pool: Arc<IsolatePool>,
     request: Request<Incoming>,
     max_request_bytes: usize,
+    websocket: bool,
 ) -> Response<HttpBody> {
-    match dispatch_inner(pool, request, max_request_bytes).await {
+    match dispatch_inner(pool, request, max_request_bytes, websocket).await {
         Ok(response) => response,
         Err(HttpError::BodyTooLarge(limit)) => Response::builder()
             .status(StatusCode::PAYLOAD_TOO_LARGE)
@@ -125,6 +168,7 @@ async fn dispatch_inner(
     pool: Arc<IsolatePool>,
     request: Request<Incoming>,
     max_request_bytes: usize,
+    websocket_enabled: bool,
 ) -> Result<Response<HttpBody>, HttpError> {
     if let Some(len) = request
         .headers()
@@ -136,6 +180,16 @@ async fn dispatch_inner(
             return Err(HttpError::BodyTooLarge(max_request_bytes));
         }
     }
+    let upgrade = websocket_enabled && is_websocket_upgrade(&request);
+    let ws_key = upgrade
+        .then(|| {
+            request
+                .headers()
+                .get(hyper::header::SEC_WEBSOCKET_KEY)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        })
+        .flatten();
     let method = request.method().as_str().to_owned();
     let uri = request.uri().clone();
     let headers = request
@@ -148,13 +202,28 @@ async fn dispatch_inner(
     let url = uri.to_string();
     let url = if url.starts_with('/') { format!("http://tysel.local{url}") } else { url };
     let (tx, rx) = mpsc::channel(STREAM_WINDOW);
-    let incoming = request.into_body();
-    tokio::spawn(async move {
-        pump_request_body(Limited::new(incoming, max_request_bytes), tx).await;
-    });
+    let (ws_to_js_tx, ws_to_js_rx) = mpsc::channel(STREAM_WINDOW);
+    let (ws_from_js_tx, ws_from_js_rx) = mpsc::channel(STREAM_WINDOW);
+    let pending_upgrade = if upgrade {
+        drop(tx);
+        Some(request)
+    } else {
+        let incoming = request.into_body();
+        tokio::spawn(async move {
+            pump_request_body(Limited::new(incoming, max_request_bytes), tx).await;
+        });
+        None
+    };
 
     let (head, chunks) = match pool
-        .dispatch_incoming(IncomingHttp { method, url, headers, body: rx })
+        .dispatch_incoming(IncomingHttp {
+            method,
+            url,
+            headers,
+            body: rx,
+            ws_in: upgrade.then_some(ws_to_js_rx),
+            ws_out: upgrade.then_some(ws_from_js_tx),
+        })
         .await
     {
         Ok(pair) => pair,
@@ -162,11 +231,94 @@ async fn dispatch_inner(
         Err(err) => return Err(err.into()),
     };
 
+    if let (Some(request), Some(key)) = (pending_upgrade, ws_key) {
+        if head.websocket && head.status == 101 {
+            tokio::spawn(async move {
+                if let Ok(upgraded) = hyper::upgrade::on(request).await {
+                    pump_websocket(upgraded, ws_to_js_tx, ws_from_js_rx).await;
+                }
+            });
+            let accept = derive_accept_key(key.as_bytes());
+            let mut builder = Response::builder()
+                .status(StatusCode::SWITCHING_PROTOCOLS)
+                .header(hyper::header::UPGRADE, "websocket")
+                .header(hyper::header::CONNECTION, "Upgrade")
+                .header(hyper::header::SEC_WEBSOCKET_ACCEPT, accept);
+            for (name, value) in head.headers {
+                builder = builder.header(name, value);
+            }
+            return builder
+                .body(HttpBody::Once(None))
+                .map_err(|err| HttpError::Hyper(err.to_string()));
+        }
+    }
+
     let mut builder = Response::builder().status(head.status);
     for (name, value) in head.headers {
         builder = builder.header(name, value);
     }
     builder.body(HttpBody::stream(chunks)).map_err(|err| HttpError::Hyper(err.to_string()))
+}
+
+fn is_websocket_upgrade(request: &Request<Incoming>) -> bool {
+    if request.method() != hyper::Method::GET {
+        return false;
+    }
+    let upgrade = request
+        .headers()
+        .get(hyper::header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    let connection = request
+        .headers()
+        .get(hyper::header::CONNECTION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("upgrade"));
+    let version = request
+        .headers()
+        .get(hyper::header::SEC_WEBSOCKET_VERSION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim() == "13");
+    let key = request.headers().get(hyper::header::SEC_WEBSOCKET_KEY).is_some();
+    upgrade && connection && version && key
+}
+
+async fn pump_websocket(
+    upgraded: hyper::upgrade::Upgraded,
+    to_js: mpsc::Sender<Result<Vec<u8>, String>>,
+    mut from_js: mpsc::Receiver<Vec<u8>>,
+) {
+    let mut ws = WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
+    loop {
+        tokio::select! {
+            incoming = ws.next() => {
+                match incoming {
+                    Some(Ok(Message::Text(text))) => {
+                        if to_js.send(Ok(text.as_bytes().to_vec())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
+                    Some(Ok(Message::Binary(_))) => {}
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                }
+            }
+            outgoing = from_js.recv() => {
+                match outgoing {
+                    Some(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes).into_owned();
+                        if ws.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => {
+                        let _ = ws.close(None).await;
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn pump_request_body(mut body: Limited<Incoming>, tx: mpsc::Sender<Result<Vec<u8>, String>>) {

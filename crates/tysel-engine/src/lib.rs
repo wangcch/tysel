@@ -75,6 +75,7 @@ pub struct HttpRequest {
 pub struct HttpHead {
     pub status: u16,
     pub headers: Vec<(String, String)>,
+    pub websocket: bool,
 }
 
 /// JavaScript / Wasm / AOT execution backend.

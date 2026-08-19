@@ -24,6 +24,8 @@ tysel-package.workspace = true
 tysel-task.workspace = true
 tysel-capability.workspace = true
 tracing.workspace = true
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
 
 [[bin]]
 name = "tysel-service"

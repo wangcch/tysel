@@ -7,7 +7,7 @@ use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::IsolatePool;
 use tysel_package::Tap;
 
-use crate::http::{HttpError, serve};
+use crate::http::{HttpError, serve_with_websocket};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StubError {
@@ -41,6 +41,12 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     let bound = listener.local_addr()?;
     println!("tysel listen {bound}");
     io::stdout().flush()?;
-    serve(listener, Arc::new(pool), tap.manifest.max_request_bytes).await?;
+    serve_with_websocket(
+        listener,
+        Arc::new(pool),
+        tap.manifest.max_request_bytes,
+        tap.manifest.websocket,
+    )
+    .await?;
     Ok(())
 }

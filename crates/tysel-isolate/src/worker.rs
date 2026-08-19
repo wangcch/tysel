@@ -189,7 +189,12 @@ fn cap_call(request: &IoRequest) -> Option<Message> {
             op: "secret.ref".into(),
             args: vec![WireValue::String { v: name.clone() }],
         }),
-        IoRequest::ReadBody { .. } | IoRequest::HttpGet { .. } | IoRequest::HttpRead { .. } => None,
+        IoRequest::ReadBody { .. }
+        | IoRequest::HttpGet { .. }
+        | IoRequest::HttpRead { .. }
+        | IoRequest::WsRead { .. }
+        | IoRequest::WsSend { .. }
+        | IoRequest::WsClose { .. } => None,
     }
 }
 

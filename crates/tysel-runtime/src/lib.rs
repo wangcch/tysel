@@ -6,7 +6,10 @@
 mod http;
 mod service;
 
-pub use http::{HttpError, SharedPool, bind, bind_with_request_limit, handle_stream, serve};
+pub use http::{
+    HttpError, SharedPool, bind, bind_with, bind_with_request_limit, handle_stream, serve,
+    serve_with_websocket,
+};
 pub use service::{StubError, run_stub, run_tap};
 
 pub fn crate_name() -> &'static str {

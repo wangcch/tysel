@@ -21,8 +21,8 @@ struct Watch {
 }
 
 pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
-    let (isolate, max_request_bytes, addr) = load(&manifest_path, entry.as_deref())?;
-    let pool = SharedPool::new(isolate, max_request_bytes);
+    let (isolate, max_request_bytes, addr, websocket) = load(&manifest_path, entry.as_deref())?;
+    let pool = SharedPool::with_websocket(isolate, max_request_bytes, websocket);
     let listener = TcpListener::bind(addr).await.with_context(|| format!("bind {addr}"))?;
     let bound = listener.local_addr()?;
     println!("tysel listen {bound}");
@@ -33,9 +33,9 @@ pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => return Ok(()),
             _ = wait_change(&mut changes.rx) => match load(&manifest_path, entry.as_deref()) {
-                Ok((next, max_bytes, _)) => {
+                Ok((next, max_bytes, _, websocket)) => {
                     eprintln!("tysel reload");
-                    pool.replace(next, max_bytes);
+                    pool.replace_with(next, max_bytes, websocket);
                 }
                 Err(err) => eprintln!("error: {err:#}"),
             },
@@ -50,7 +50,7 @@ pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
 fn load(
     manifest_path: &Path,
     entry: Option<&Path>,
-) -> Result<(Arc<IsolatePool>, usize, std::net::SocketAddr)> {
+) -> Result<(Arc<IsolatePool>, usize, std::net::SocketAddr, bool)> {
     let manifest = Manifest::from_path(manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let root = manifest_path.parent().unwrap_or(Path::new("."));
@@ -73,7 +73,7 @@ fn load(
         .listen
         .parse()
         .map_err(|_| anyhow!("invalid listen address '{}'", tap.manifest.listen))?;
-    Ok((Arc::new(pool), tap.manifest.max_request_bytes, addr))
+    Ok((Arc::new(pool), tap.manifest.max_request_bytes, addr, tap.manifest.websocket))
 }
 
 fn watch(root: &Path) -> Result<Watch> {

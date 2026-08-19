@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::IsolatePool;
 
-use crate::http::{SharedPool, bind, bind_with_request_limit, handle_stream};
+use crate::http::{SharedPool, bind, bind_with, bind_with_request_limit, handle_stream};
 
 const HANDLER: &str = r#"
 export default {
@@ -201,6 +201,34 @@ async fn chunked_oversized_body_is_rejected() {
         .unwrap();
     let response = sender.send_request(request).await.unwrap();
     assert_eq!(response.status().as_u16(), 413);
+}
+
+const WS_ECHO: &str = r#"
+export default {
+  async fetch() {
+    const socket = tysel.acceptWebSocket();
+    socket.addEventListener("message", (event) => {
+      socket.send(event.data);
+    });
+    return new Response(null, { status: 101 });
+  },
+};
+"#;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn websocket_echo_roundtrip() {
+    let pool = IsolatePool::spawn(1, WS_ECHO, config()).unwrap();
+    let addr = bind_with("127.0.0.1:0".parse().unwrap(), Arc::new(pool), 16 * 1024 * 1024, true)
+        .await
+        .unwrap();
+    let url = format!("ws://{addr}/ws");
+    let (mut socket, response) = tokio_tungstenite::connect_async(&url).await.expect("connect");
+    assert_eq!(response.status(), 101);
+    use futures_util::{SinkExt, StreamExt};
+    socket.send(tokio_tungstenite::tungstenite::Message::Text("ping".into())).await.unwrap();
+    let echoed = socket.next().await.expect("frame").expect("ok");
+    assert_eq!(echoed.into_text().expect("text").as_str(), "ping");
+    let _ = socket.close(None).await;
 }
 
 struct ChunkList {

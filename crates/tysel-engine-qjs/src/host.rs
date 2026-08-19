@@ -17,6 +17,9 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     let io_body = io.clone();
     let io_http_start = io.clone();
     let io_http_read = io.clone();
+    let io_ws_read = io.clone();
+    let io_ws_send = io.clone();
+    let io_ws_close = io.clone();
     tysel.set(
         "sleep",
         Function::new(ctx.clone(), move |ctx, millis: f64| {
@@ -92,6 +95,24 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
             TypedArray::<u8>::new(ctx, buf)
         })?,
     )?;
+    tysel.set(
+        "_wsRead",
+        Function::new(ctx.clone(), move |ctx| {
+            submit(ctx, &io_ws_read, |id| IoRequest::WsRead { id })
+        })?,
+    )?;
+    tysel.set(
+        "_wsSend",
+        Function::new(ctx.clone(), move |ctx, data: String| {
+            submit(ctx, &io_ws_send, |id| IoRequest::WsSend { id, data })
+        })?,
+    )?;
+    tysel.set(
+        "_wsClose",
+        Function::new(ctx.clone(), move |ctx| {
+            submit(ctx, &io_ws_close, |id| IoRequest::WsClose { id })
+        })?,
+    )?;
     ctx.globals().set("tysel", tysel)?;
     ctx.eval::<(), _>(
         r#"
@@ -106,6 +127,40 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
         };
         globalThis.tysel.httpGet = function(url) {
           return fetch(url);
+        };
+        globalThis.tysel.acceptWebSocket = function() {
+          if (globalThis.__tysel_ws_accepted) {
+            throw new Error("websocket already accepted");
+          }
+          globalThis.__tysel_ws_accepted = true;
+          const listeners = { message: [], close: [], error: [] };
+          const socket = {
+            readyState: 1,
+            send(data) {
+              return tysel._wsSend(data == null ? "" : String(data));
+            },
+            close() {
+              this.readyState = 2;
+              return tysel._wsClose();
+            },
+            addEventListener(type, fn) {
+              if (listeners[type]) listeners[type].push(fn);
+            },
+          };
+          globalThis.__tysel_ws_done = (async () => {
+            try {
+              for (;;) {
+                const chunk = await tysel._wsRead();
+                if (chunk == null) break;
+                const event = { type: "message", data: chunk };
+                for (const fn of listeners.message) fn(event);
+              }
+            } finally {
+              socket.readyState = 3;
+              for (const fn of listeners.close) fn({ type: "close" });
+            }
+          })();
+          return socket;
         };
         "#,
     )?;
