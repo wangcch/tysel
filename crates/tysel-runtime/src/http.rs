@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Limited};
+use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::body::{Body, Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -108,13 +108,10 @@ async fn dispatch_inner(
         .collect()
         .await
         .map_err(|err| {
-            let message = err.to_string();
-            if message.to_ascii_lowercase().contains("length")
-                || message.to_ascii_lowercase().contains("limit")
-            {
+            if err.downcast_ref::<LengthLimitError>().is_some() {
                 HttpError::BodyTooLarge(max_request_bytes)
             } else {
-                HttpError::Hyper(message)
+                HttpError::Hyper(err.to_string())
             }
         })?
         .to_bytes();

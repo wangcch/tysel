@@ -167,3 +167,46 @@ async fn fetch_handler_sleep_does_not_exhaust_cpu_budget() {
     }
     assert_eq!(String::from_utf8(bytes).expect("utf8"), "slept");
 }
+
+const HEADERS_HANDLER: &str = r#"
+export default {
+  fetch() {
+    const headers = new Headers([
+      ["X-Name", "tysel"],
+      ["Content-Type", "text/plain"],
+    ]);
+    return new Response(headers.get("x-name"), {
+      headers: [
+        ["content-type", "text/plain"],
+        ["x-echo", headers.get("content-type")],
+      ],
+    });
+  },
+};
+"#;
+
+#[tokio::test]
+async fn headers_accepts_sequence_initializer() {
+    let pool = IsolatePool::spawn(1, HEADERS_HANDLER, config()).expect("spawn isolate");
+    let (head, mut body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/".into(),
+            headers: vec![],
+            body: vec![],
+        })
+        .await
+        .expect("dispatch");
+    assert_eq!(head.status, 200);
+    let content_type = head
+        .headers
+        .iter()
+        .find(|(name, _)| name == "content-type")
+        .map(|(_, value)| value.as_str());
+    assert_eq!(content_type, Some("text/plain"));
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(String::from_utf8(bytes).expect("utf8"), "tysel");
+}

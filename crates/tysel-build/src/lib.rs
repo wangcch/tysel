@@ -251,4 +251,39 @@ export default app;
         assert!(js.contains("__tysel_require"));
         assert!(!js.contains("from \"hono\""));
     }
+
+    #[test]
+    fn json_modules_are_parsed_not_evaled_as_object_literals() {
+        let dir = std::env::temp_dir().join(format!("tysel-build-json-{}", std::process::id()));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/data.json"), r#"{"__proto__":{"polluted":true},"ok":1}"#).unwrap();
+        let entry = dir.join("src/index.ts");
+        fs::write(
+            &entry,
+            r#"
+import data from "./data.json";
+export default {
+  fetch() {
+    return Response.json({ ok: data.ok });
+  },
+};
+"#,
+        )
+        .unwrap();
+        let (bundle, _) = read_bundle(&entry).unwrap();
+        let js = String::from_utf8(bundle).unwrap();
+        assert!(js.contains("JSON.parse("));
+        assert!(!js.contains("module.exports = {"));
+    }
+
+    #[test]
+    fn node_builtins_are_rejected() {
+        let dir = std::env::temp_dir().join(format!("tysel-build-fs-{}", std::process::id()));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        let entry = dir.join("src/index.ts");
+        fs::write(&entry, "import fs from \"fs\";\nexport default { fetch() { return fs; } };\n")
+            .unwrap();
+        let err = read_bundle(&entry).unwrap_err().to_string();
+        assert!(err.contains("builtin") || err.contains("node:fs"), "error was {err}");
+    }
 }

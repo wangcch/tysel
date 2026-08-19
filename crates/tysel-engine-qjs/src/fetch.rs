@@ -64,16 +64,15 @@ const BOOTSTRAP: &str = r##"
     }
   }
 
-  class Headers {
+    class Headers {
     constructor(init) {
       this._map = {};
       if (!init) return;
-      if (typeof init.forEach === "function") {
-        init.forEach((value, key) => this.append(key, value));
-        return;
-      }
+      // Arrays have forEach, so the sequence form must be checked first.
       if (Array.isArray(init)) {
         for (const pair of init) this.append(pair[0], pair[1]);
+      } else if (typeof init.forEach === "function") {
+        init.forEach((value, key) => this.append(key, value));
       } else {
         for (const key of Object.keys(init)) this.append(key, init[key]);
       }

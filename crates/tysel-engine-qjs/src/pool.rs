@@ -153,12 +153,14 @@ fn run_worker(
         let request_deadline =
             Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
         *budgets.lock().expect("budgets") = Budgets { cpu: cpu.clone(), request: request_deadline };
-        if let Err(err) =
-            handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, &cpu)
-        {
-            let _ = err;
-        }
-        let _ = context.with(|ctx| ctx.globals().remove("__tysel_response"));
+        let job_result =
+            handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, &cpu);
+        let _ = context.with(|ctx| {
+            let _ = ctx.globals().remove("__tysel_response");
+            let _ = ctx.globals().remove("__tysel_result");
+            Ok::<_, EngineError>(())
+        });
+        let _ = job_result;
     }
 
     let _ = context.with(|ctx| {

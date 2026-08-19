@@ -10,7 +10,7 @@ use oxc::ast::ast::{
 };
 use oxc::parser::Parser;
 use oxc::span::{GetSpan, Span};
-use oxc_resolver::{ResolveOptions, Resolver};
+use oxc_resolver::{ResolveError, ResolveOptions, Resolver};
 use serde_json::json;
 
 use crate::transpile;
@@ -88,9 +88,11 @@ pub fn bundle(entry: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
 
         let id = module_id(&path);
         if is_json(&path) {
+            let _: serde_json::Value = serde_json::from_str(&source)
+                .with_context(|| format!("invalid JSON module {}", path.display()))?;
             modules.push(CompiledModule {
                 id,
-                factory: format!("module.exports = {};", source.trim()),
+                factory: format!("module.exports = JSON.parse({});", js_string(&source)),
             });
             continue;
         }
@@ -389,6 +391,9 @@ fn resolve_specifier(resolver: &Resolver, importer: &Path, specifier: &str) -> R
     let directory = importer.parent().unwrap_or(importer);
     match resolver.resolve(directory, specifier) {
         Ok(resolution) => canonicalize_existing(&resolution.full_path()),
+        Err(ResolveError::Builtin { resolved, .. }) => {
+            Err(anyhow!("Node builtin '{resolved}' is not available in Tysel"))
+        }
         Err(err) => {
             Err(anyhow!("cannot resolve '{}' from {}: {err}", specifier, importer.display()))
         }
