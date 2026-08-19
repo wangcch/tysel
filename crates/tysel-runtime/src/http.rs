@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
@@ -100,10 +101,19 @@ pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
         let service = service_fn(move |request| {
             let pool = pool.clone();
             async move {
+                let method = request.method().as_str().to_owned();
+                let path = request.uri().path().to_owned();
+                let started = Instant::now();
                 let (isolate, max_request_bytes) = pool.current();
-                Ok::<_, Infallible>(
-                    dispatch(isolate, request, max_request_bytes, pool.websocket()).await,
-                )
+                let response =
+                    dispatch(isolate, request, max_request_bytes, pool.websocket()).await;
+                tysel_observability::log_http(
+                    &method,
+                    &path,
+                    response.status().as_u16(),
+                    started.elapsed(),
+                );
+                Ok::<_, Infallible>(response)
             }
         });
         let _ = hyper::server::conn::http1::Builder::new()

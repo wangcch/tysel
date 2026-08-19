@@ -41,6 +41,7 @@ pub fn tap_from_app(
             String::new()
         },
         secret_names: manifest.permissions.secrets.clone(),
+        json_logs: manifest.observability.logs.eq_ignore_ascii_case("json"),
     };
     Tap::new(packaged, bundle, source_map)
 }
@@ -138,6 +139,30 @@ listen = "127.0.0.1:0"
         assert_eq!(extracted.manifest.listen, "127.0.0.1:0");
         assert_eq!(extracted.manifest.sqlite_path, "./data/tysel.db");
         assert!(extracted.manifest.secret_names.is_empty());
+        assert!(extracted.manifest.json_logs);
+    }
+
+    #[test]
+    fn tap_disables_json_logs_when_configured_off() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[observability]
+logs = "off"
+"#,
+        )
+        .unwrap();
+        let tap = tap_from_app(
+            &manifest,
+            "0.0.1",
+            b"export default {};".to_vec(),
+            identity_source_map("src/index.ts", "export default {}\n").unwrap(),
+        );
+        assert!(!tap.manifest.json_logs);
     }
 
     #[test]

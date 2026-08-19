@@ -8,7 +8,7 @@ Tysel runs TypeScript services, workers, and agents as a single native executabl
 
 The public API prefers Web standards (`Request`, `Response`, `fetch`, streams, `crypto`). Platform capabilities are granted explicitly, not through ambient Node modules.
 
-This repository is in **M1**. `tysel check` validates a project; `tysel dev` serves with file-watch reload. The full plan is in [roadmap.md](./roadmap.md).
+This repository is in **M1**. `tysel check` validates a project; `tysel dev` serves with file-watch reload; `tysel build` emits a single native executable. The full plan is in [roadmap.md](./roadmap.md).
 
 ## Layout
 
@@ -52,7 +52,12 @@ export default {
 };
 ```
 
-`tysel build` emits a single native executable when a `tysel-service` stub is on `PATH` or passed as `--stub`.
+`tysel build` copies a `tysel-service` stub and appends a TAP trailer. It looks for the stub in `--stub`, `TYSEL_STUB`, next to the `tysel` binary, `target/release` or `target/debug`, then `PATH`. `--target` must match this host; cross-compilation is not implemented. `--release` searches for a release stub. The command type-checks when TypeScript is present, then prints bundle size, capabilities, and the output path.
+
+```bash
+cargo build -p tysel-runtime --bin tysel-service --release
+cargo run -p tysel-cli -- build --manifest examples/hello-service/tysel.toml
+```
 
 ## Commands
 
@@ -60,7 +65,7 @@ export default {
 cargo run -p tysel-cli -- check --manifest tysel.toml
 cargo run -p tysel-cli -- dev --manifest tysel.toml
 cargo run -p tysel-cli -- inspect --manifest tysel.toml
-cargo run -p tysel-cli -- build --manifest tysel.toml --stub /path/to/tysel-service
+cargo run -p tysel-cli -- build --manifest tysel.toml
 ```
 
 `tysel check` loads the manifest, bundles the entry, and runs `tsc --noEmit` when a `tsconfig.json` and TypeScript are present. Missing TypeScript is skipped, not a failure.
@@ -76,6 +81,8 @@ Inbound WebSocket is available on the trusted path when `[server] websocket = tr
 Trusted-path SQLite is available as `tysel.sqlite.exec(sql, params?)` and `tysel.sqlite.query(sql, params?)`. Parameters are bound (never concatenated). Isolated workers cannot open SQLite. The default database is in-memory; `[durable] store = "sqlite"` with `path` pins a file (created on first use). `tysel dev` resolves a relative path against the manifest directory; a packaged binary resolves it against the process working directory. See `examples/sqlite-worker`.
 
 Trusted-path secrets are opaque handles: `tysel.secrets.ref("OPENAI_API_KEY")` returns `secret:OPENAI_API_KEY` and never the raw value. Names come from `[permissions] secrets`; values are loaded from the process environment, and `tysel dev` also reads a sibling `.env` for those names only. `tysel dev` reloads declared secrets when `tysel.toml` or `.env` changes. Isolated workers can mint handles through the supervisor broker but cannot read raw secrets.
+
+When `[observability] logs = "json"` (the default), each HTTP request writes one JSON line to stderr with `ts`, `app`, `method`, `path`, `status`, and `ms`. Query strings and headers are omitted. Set `logs` to any other value to disable.
 
 Isolate hot-swap and `tysel run` are not implemented yet.
 

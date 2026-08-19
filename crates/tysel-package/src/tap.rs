@@ -46,10 +46,16 @@ pub struct PackageManifest {
     pub sqlite_path: String,
     #[serde(default)]
     pub secret_names: Vec<String>,
+    #[serde(default = "default_json_logs")]
+    pub json_logs: bool,
 }
 
 pub fn default_max_request_bytes() -> usize {
     16 * 1024 * 1024
+}
+
+fn default_json_logs() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -135,6 +135,7 @@ fn package_stub() -> PathBuf {
             websocket: false,
             sqlite_path: String::new(),
             secret_names: Vec::new(),
+            json_logs: true,
         },
         HANDLER.as_bytes().to_vec(),
         map,

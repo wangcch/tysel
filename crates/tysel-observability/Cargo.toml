@@ -11,3 +11,4 @@ description = "Structured logs, metrics, traces, and capability spans."
 workspace = true
 
 [dependencies]
+serde_json.workspace = true

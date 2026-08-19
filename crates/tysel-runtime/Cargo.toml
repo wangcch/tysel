@@ -21,6 +21,7 @@ tokio.workspace = true
 tysel-engine.workspace = true
 tysel-engine-qjs.workspace = true
 tysel-package.workspace = true
+tysel-observability.workspace = true
 tysel-task.workspace = true
 tysel-capability.workspace = true
 tracing.workspace = true

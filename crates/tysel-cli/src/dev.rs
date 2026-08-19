@@ -70,6 +70,7 @@ fn load(
         &tap.manifest.secret_names,
         &file_values,
     ));
+    tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);
     let source = tap.bundle_source()?.to_owned();
     let config = IsolateConfig {
         memory_limit_bytes: tap.manifest.memory_limit_bytes,

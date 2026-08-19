@@ -185,7 +185,8 @@ impl Manifest {
         out.push_str(&format!("Application: {}\n", self.app.name));
         out.push_str(&format!("Profile: {}\n", self.app.profile));
         out.push_str(&format!("Entry: {}\n", self.app.entry));
-        out.push_str(&format!("Listen: {}\n\n", self.server.listen));
+        out.push_str(&format!("Listen: {}\n", self.server.listen));
+        out.push_str(&format!("Logs: {}\n\n", self.observability.logs));
         out.push_str("Capabilities\n");
         if !self.permissions.fetch.is_empty() {
             out.push_str("  HTTP Client\n");
@@ -243,6 +244,7 @@ listen = "127.0.0.1:3000"
         assert_eq!(manifest.app.name, "hello-service");
         assert_eq!(manifest.server.listen, "127.0.0.1:3000");
         assert!(manifest.permissions.fetch.is_empty());
+        assert!(manifest.inspect_report().contains("Logs: json"));
         assert!(manifest.inspect_report().contains("SQLite"));
         assert!(manifest.inspect_report().contains("./data/tysel.db"));
     }

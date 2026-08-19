@@ -17,6 +17,7 @@ fn sample_manifest() -> PackageManifest {
         websocket: false,
         sqlite_path: String::new(),
         secret_names: Vec::new(),
+        json_logs: true,
     }
 }
 
@@ -41,6 +42,7 @@ fn tap_roundtrip_preserves_bundle_and_manifest() {
     assert_eq!(decoded.bundle, BUNDLE.as_bytes());
     assert_eq!(decoded.manifest.application_id, "hello-service");
     assert_eq!(decoded.manifest.bundle_hash, bundle_hash(BUNDLE.as_bytes()));
+    assert!(decoded.manifest.json_logs);
 }
 
 #[test]
