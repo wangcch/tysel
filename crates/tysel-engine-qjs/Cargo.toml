@@ -15,8 +15,10 @@ bytes.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+native-tls.workspace = true
 rquickjs.workspace = true
 tokio.workspace = true
+tokio-native-tls.workspace = true
 tysel-engine.workspace = true
 
 [dev-dependencies]

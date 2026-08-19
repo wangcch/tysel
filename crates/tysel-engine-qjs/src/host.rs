@@ -6,6 +6,7 @@ use crate::queue::{IoHandle, IoRequest, OpId};
 const PENDING: &str = "__tysel_pending";
 
 pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<()> {
+    crate::fetch::install_web_api(ctx.clone())?;
     ctx.globals().set(PENDING, Object::new(ctx.clone())?)?;
 
     let tysel = Object::new(ctx.clone())?;
@@ -42,8 +43,8 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     )?;
     tysel.set(
         "_httpStart",
-        Function::new(ctx.clone(), move |ctx, url: String| {
-            submit(ctx, &io_http_start, |id| IoRequest::HttpGet { id, url })
+        Function::new(ctx.clone(), move |ctx, url: String, method: String| {
+            submit(ctx, &io_http_start, |id| IoRequest::HttpGet { id, url, method })
         })?,
     )?;
     tysel.set(
@@ -61,20 +62,17 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     ctx.globals().set("tysel", tysel)?;
     ctx.eval::<(), _>(
         r#"
-        globalThis.tysel.httpGet = async function(url) {
-          const status = await tysel._httpStart(String(url));
-          return {
-            status,
-            async text() {
-              const chunks = [];
-              for (;;) {
-                const chunk = await tysel._httpRead();
-                if (chunk == null) break;
-                chunks.push(chunk);
-              }
-              return chunks.join("");
-            },
-          };
+        globalThis.fetch = async function(input, init) {
+          init = init || {};
+          const url = typeof input === "string" ? input : input.url;
+          const method = String(init.method || (input && input.method) || "GET").toUpperCase();
+          const status = await tysel._httpStart(String(url), method);
+          const response = new Response(null, { status: status });
+          response._stream = true;
+          return response;
+        };
+        globalThis.tysel.httpGet = function(url) {
+          return fetch(url);
         };
         "#,
     )?;

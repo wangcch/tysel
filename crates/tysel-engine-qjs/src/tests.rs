@@ -386,6 +386,60 @@ async fn outbound_fetch_body_applies_backpressure() {
     assert_eq!(polled.load(AtomicOrdering::SeqCst), chunks);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_follows_http_redirect() {
+    let addr = serve_redirect();
+    let url = format!("http://{addr}/go");
+    let value = tokio::task::spawn_blocking(move || {
+        eval(&format!("(async () => (await fetch(\"{url}\")).text())()"), config())
+    })
+    .await
+    .expect("join")
+    .expect("eval");
+    assert_eq!(value, Value::String("hello".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_https_is_not_rejected_as_unsupported() {
+    let err = tokio::task::spawn_blocking(|| {
+        eval("(async () => (await fetch(\"https://127.0.0.1:1/\")).text())()", config())
+    })
+    .await
+    .expect("join")
+    .expect_err("connect");
+    let message = err.to_string();
+    assert!(
+        !message.contains("only supports http") || message.contains("https"),
+        "https was rejected as unsupported: {message}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_rejects_post() {
+    let value = tokio::task::spawn_blocking(|| {
+        eval(
+            r#"(async () => {
+                try {
+                    await fetch("http://127.0.0.1:1/", { method: "POST" });
+                    return "accepted";
+                } catch (err) {
+                    return String(err);
+                }
+            })()"#,
+            config(),
+        )
+    })
+    .await
+    .expect("join")
+    .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(message.contains("GET and HEAD"), "unexpected error: {message}");
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
 fn serve_bytes(body: Bytes) -> SocketAddr {
     spawn_origin(move |_| {
         let body = body.clone();
@@ -397,6 +451,23 @@ fn serve_slow() -> SocketAddr {
     spawn_origin(|_| async {
         tokio::time::sleep(Duration::from_secs(5)).await;
         Ok::<_, Infallible>(Response::new(http_body_util::Full::new(Bytes::from_static(b"late"))))
+    })
+}
+
+fn serve_redirect() -> SocketAddr {
+    spawn_origin(|req| {
+        let path = req.uri().path().to_owned();
+        async move {
+            if path == "/go" {
+                Ok(Response::builder()
+                    .status(302)
+                    .header("location", "/done")
+                    .body(http_body_util::Full::new(Bytes::new()))
+                    .unwrap())
+            } else {
+                Ok(Response::new(http_body_util::Full::new(Bytes::from_static(b"hello"))))
+            }
+        }
     })
 }
 

@@ -167,6 +167,7 @@ const BOOTSTRAP: &str = r##"
       this.body = body == null ? null : body;
       this.status = init.status || 200;
       this.headers = new Headers(init.headers);
+      this._stream = false;
     }
     get ok() {
       return this.status >= 200 && this.status < 300;
@@ -180,6 +181,17 @@ const BOOTSTRAP: &str = r##"
       return new Response(JSON.stringify(data), { status: init.status || 200, headers });
     }
     async text() {
+      if (this._stream) {
+        const chunks = [];
+        for (;;) {
+          const chunk = await tysel._httpRead();
+          if (chunk == null) break;
+          chunks.push(chunk);
+        }
+        this.body = chunks.join("");
+        this._stream = false;
+        return this.body;
+      }
       return this.body == null ? "" : String(this.body);
     }
     async json() {
@@ -230,8 +242,8 @@ const BOOTSTRAP: &str = r##"
 })();
 "##;
 
-pub fn install_web_api(ctx: Ctx<'_>) -> Result<(), EngineError> {
-    ctx.eval::<(), _>(BOOTSTRAP).map_err(js_err)
+pub fn install_web_api(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(BOOTSTRAP)
 }
 
 const BOOT_FETCH: &str = r#"

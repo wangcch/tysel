@@ -155,7 +155,6 @@ fn run_worker(
     let context = Context::full(&runtime).map_err(isolate::js_err)?;
     let load_cpu = CpuBudget::new(Duration::from_secs(5));
     context.with(|ctx| {
-        fetch::install_web_api(ctx.clone())?;
         host::install(ctx.clone(), reactor.io.clone(), id).map_err(isolate::js_err)?;
         fetch::load_fetch_handler(ctx, source)
     })?;

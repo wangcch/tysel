@@ -67,6 +67,8 @@ cargo run -p tysel-cli -- build --manifest tysel.toml --stub /path/to/tysel-serv
 
 `tysel dev` serves the bundled app, prints `tysel listen <addr>`, and reloads isolates when `ts` / `js` / `json` / `toml` files change. It does not watch `node_modules`, `target`, `dist`, `.git`, or `data`. Reload keeps the same port; keep-alive connections pick up the new isolate on the next request.
 
+Trusted-path `fetch` supports HTTP and HTTPS GET/HEAD, follows redirects (max 20), and honors isolate timeout and cancel. `tysel.httpGet(url)` is a GET wrapper. Isolated workers cannot open outbound HTTP. Request bodies are not implemented yet.
+
 Isolate hot-swap and `tysel run` are not implemented yet.
 
 ## License
