@@ -11,3 +11,7 @@ description = "Bounded IPC between supervisor and isolated workers."
 workspace = true
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tysel-engine.workspace = true
