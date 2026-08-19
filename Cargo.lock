@@ -781,10 +781,23 @@ dependencies = [
 [[package]]
 name = "tysel-ipc"
 version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tysel-engine",
+]
 
 [[package]]
 name = "tysel-isolate"
 version = "0.0.1"
+dependencies = [
+ "libc",
+ "thiserror",
+ "tysel-engine",
+ "tysel-engine-qjs",
+ "tysel-ipc",
+]
 
 [[package]]
 name = "tysel-manifest"

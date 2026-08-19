@@ -11,3 +11,14 @@ description = "Process-isolated worker and Linux sandbox (M2)."
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
+tysel-engine.workspace = true
+tysel-engine-qjs.workspace = true
+tysel-ipc.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[[bin]]
+name = "tysel-worker"
+path = "src/bin/tysel-worker.rs"

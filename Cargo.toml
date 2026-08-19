@@ -50,12 +50,15 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 serde_json = "1"
 sha2 = "0.10"
+libc = "0.2"
 
 tysel-manifest = { path = "crates/tysel-manifest" }
 tysel-engine = { path = "crates/tysel-engine" }
 tysel-engine-qjs = { path = "crates/tysel-engine-qjs" }
 tysel-package = { path = "crates/tysel-package" }
 tysel-build = { path = "crates/tysel-build" }
+tysel-ipc = { path = "crates/tysel-ipc" }
+tysel-isolate = { path = "crates/tysel-isolate" }
 tysel-capability = { path = "crates/tysel-capability" }
 tysel-task = { path = "crates/tysel-task" }
 
