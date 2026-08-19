@@ -8,7 +8,7 @@ Tysel runs TypeScript services, workers, and agents as a single native executabl
 
 The public API prefers Web standards (`Request`, `Response`, `fetch`, streams, `crypto`). Platform capabilities are granted explicitly, not through ambient Node modules.
 
-This repository is in **M0**. The workspace, CLI, manifest schema, and SDK types are in place. Spike A (QuickJS-ng + native async) has landed; HTTP service, single-file packaging, and isolated workers are next. The full plan is in [roadmap.md](./roadmap.md).
+This repository is in **M1**. `tysel check` validates a project; `tysel dev` serves with file-watch reload. The full plan is in [roadmap.md](./roadmap.md).
 
 ## Layout
 
@@ -35,7 +35,8 @@ benchmarks/      Performance harnesses
 pnpm install
 cargo test --workspace
 cargo run -p tysel-cli -- --help
-cargo run -p tysel-cli -- inspect --manifest examples/hello-service/tysel.toml
+cargo run -p tysel-cli -- check --manifest examples/hello-service/tysel.toml
+cargo run -p tysel-cli -- dev --manifest examples/hello-service/tysel.toml
 ```
 
 Minimal application:
@@ -51,7 +52,22 @@ export default {
 };
 ```
 
-`tysel dev` and `tysel build` land after the remaining M0 spikes.
+`tysel build` emits a single native executable when a `tysel-service` stub is on `PATH` or passed as `--stub`.
+
+## Commands
+
+```bash
+cargo run -p tysel-cli -- check --manifest tysel.toml
+cargo run -p tysel-cli -- dev --manifest tysel.toml
+cargo run -p tysel-cli -- inspect --manifest tysel.toml
+cargo run -p tysel-cli -- build --manifest tysel.toml --stub /path/to/tysel-service
+```
+
+`tysel check` loads the manifest, bundles the entry, and runs `tsc --noEmit` when a `tsconfig.json` and TypeScript are present. Missing TypeScript is skipped, not a failure.
+
+`tysel dev` serves the bundled app, prints `tysel listen <addr>`, and reloads isolates when `ts` / `js` / `json` / `toml` files change. It does not watch `node_modules`, `target`, `dist`, `.git`, or `data`. Reload keeps the same port; keep-alive connections pick up the new isolate on the next request.
+
+Isolate hot-swap and `tysel run` are not implemented yet.
 
 ## License
 

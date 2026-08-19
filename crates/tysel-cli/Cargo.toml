@@ -17,8 +17,13 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+tokio.workspace = true
 tysel-manifest.workspace = true
 tysel-build.workspace = true
+tysel-runtime = { path = "../tysel-runtime" }
+tysel-engine.workspace = true
+tysel-engine-qjs.workspace = true
+notify = "6"
 
 [dev-dependencies]
 tysel-package.workspace = true

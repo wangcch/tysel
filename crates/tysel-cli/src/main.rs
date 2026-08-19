@@ -1,7 +1,7 @@
 //! Tysel CLI.
 //!
-//! Planned commands live in `roadmap.md` §21. M0 inspects manifests and can
-//! append a TAP trailer onto a `tysel-service` stub (`tysel build`).
+//! `inspect` and `build` ship a TAP trailer. `check` validates a project.
+//! `dev` watches sources and serves with process-level reload (roadmap §21).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -9,6 +9,9 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tysel_manifest::Manifest;
+
+mod check;
+mod dev;
 
 #[derive(Parser)]
 #[command(
@@ -30,7 +33,11 @@ enum Commands {
         path: PathBuf,
     },
     /// Watch, bundle, and run a service with reload.
-    Dev { entry: Option<PathBuf> },
+    Dev {
+        entry: Option<PathBuf>,
+        #[arg(long, default_value = "tysel.toml")]
+        manifest: PathBuf,
+    },
     /// Type-check, capability-scan, and validate the manifest.
     Check {
         #[arg(long, default_value = "tysel.toml")]
@@ -83,6 +90,14 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Inspect { manifest } => inspect(manifest.as_path()),
+        Commands::Check { manifest } => check::run(manifest.as_path()),
+        Commands::Dev { entry, manifest } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("tokio runtime")?;
+            runtime.block_on(dev::run(manifest, entry))
+        }
         Commands::Build { entry, stub, output, manifest, target: _, profile: _, release: _ } => {
             build(manifest, entry, stub, output)
         }
@@ -139,14 +154,15 @@ fn resolve_stub(stub: Option<PathBuf>) -> Result<PathBuf> {
 fn unimplemented_command(command: Commands) -> Result<()> {
     let name = match command {
         Commands::Init { .. } => "init",
-        Commands::Dev { .. } => "dev",
-        Commands::Check { .. } => "check",
         Commands::Run { .. } => "run",
         Commands::Test => "test",
         Commands::Compat => "compat",
         Commands::Bench => "bench",
         Commands::Image => "image",
-        Commands::Inspect { .. } | Commands::Build { .. } => unreachable!(),
+        Commands::Inspect { .. }
+        | Commands::Build { .. }
+        | Commands::Check { .. }
+        | Commands::Dev { .. } => unreachable!(),
     };
-    anyhow::bail!("`tysel {name}` is not implemented yet; M0 spikes are next (see roadmap.md §26)")
+    anyhow::bail!("`tysel {name}` is not implemented yet (see roadmap.md §21)")
 }

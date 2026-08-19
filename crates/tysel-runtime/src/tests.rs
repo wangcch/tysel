@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::IsolatePool;
 
-use crate::http::{bind, bind_with_request_limit};
+use crate::http::{SharedPool, bind, bind_with_request_limit, handle_stream};
 
 const HANDLER: &str = r#"
 export default {
@@ -98,6 +98,45 @@ async fn multi_isolate_handles_concurrent_requests() {
         }
     }
     assert!(isolates.len() >= 2, "expected both isolates, got {isolates:?}");
+}
+
+#[tokio::test]
+async fn keep_alive_uses_replaced_pool() {
+    let first = IsolatePool::spawn(
+        1,
+        r#"export default { async fetch() { return new Response("first"); } };"#,
+        config(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let pool = SharedPool::new(Arc::new(first), 16 * 1024 * 1024);
+    let accept = pool.clone();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            handle_stream(stream, accept.clone());
+        }
+    });
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake::<_, Empty<Bytes>>(TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(conn);
+    let (first_status, first_body) = send(&mut sender, "/").await;
+    let second_isolate = IsolatePool::spawn(
+        1,
+        r#"export default { async fetch() { return new Response("second"); } };"#,
+        config(),
+    )
+    .unwrap();
+    pool.replace(Arc::new(second_isolate), 16 * 1024 * 1024);
+    let (second_status, second_body) = send(&mut sender, "/").await;
+    assert_eq!(first_status, 200);
+    assert_eq!(second_status, 200);
+    assert_eq!(first_body, "first");
+    assert_eq!(second_body, "second");
 }
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
@@ -28,26 +28,57 @@ pub enum HttpError {
     BodyTooLarge(usize),
 }
 
+#[derive(Clone)]
+pub struct SharedPool {
+    inner: Arc<RwLock<(Arc<IsolatePool>, usize)>>,
+}
+
+impl SharedPool {
+    pub fn new(pool: Arc<IsolatePool>, max_request_bytes: usize) -> Self {
+        Self { inner: Arc::new(RwLock::new((pool, max_request_bytes))) }
+    }
+
+    pub fn replace(&self, pool: Arc<IsolatePool>, max_request_bytes: usize) {
+        let previous = {
+            let mut guard = self.inner.write().expect("pool lock");
+            std::mem::replace(&mut *guard, (pool, max_request_bytes))
+        };
+        drop(previous);
+    }
+
+    pub fn current(&self) -> (Arc<IsolatePool>, usize) {
+        let guard = self.inner.read().expect("pool lock");
+        (guard.0.clone(), guard.1)
+    }
+}
+
 pub async fn serve(
     listener: TcpListener,
     pool: Arc<IsolatePool>,
     max_request_bytes: usize,
 ) -> Result<(), HttpError> {
+    let pool = SharedPool::new(pool, max_request_bytes);
     loop {
         let (stream, _peer) = listener.accept().await?;
-        let pool = pool.clone();
-        tokio::spawn(async move {
-            let io = TokioIo::new(stream);
-            let service = service_fn(move |request| {
-                let pool = pool.clone();
-                async move { Ok::<_, Infallible>(dispatch(pool, request, max_request_bytes).await) }
-            });
-            let _ = hyper::server::conn::http1::Builder::new()
-                .keep_alive(true)
-                .serve_connection(io, service)
-                .await;
-        });
+        handle_stream(stream, pool.clone());
     }
+}
+
+pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
+    tokio::spawn(async move {
+        let io = TokioIo::new(stream);
+        let service = service_fn(move |request| {
+            let pool = pool.clone();
+            async move {
+                let (isolate, max_request_bytes) = pool.current();
+                Ok::<_, Infallible>(dispatch(isolate, request, max_request_bytes).await)
+            }
+        });
+        let _ = hyper::server::conn::http1::Builder::new()
+            .keep_alive(true)
+            .serve_connection(io, service)
+            .await;
+    });
 }
 
 pub async fn bind(addr: SocketAddr, pool: Arc<IsolatePool>) -> Result<SocketAddr, HttpError> {
