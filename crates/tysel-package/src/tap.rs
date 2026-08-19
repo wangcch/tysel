@@ -1,4 +1,5 @@
-use std::fs;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -136,7 +137,33 @@ impl Tap {
     }
 
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, PackageError> {
-        Self::extract(&fs::read(path)?)
+        let mut file = File::open(path)?;
+        let file_len = file.metadata()?.len();
+        if file_len < 16 {
+            return Err(PackageError::MissingPayload);
+        }
+        file.seek(SeekFrom::End(-16))?;
+        let mut footer = [0u8; 16];
+        file.read_exact(&mut footer)?;
+        if &footer[8..] != END_MAGIC {
+            return Err(PackageError::MissingPayload);
+        }
+        let payload_len = {
+            let mut len_bytes = [0u8; 8];
+            len_bytes.copy_from_slice(&footer[..8]);
+            u64::from_le_bytes(len_bytes)
+        };
+        let prefix_len = file_len - 16;
+        if payload_len > prefix_len {
+            return Err(PackageError::Invalid("payload length exceeds file".into()));
+        }
+        let payload_len = usize::try_from(payload_len).map_err(|_| {
+            PackageError::Invalid("payload length exceeds addressable memory".into())
+        })?;
+        file.seek(SeekFrom::Start(prefix_len - payload_len as u64))?;
+        let mut payload = vec![0u8; payload_len];
+        file.read_exact(&mut payload)?;
+        Self::decode(&payload)
     }
 
     pub fn from_current_exe() -> Result<Self, PackageError> {

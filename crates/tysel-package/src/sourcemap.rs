@@ -67,11 +67,7 @@ impl SourceMap {
             })
             .max_by_key(|mapping| mapping.generated_column)?;
         let source = self.sources.get(mapping.source_index as usize)?.clone();
-        let content = self
-            .sources_content
-            .get(mapping.source_index as usize)
-            .cloned()
-            .flatten();
+        let content = self.sources_content.get(mapping.source_index as usize).cloned().flatten();
         Some(OriginalPosition {
             source,
             line: mapping.original_line + 1,
@@ -137,7 +133,8 @@ fn decode_vlq(bytes: &[u8], offset: &mut usize) -> Result<i64, PackageError> {
     let mut result = 0i64;
     let mut shift = 0;
     loop {
-        let digit = *bytes.get(*offset).ok_or_else(|| PackageError::Invalid("truncated vlq".into()))?;
+        let digit =
+            *bytes.get(*offset).ok_or_else(|| PackageError::Invalid("truncated vlq".into()))?;
         *offset += 1;
         let value = b64(digit).ok_or_else(|| PackageError::Invalid("invalid vlq digit".into()))?;
         result |= i64::from(value & 31) << shift;

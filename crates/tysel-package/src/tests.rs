@@ -57,6 +57,26 @@ fn missing_trailer_is_a_missing_payload() {
 }
 
 #[test]
+fn from_path_reads_only_the_trailer() {
+    let tap = sample_tap();
+    let stub = vec![0x7f; 2 * 1024 * 1024];
+    let packaged = tap.embed_into(&stub).expect("embed");
+    let path = std::env::temp_dir().join(format!(
+        "tysel-tap-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::write(&path, &packaged).expect("write packaged stub");
+    let extracted = Tap::from_path(&path).expect("from_path");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(extracted.bundle, tap.bundle);
+    assert_eq!(extracted.manifest.application_id, "hello-service");
+}
+
+#[test]
 fn source_map_locates_typescript_origin() {
     let tap = sample_tap();
     let map = tap.parsed_source_map().expect("parse map");
