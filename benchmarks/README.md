@@ -13,4 +13,4 @@ cargo run -p tysel-testkit --bin tysel-bench --release
 | `memory/` | Idle RSS (macOS) or PSS (Linux) 400ms after listen |
 | `http/` | Request-body limit is enforced in the runtime (413); throughput later |
 
-Cold start must be ≤ 15ms, idle memory ≤ 32MB, packaged binary ≤ 20MB. Linux PSS is the memory gate of record and is enforced by the `§30 linux pss` GitHub Actions job; macOS reports RSS as a proxy and cannot claim the gate.
+Cold start must be ≤ 15ms, idle memory ≤ 32MB, packaged binary ≤ 20MB. Linux PSS is the memory gate of record and is enforced by the `linux-pss` GitHub Actions job; macOS reports RSS as a proxy and cannot claim the gate.

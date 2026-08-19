@@ -34,7 +34,6 @@ jobs:
 
   # Roadmap §30 idle PSS is Linux-only. macOS RSS from tysel-bench is a proxy.
   linux-pss:
-    name: §30 linux pss
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
