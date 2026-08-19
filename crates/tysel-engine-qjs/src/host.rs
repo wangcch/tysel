@@ -11,6 +11,8 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     let tysel = Object::new(ctx.clone())?;
     tysel.set("isolateId", isolate_id)?;
     let io_sleep = io.clone();
+    let io_echo = io.clone();
+    let io_secret = io.clone();
     tysel.set(
         "sleep",
         Function::new(ctx.clone(), move |ctx, millis: f64| {
@@ -20,7 +22,19 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     tysel.set(
         "echo",
         Function::new(ctx.clone(), move |ctx, value: String| {
-            submit(ctx, &io, |id| IoRequest::Echo { id, value })
+            submit(ctx, &io_echo, |id| IoRequest::Echo { id, value })
+        })?,
+    )?;
+    tysel.set(
+        "secretRef",
+        Function::new(ctx.clone(), move |ctx, name: String| {
+            submit(ctx, &io_secret, |id| IoRequest::SecretRef { id, name })
+        })?,
+    )?;
+    tysel.set(
+        "envKeys",
+        Function::new(ctx.clone(), || {
+            std::env::vars().map(|(key, _)| key).collect::<Vec<_>>().join(",")
         })?,
     )?;
     ctx.globals().set("tysel", tysel)?;
@@ -41,11 +55,7 @@ fn submit<'js>(
     Ok(promise)
 }
 
-pub fn settle(
-    ctx: &Ctx<'_>,
-    id: OpId,
-    result: Result<Value, InterruptReason>,
-) -> rquickjs::Result<()> {
+pub fn settle(ctx: &Ctx<'_>, id: OpId, result: Result<Value, String>) -> rquickjs::Result<()> {
     let pending = pending(ctx)?;
     let key = id.0.to_string();
     let Some(entry): Option<Object> = pending.get(&key)? else {
@@ -57,9 +67,9 @@ pub fn settle(
             let resolve: Function = entry.get("resolve")?;
             resolve.call::<(rquickjs::Value<'_>,), ()>((value_to_js(ctx, value)?,))?;
         }
-        Err(reason) => {
+        Err(error) => {
             if let Ok(reject) = entry.get::<_, Function>("reject") {
-                let _ = reject.call::<(String,), ()>((format!("{reason:?}"),));
+                let _ = reject.call::<(String,), ()>((error,));
             }
         }
     }

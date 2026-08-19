@@ -10,8 +10,9 @@ mod isolate;
 mod pool;
 mod queue;
 
-pub use isolate::{IsolateCancel, eval, eval_cancellable};
+pub use isolate::{IsolateCancel, eval, eval_cancellable, eval_with_reactor};
 pub use pool::IsolatePool;
+pub use queue::{IoCompletion, IoRequest, OpId, Reactor, open_bridge};
 
 #[cfg(test)]
 mod tests;

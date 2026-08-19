@@ -12,12 +12,13 @@ pub struct OpId(pub u64);
 pub enum IoRequest {
     Sleep { id: OpId, millis: u64 },
     Echo { id: OpId, value: String },
+    SecretRef { id: OpId, name: String },
 }
 
 #[derive(Debug)]
 pub struct IoCompletion {
     pub id: OpId,
-    pub result: Result<Value, InterruptReason>,
+    pub result: Result<Value, String>,
 }
 
 #[derive(Clone)]
@@ -65,6 +66,21 @@ pub fn spawn_reactor_until_cancel(cancel: Arc<AtomicBool>) -> Reactor {
     spawn_reactor(cancel, Instant::now() + Duration::from_secs(60 * 60 * 24 * 365))
 }
 
+/// Split I/O so a process-isolated worker can proxy host calls over IPC.
+pub fn open_bridge()
+-> (Reactor, UnboundedReceiver<IoRequest>, std::sync::mpsc::Sender<IoCompletion>) {
+    let (req_tx, req_rx) = unbounded_channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    (
+        Reactor {
+            io: IoHandle { tx: req_tx, next_id: Arc::new(AtomicU64::new(1)) },
+            completions: done_rx,
+        },
+        req_rx,
+        done_tx,
+    )
+}
+
 async fn run_reactor(
     mut requests: UnboundedReceiver<IoRequest>,
     completions: std::sync::mpsc::Sender<IoCompletion>,
@@ -85,11 +101,14 @@ async fn execute(request: IoRequest, cancel: Arc<AtomicBool>, deadline: Instant)
     match request {
         IoRequest::Sleep { id, millis } => IoCompletion {
             id,
-            result: wait(Duration::from_millis(millis), &cancel, deadline).await,
+            result: wait(Duration::from_millis(millis), &cancel, deadline).await.map_err(io_err),
         },
         IoRequest::Echo { id, value } => {
             let wait_result = wait(Duration::from_millis(1), &cancel, deadline).await;
-            IoCompletion { id, result: wait_result.map(|_| Value::String(value)) }
+            IoCompletion { id, result: wait_result.map(|_| Value::String(value)).map_err(io_err) }
+        }
+        IoRequest::SecretRef { id, name } => {
+            IoCompletion { id, result: Ok(Value::String(format!("secret:{name}"))) }
         }
     }
 }
@@ -116,4 +135,8 @@ async fn wait(
             .min(Duration::from_millis(5));
         tokio::time::sleep(slice).await;
     }
+}
+
+fn io_err(reason: InterruptReason) -> String {
+    format!("{reason:?}")
 }

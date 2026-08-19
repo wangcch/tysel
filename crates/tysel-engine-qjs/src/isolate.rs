@@ -58,6 +58,31 @@ fn run_on_worker(
     let started = Instant::now();
     let cpu_deadline = started + Duration::from_millis(config.cpu_ms_per_turn.max(1));
     let request_deadline = started + Duration::from_millis(config.request_timeout_ms.max(1));
+    let reactor = queue::spawn_reactor(cancel.flag(), request_deadline);
+    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu_deadline)
+}
+
+/// Evaluate `script` using a caller-supplied I/O reactor (local or IPC proxy).
+pub fn eval_with_reactor(
+    script: &str,
+    config: IsolateConfig,
+    cancel: IsolateCancel,
+    reactor: queue::Reactor,
+) -> Result<Value, EngineError> {
+    let started = Instant::now();
+    let cpu_deadline = started + Duration::from_millis(config.cpu_ms_per_turn.max(1));
+    let request_deadline = started + Duration::from_millis(config.request_timeout_ms.max(1));
+    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu_deadline)
+}
+
+fn run_with_reactor(
+    script: &str,
+    config: IsolateConfig,
+    cancel: IsolateCancel,
+    reactor: queue::Reactor,
+    request_deadline: Instant,
+    cpu_deadline: Instant,
+) -> Result<Value, EngineError> {
     let cancel_flag = cancel.flag();
 
     let runtime = Runtime::new().map_err(js_err)?;
@@ -70,8 +95,6 @@ fn run_on_worker(
                 || Instant::now() >= request_deadline
         })));
     }
-
-    let reactor = queue::spawn_reactor(cancel.flag(), request_deadline);
     let context = Context::full(&runtime).map_err(js_err)?;
     let started_async = context.with(|ctx| {
         start_script(ctx, script, reactor.io.clone(), &cancel, request_deadline, cpu_deadline)
@@ -88,9 +111,9 @@ fn run_on_worker(
                 request_deadline,
                 cpu_deadline,
             )?;
-            context.with(|ctx| take_settled(&ctx, &cancel, request_deadline, cpu_deadline))?.ok_or_else(
-                || EngineError::Isolate("async script did not settle".into()),
-            )
+            context
+                .with(|ctx| take_settled(&ctx, &cancel, request_deadline, cpu_deadline))?
+                .ok_or_else(|| EngineError::Isolate("async script did not settle".into()))
         }
     };
 
@@ -197,7 +220,10 @@ pub(crate) fn drain_jobs(runtime: &Runtime) -> Result<(), EngineError> {
     }
 }
 
-pub(crate) fn wait_reason(cancel: &IsolateCancel, request_deadline: Instant) -> Option<InterruptReason> {
+pub(crate) fn wait_reason(
+    cancel: &IsolateCancel,
+    request_deadline: Instant,
+) -> Option<InterruptReason> {
     if cancel.0.load(Ordering::SeqCst) {
         return Some(InterruptReason::Cancelled);
     }
