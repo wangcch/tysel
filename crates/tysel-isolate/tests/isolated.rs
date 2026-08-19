@@ -27,8 +27,31 @@ fn worker_env_does_not_inherit_supervisor_environment() {
 #[test]
 fn secret_ref_returns_handle_not_raw_secret() {
     let mut supervisor = supervisor();
-    let value = supervisor.eval(r#"(async () => tysel.secretRef("db"))()"#).expect("eval");
+    let value = supervisor.eval(r#"(async () => tysel.secrets.ref("db"))()"#).expect("eval");
     assert_eq!(value, Value::String("secret:db".into()));
+}
+
+#[test]
+fn unknown_secret_is_rejected_in_isolated_worker() {
+    let mut supervisor = supervisor();
+    let value = supervisor
+        .eval(
+            r#"(async () => {
+                try {
+                    await tysel.secrets.ref("missing");
+                    return "allowed";
+                } catch (err) {
+                    return String(err);
+                }
+            })()"#,
+        )
+        .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(message.contains("unknown secret missing"), "unexpected error: {message}");
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
 }
 
 #[test]

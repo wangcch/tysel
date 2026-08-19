@@ -37,6 +37,10 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     };
     let bundle = tap.bundle_source()?.to_owned();
     tysel_engine_qjs::configure_sqlite_path(&tap.manifest.sqlite_path, None);
+    tysel_engine_qjs::configure_secrets(tysel_engine_qjs::load_declared(
+        &tap.manifest.secret_names,
+        &std::collections::HashMap::new(),
+    ));
     let pool = IsolatePool::spawn(1, &bundle, config)?;
     let listener = TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;

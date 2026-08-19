@@ -40,6 +40,7 @@ pub fn tap_from_app(
         } else {
             String::new()
         },
+        secret_names: manifest.permissions.secrets.clone(),
     };
     Tap::new(packaged, bundle, source_map)
 }
@@ -136,6 +137,7 @@ listen = "127.0.0.1:0"
         assert_eq!(extracted.manifest.application_id, "hello-service");
         assert_eq!(extracted.manifest.listen, "127.0.0.1:0");
         assert_eq!(extracted.manifest.sqlite_path, "./data/tysel.db");
+        assert!(extracted.manifest.secret_names.is_empty());
     }
 
     #[test]

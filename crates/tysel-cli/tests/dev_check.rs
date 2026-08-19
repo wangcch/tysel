@@ -150,6 +150,67 @@ fn dev_reloads_source_but_ignores_node_modules() {
     let _ = child.wait();
 }
 
+#[test]
+fn dev_reloads_secrets_when_dotenv_changes() {
+    let dir = temp_app("dev-secrets");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+
+[permissions]
+secrets = ["API_KEY"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        r#"export default {
+  async fetch() {
+    try {
+      return new Response(await tysel.secrets.ref("API_KEY"));
+    } catch (err) {
+      return new Response(String(err), { status: 500 });
+    }
+  },
+};
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new(cli_exe())
+        .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel dev");
+    let stdout = child.stdout.take().expect("stdout");
+    let stderr = child.stderr.take().expect("stderr");
+    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let log = capture_output(stderr);
+    let missing = http_get(&addr);
+    assert!(missing.contains("500"), "{missing}");
+    assert!(missing.contains("unknown secret API_KEY"), "{missing}");
+
+    log.lock().expect("log").clear();
+    fs::write(dir.join(".env"), "API_KEY=sk-reload-test\n").unwrap();
+    wait_log(&log, "tysel reload", Duration::from_secs(5));
+    let loaded = http_get(&addr);
+    assert!(loaded.contains("200"), "{loaded}");
+    assert!(loaded.contains("secret:API_KEY"), "{loaded}");
+    assert!(!loaded.contains("sk-reload-test"), "{loaded}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn http_get(addr: &str) -> String {
     let mut stream = TcpStream::connect(addr).expect("connect");
     stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();

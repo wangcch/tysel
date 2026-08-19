@@ -184,6 +184,11 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
             return tysel._sqliteQuery(String(sql), JSON.stringify(params == null ? [] : params));
           },
         };
+        globalThis.tysel.secrets = {
+          ref(name) {
+            return tysel.secretRef(String(name));
+          },
+        };
         "#,
     )?;
     Ok(())

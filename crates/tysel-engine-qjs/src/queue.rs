@@ -284,7 +284,7 @@ async fn execute(
             IoCompletion { id, result: wait_result.map(|_| Value::String(value)).map_err(io_err) }
         }
         IoRequest::SecretRef { id, name } => {
-            IoCompletion { id, result: Ok(Value::String(format!("secret:{name}"))) }
+            IoCompletion { id, result: crate::secrets::refer(&name) }
         }
         IoRequest::ReadBody { id } => IoCompletion { id, result: read_chunk(&slots.inbound).await },
         IoRequest::HttpRead { id } => {

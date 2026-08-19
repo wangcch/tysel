@@ -134,6 +134,7 @@ fn package_stub() -> PathBuf {
             max_request_bytes: 16 * 1024 * 1024,
             websocket: false,
             sqlite_path: String::new(),
+            secret_names: Vec::new(),
         },
         HANDLER.as_bytes().to_vec(),
         map,

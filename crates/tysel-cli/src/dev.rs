@@ -62,6 +62,14 @@ fn load(
         .with_context(|| format!("failed to bundle {}", entry.display()))?;
     let tap = tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), bundle, source_map);
     tysel_engine_qjs::configure_sqlite_path(&tap.manifest.sqlite_path, Some(root));
+    let file_values = fs::read_to_string(root.join(".env"))
+        .ok()
+        .map(|text| tysel_engine_qjs::parse_dotenv(&text))
+        .unwrap_or_default();
+    tysel_engine_qjs::configure_secrets(tysel_engine_qjs::load_declared(
+        &tap.manifest.secret_names,
+        &file_values,
+    ));
     let source = tap.bundle_source()?.to_owned();
     let config = IsolateConfig {
         memory_limit_bytes: tap.manifest.memory_limit_bytes,
@@ -140,15 +148,20 @@ fn relevant(event: notify::Result<Event>) -> bool {
     if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)) {
         return false;
     }
-    event.paths.iter().any(|path| {
-        if ignored(path) {
-            return false;
-        }
-        matches!(
-            path.extension().and_then(|ext| ext.to_str()),
-            Some("ts" | "tsx" | "mts" | "cts" | "js" | "mjs" | "cjs" | "json" | "toml")
-        )
-    })
+    event.paths.iter().any(|path| is_watched(path))
+}
+
+fn is_watched(path: &Path) -> bool {
+    if ignored(path) {
+        return false;
+    }
+    if path.file_name().and_then(|name| name.to_str()) == Some(".env") {
+        return true;
+    }
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ts" | "tsx" | "mts" | "cts" | "js" | "mjs" | "cjs" | "json" | "toml")
+    )
 }
 
 fn ignored(path: &Path) -> bool {
@@ -162,4 +175,19 @@ fn ignored(path: &Path) -> bool {
 
 fn ignored_dir(path: &Path) -> bool {
     matches!(path.file_name().and_then(|name| name.to_str()), Some(name) if IGNORED_DIRS.contains(&name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watches_dotenv_and_source_but_not_ignored_paths() {
+        assert!(is_watched(Path::new("/app/.env")));
+        assert!(is_watched(Path::new("/app/src/index.ts")));
+        assert!(is_watched(Path::new("/app/tysel.toml")));
+        assert!(!is_watched(Path::new("/app/README.md")));
+        assert!(!is_watched(Path::new("/app/node_modules/pkg/.env")));
+        assert!(!is_watched(Path::new("/app/node_modules/pkg/index.js")));
+    }
 }

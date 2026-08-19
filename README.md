@@ -75,6 +75,8 @@ Inbound WebSocket is available on the trusted path when `[server] websocket = tr
 
 Trusted-path SQLite is available as `tysel.sqlite.exec(sql, params?)` and `tysel.sqlite.query(sql, params?)`. Parameters are bound (never concatenated). Isolated workers cannot open SQLite. The default database is in-memory; `[durable] store = "sqlite"` with `path` pins a file (created on first use). `tysel dev` resolves a relative path against the manifest directory; a packaged binary resolves it against the process working directory. See `examples/sqlite-worker`.
 
+Trusted-path secrets are opaque handles: `tysel.secrets.ref("OPENAI_API_KEY")` returns `secret:OPENAI_API_KEY` and never the raw value. Names come from `[permissions] secrets`; values are loaded from the process environment, and `tysel dev` also reads a sibling `.env` for those names only. `tysel dev` reloads declared secrets when `tysel.toml` or `.env` changes. Isolated workers can mint handles through the supervisor broker but cannot read raw secrets.
+
 Isolate hot-swap and `tysel run` are not implemented yet.
 
 ## License

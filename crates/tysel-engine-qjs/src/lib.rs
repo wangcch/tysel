@@ -12,10 +12,14 @@ mod host;
 mod isolate;
 mod pool;
 mod queue;
+mod secrets;
 
 pub use isolate::{IsolateCancel, eval, eval_cancellable, eval_with_reactor};
 pub use pool::{IncomingHttp, IsolatePool};
 pub use queue::{IoCompletion, IoRequest, OpId, Reactor, STREAM_WINDOW, open_bridge};
+pub use secrets::{
+    configure as configure_secrets, load_declared, parse_dotenv, resolve as resolve_secret,
+};
 
 /// Pin the process-wide SQLite file used by trusted-path `tysel.sqlite`.
 ///

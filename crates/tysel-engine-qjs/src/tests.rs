@@ -41,7 +41,7 @@ fn promise_resolves_from_rust_async_echo() {
 
 #[test]
 fn secret_ref_returns_opaque_handle() {
-    let value = eval(r#"(async () => tysel.secretRef("db"))()"#, config()).expect("eval");
+    let value = eval(r#"(async () => tysel.secrets.ref("db"))()"#, config()).expect("eval");
     assert_eq!(value, Value::String("secret:db".into()));
 }
 
