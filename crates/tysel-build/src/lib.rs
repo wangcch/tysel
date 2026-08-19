@@ -3,6 +3,7 @@
 //! Spike C copies a prebuilt runtime stub and appends a TAP trailer containing
 //! the ESM bundle, embedded manifest, and source map.
 
+mod bundle;
 mod transpile;
 
 use std::fs;
@@ -56,17 +57,22 @@ pub fn read_bundle(entry: impl AsRef<Path>) -> anyhow::Result<(Vec<u8>, Vec<u8>)
     let entry = entry.as_ref();
     let source = fs::read(entry)?;
     let display = entry.to_string_lossy();
-    match entry.extension().and_then(|ext| ext.to_str()).unwrap_or("") {
-        "js" | "mjs" => {
+    let ext = entry.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+    match ext {
+        "js" | "mjs" | "cjs" | "ts" | "mts" | "cts" => {
             let text = std::str::from_utf8(&source)
-                .map_err(|_| anyhow::anyhow!("JavaScript bundle must be utf-8"))?;
-            let map = identity_source_map(&display, text)?;
-            Ok((source, map))
-        }
-        "ts" | "mts" => {
-            let text = std::str::from_utf8(&source)
-                .map_err(|_| anyhow::anyhow!("TypeScript source must be utf-8"))?;
-            transpile::transpile_typescript(entry, text)
+                .map_err(|_| anyhow::anyhow!("source bundle must be utf-8"))?;
+            if bundle::has_runtime_imports(entry, text)? {
+                bundle::bundle(entry)
+            } else {
+                match ext {
+                    "ts" | "mts" | "cts" => transpile::transpile_typescript(entry, text),
+                    _ => {
+                        let map = identity_source_map(&display, text)?;
+                        Ok((source, map))
+                    }
+                }
+            }
         }
         other => anyhow::bail!("unsupported entry extension '.{other}'"),
     }
@@ -148,5 +154,101 @@ export default {
         let origin = parsed.original_position(1, 1).unwrap();
         assert!(origin.source.ends_with("src/index.ts"));
         assert!(origin.content.unwrap().contains("request: Request"));
+    }
+
+    #[test]
+    fn bundles_relative_typescript_imports() {
+        let dir = std::env::temp_dir().join(format!("tysel-build-rel-{}", std::process::id()));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/util.ts"), "export const message: string = \"bundled\";\n")
+            .unwrap();
+        let entry = dir.join("src/index.ts");
+        fs::write(
+            &entry,
+            r#"
+import { message } from "./util.ts";
+export default {
+  fetch() {
+    return Response.json({ message });
+  },
+};
+"#,
+        )
+        .unwrap();
+        let (bundle, _) = read_bundle(&entry).unwrap();
+        let js = String::from_utf8(bundle).unwrap();
+        assert!(js.contains("__tysel_require"));
+        assert!(js.contains("bundled"));
+        assert!(!js.contains("from \"./util.ts\""));
+        assert!(js.contains("export default"));
+    }
+
+    #[test]
+    fn bundles_bare_specifier_from_node_modules() {
+        let dir = std::env::temp_dir().join(format!("tysel-build-hono-{}", std::process::id()));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::create_dir_all(dir.join("node_modules/hono")).unwrap();
+        fs::write(
+            dir.join("node_modules/hono/package.json"),
+            r#"{"name":"hono","type":"module","exports":{".":"./index.js"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("node_modules/hono/index.js"),
+            r#"
+export class Hono {
+  constructor() {
+    this.routes = [];
+  }
+  get(path, handler) {
+    this.routes.push(["GET", path, handler]);
+    return this;
+  }
+  fetch(request) {
+    const url = new URL(request.url);
+    for (const [method, path, handler] of this.routes) {
+      if (method !== request.method) continue;
+      const params = matchRoute(path, url.pathname);
+      if (!params) continue;
+      return handler({
+        json: (data, status) => Response.json(data, { status: status || 200 }),
+        req: { param: (key) => params[key] },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  }
+}
+function matchRoute(pattern, pathname) {
+  if (pattern === pathname) return {};
+  const patternParts = pattern.split("/").filter(Boolean);
+  const pathParts = pathname.split("/").filter(Boolean);
+  if (patternParts.length !== pathParts.length) return null;
+  const params = {};
+  for (let i = 0; i < patternParts.length; i++) {
+    if (patternParts[i].startsWith(":")) params[patternParts[i].slice(1)] = pathParts[i];
+    else if (patternParts[i] !== pathParts[i]) return null;
+  }
+  return params;
+}
+"#,
+        )
+        .unwrap();
+        let entry = dir.join("src/index.ts");
+        fs::write(
+            &entry,
+            r#"
+import { Hono } from "hono";
+const app = new Hono();
+app.get("/", (c) => c.json({ ok: true }));
+app.get("/hello/:name", (c) => c.json({ hello: c.req.param("name") }));
+export default app;
+"#,
+        )
+        .unwrap();
+        let (bundle, _) = read_bundle(&entry).unwrap();
+        let js = String::from_utf8(bundle).unwrap();
+        assert!(js.contains("class Hono"));
+        assert!(js.contains("__tysel_require"));
+        assert!(!js.contains("from \"hono\""));
     }
 }

@@ -25,6 +25,10 @@ importers:
         version: 7.0.2
 
   examples/hono-api:
+    dependencies:
+      hono:
+        specifier: ^4.13.3
+        version: 4.13.3
     devDependencies:
       typescript:
         specifier: 7.0.2
@@ -206,6 +210,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  hono@4.13.3:
+    resolution: {integrity: sha512-r8AO2mYHoLxSHkgafNeC/BXyb2vWRxD3jem4Ts+ptav8oTG5FIRifAjuJEmZI4bSvvc2ns0GxmIYiZnHqN3mMw==}
+    engines: {node: '>=16.9.0'}
+
   typescript@7.0.2:
     resolution: {integrity: sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==}
     engines: {node: '>=16.20.0'}
@@ -272,6 +280,8 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  hono@4.13.3: {}
 
   typescript@7.0.2:
     optionalDependencies:

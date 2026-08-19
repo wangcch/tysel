@@ -6,14 +6,76 @@ use crate::isolate::js_err;
 
 const BOOTSTRAP: &str = r##"
 (() => {
+  function decodeURIComponentSafe(value) {
+    try {
+      return decodeURIComponent(String(value).replace(/\+/g, " "));
+    } catch {
+      return String(value);
+    }
+  }
+
+  class URLSearchParams {
+    constructor(init) {
+      this._pairs = [];
+      if (init == null) return;
+      if (typeof init === "string") {
+        const text = init.charAt(0) === "?" ? init.slice(1) : init;
+        if (!text) return;
+        for (const part of text.split("&")) {
+          if (!part) continue;
+          const eq = part.indexOf("=");
+          if (eq === -1) this._pairs.push([decodeURIComponentSafe(part), ""]);
+          else {
+            this._pairs.push([
+              decodeURIComponentSafe(part.slice(0, eq)),
+              decodeURIComponentSafe(part.slice(eq + 1)),
+            ]);
+          }
+        }
+      } else if (Array.isArray(init)) {
+        for (const pair of init) this.append(pair[0], pair[1]);
+      } else {
+        for (const key of Object.keys(init)) this.append(key, init[key]);
+      }
+    }
+    append(name, value) {
+      this._pairs.push([String(name), String(value)]);
+    }
+    set(name, value) {
+      name = String(name);
+      this._pairs = this._pairs.filter((pair) => pair[0] !== name);
+      this.append(name, value);
+    }
+    get(name) {
+      name = String(name);
+      for (const pair of this._pairs) {
+        if (pair[0] === name) return pair[1];
+      }
+      return null;
+    }
+    has(name) {
+      name = String(name);
+      return this._pairs.some((pair) => pair[0] === name);
+    }
+    toString() {
+      return this._pairs
+        .map((pair) => encodeURIComponent(pair[0]) + "=" + encodeURIComponent(pair[1]))
+        .join("&");
+    }
+  }
+
   class Headers {
     constructor(init) {
       this._map = {};
       if (!init) return;
+      if (typeof init.forEach === "function") {
+        init.forEach((value, key) => this.append(key, value));
+        return;
+      }
       if (Array.isArray(init)) {
-        for (const pair of init) this.set(pair[0], pair[1]);
+        for (const pair of init) this.append(pair[0], pair[1]);
       } else {
-        for (const k of Object.keys(init)) this.set(k, init[k]);
+        for (const key of Object.keys(init)) this.append(key, init[key]);
       }
     }
     get(name) {
@@ -23,15 +85,60 @@ const BOOTSTRAP: &str = r##"
     set(name, value) {
       this._map[String(name).toLowerCase()] = String(value);
     }
+    append(name, value) {
+      const key = String(name).toLowerCase();
+      const prev = this._map[key];
+      this._map[key] = prev == null ? String(value) : prev + ", " + String(value);
+    }
+    has(name) {
+      return Object.prototype.hasOwnProperty.call(this._map, String(name).toLowerCase());
+    }
+    delete(name) {
+      delete this._map[String(name).toLowerCase()];
+    }
+    forEach(callback, thisArg) {
+      for (const key of Object.keys(this._map)) {
+        callback.call(thisArg, this._map[key], key, this);
+      }
+    }
+    entries() {
+      return Object.keys(this._map).map((key) => [key, this._map[key]])[Symbol.iterator]();
+    }
+    keys() {
+      return Object.keys(this._map)[Symbol.iterator]();
+    }
+    values() {
+      return Object.keys(this._map).map((key) => this._map[key])[Symbol.iterator]();
+    }
+    [Symbol.iterator]() {
+      return this.entries();
+    }
   }
 
   class Request {
     constructor(input, init) {
       init = init || {};
-      this.url = typeof input === "string" ? input : input.url;
-      this.method = String(init.method || "GET").toUpperCase();
-      this.headers = new Headers(init.headers);
-      this.body = init.body == null ? null : init.body;
+      if (typeof input === "string") {
+        this.url = input;
+        this.method = String(init.method || "GET").toUpperCase();
+        this.headers = new Headers(init.headers);
+        this.body = init.body == null ? null : init.body;
+      } else {
+        this.url = input.url;
+        this.method = String(init.method || input.method || "GET").toUpperCase();
+        this.headers = new Headers(init.headers || input.headers);
+        this.body = init.body == null ? input.body : init.body;
+      }
+    }
+    async text() {
+      return this.body == null ? "" : String(this.body);
+    }
+    async json() {
+      const text = await this.text();
+      return text ? JSON.parse(text) : null;
+    }
+    clone() {
+      return new Request(this.url, { method: this.method, headers: this.headers, body: this.body });
     }
   }
 
@@ -42,6 +149,9 @@ const BOOTSTRAP: &str = r##"
       this.status = init.status || 200;
       this.headers = new Headers(init.headers);
     }
+    get ok() {
+      return this.status >= 200 && this.status < 300;
+    }
     static json(data, init) {
       init = init || {};
       const headers = new Headers(init.headers);
@@ -50,25 +160,54 @@ const BOOTSTRAP: &str = r##"
       }
       return new Response(JSON.stringify(data), { status: init.status || 200, headers });
     }
+    async text() {
+      return this.body == null ? "" : String(this.body);
+    }
+    async json() {
+      const text = await this.text();
+      return text ? JSON.parse(text) : null;
+    }
   }
 
-  if (typeof URL === "undefined") {
-    globalThis.URL = class URL {
-      constructor(url) {
-        this.href = String(url);
-        const noHash = this.href.split("#")[0];
-        const q = noHash.indexOf("?");
-        const beforeQuery = q === -1 ? noHash : noHash.slice(0, q);
-        const scheme = beforeQuery.indexOf("://");
-        const pathStart = scheme === -1 ? 0 : beforeQuery.indexOf("/", scheme + 3);
-        this.pathname = pathStart === -1 ? "/" : beforeQuery.slice(pathStart) || "/";
+  class URL {
+    constructor(url, base) {
+      let href = String(url);
+      if (base != null && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) {
+        const baseHref = String(base);
+        if (href.charAt(0) === "/") {
+          const scheme = baseHref.indexOf("://");
+          const hostEnd = scheme === -1 ? 0 : baseHref.indexOf("/", scheme + 3);
+          href = (hostEnd === -1 ? baseHref : baseHref.slice(0, hostEnd)) + href;
+        } else {
+          href = baseHref.replace(/\/[^/]*$/, "/") + href;
+        }
       }
-    };
+      this.href = href;
+      const hash = href.indexOf("#");
+      const noHash = hash === -1 ? href : href.slice(0, hash);
+      const query = noHash.indexOf("?");
+      this.search = query === -1 ? "" : noHash.slice(query);
+      this.hash = hash === -1 ? "" : href.slice(hash);
+      const beforeQuery = query === -1 ? noHash : noHash.slice(0, query);
+      const scheme = beforeQuery.indexOf("://");
+      this.protocol = scheme === -1 ? "" : beforeQuery.slice(0, scheme + 1);
+      const pathStart = scheme === -1 ? 0 : beforeQuery.indexOf("/", scheme + 3);
+      this.origin = pathStart === -1 ? beforeQuery : beforeQuery.slice(0, pathStart);
+      this.host = this.origin.slice(this.protocol.length + 2);
+      this.hostname = this.host.split(":")[0];
+      this.pathname = pathStart === -1 ? "/" : beforeQuery.slice(pathStart) || "/";
+      this.searchParams = new URLSearchParams(this.search);
+    }
+    toString() {
+      return this.href;
+    }
   }
 
   globalThis.Headers = Headers;
   globalThis.Request = Request;
   globalThis.Response = Response;
+  globalThis.URL = URL;
+  globalThis.URLSearchParams = URLSearchParams;
 })();
 "##;
 
@@ -139,7 +278,10 @@ fn read_headers(response: &Object<'_>) -> Result<Vec<(String, String)>, EngineEr
     Ok(headers)
 }
 
-fn send_body(body: rquickjs::Value<'_>, body_tx: &mpsc::Sender<Vec<u8>>) -> Result<(), EngineError> {
+fn send_body(
+    body: rquickjs::Value<'_>,
+    body_tx: &mpsc::Sender<Vec<u8>>,
+) -> Result<(), EngineError> {
     if body.is_null() || body.is_undefined() {
         return Ok(());
     }
@@ -152,7 +294,10 @@ fn send_body(body: rquickjs::Value<'_>, body_tx: &mpsc::Sender<Vec<u8>>) -> Resu
     send_chunk(body, body_tx)
 }
 
-fn send_chunk(chunk: rquickjs::Value<'_>, body_tx: &mpsc::Sender<Vec<u8>>) -> Result<(), EngineError> {
+fn send_chunk(
+    chunk: rquickjs::Value<'_>,
+    body_tx: &mpsc::Sender<Vec<u8>>,
+) -> Result<(), EngineError> {
     let bytes = if let Some(text) = chunk.as_string() {
         text.to_string().map_err(js_err)?.into_bytes()
     } else {
@@ -163,8 +308,7 @@ fn send_chunk(chunk: rquickjs::Value<'_>, body_tx: &mpsc::Sender<Vec<u8>>) -> Re
 }
 
 fn to_js_request<'js>(ctx: &Ctx<'js>, request: &HttpRequest) -> Result<Object<'js>, EngineError> {
-    let factory: Function =
-        ctx.eval("(url, init) => new Request(url, init)").map_err(js_err)?;
+    let factory: Function = ctx.eval("(url, init) => new Request(url, init)").map_err(js_err)?;
     let init = Object::new(ctx.clone()).map_err(js_err)?;
     init.set("method", request.method.as_str()).map_err(js_err)?;
     if !request.body.is_empty() {

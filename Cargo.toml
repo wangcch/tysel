@@ -52,6 +52,7 @@ serde_json = "1"
 sha2 = "0.10"
 libc = "0.2"
 oxc = { version = "0.146", features = ["semantic", "transformer", "codegen"] }
+oxc_resolver = "11"
 
 tysel-manifest = { path = "crates/tysel-manifest" }
 tysel-engine = { path = "crates/tysel-engine" }
