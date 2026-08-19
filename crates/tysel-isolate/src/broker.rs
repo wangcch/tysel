@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::thread;
-use std::time::Duration;
 
 use tysel_engine::Value;
 use tysel_ipc::WireValue;
@@ -18,14 +16,9 @@ impl Broker {
 
     pub fn call(&self, op: &str, args: &[WireValue]) -> Result<Value, IsolateError> {
         match op {
-            "sleep" => {
-                let millis = match args.first() {
-                    Some(WireValue::Number { v }) => *v as u64,
-                    _ => 0,
-                };
-                thread::sleep(Duration::from_millis(millis));
-                Ok(Value::Null)
-            }
+            "sleep" => Err(IsolateError::Broker(
+                "sleep is executed in the worker so the supervisor IPC loop stays live".into(),
+            )),
             "echo" => match args.first() {
                 Some(WireValue::String { v }) => Ok(Value::String(v.clone())),
                 _ => Err(IsolateError::Broker("echo requires a string".into())),

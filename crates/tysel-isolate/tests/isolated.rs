@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use tysel_engine::Value;
 use tysel_isolate::{Supervisor, WorkerSpec};
@@ -35,6 +36,35 @@ fn kill_worker_recovers_on_next_eval() {
     let mut supervisor = supervisor();
     supervisor.kill_worker().expect("kill");
     let value = supervisor.eval("1 + 1").expect("eval after crash");
+    assert_eq!(value, Value::Number(2.0));
+}
+
+#[test]
+fn isolated_sleep_resolves_without_broker() {
+    let mut supervisor = supervisor();
+    let value =
+        supervisor.eval(r#"(async () => { await tysel.sleep(20); return 7; })()"#).expect("sleep");
+    assert_eq!(value, Value::Number(7.0));
+}
+
+#[test]
+fn sleep_timeout_keeps_supervisor_live() {
+    let mut supervisor =
+        Supervisor::spawn(worker_exe(), WorkerSpec { request_timeout_ms: 80, ..spec() }, secrets())
+            .expect("spawn");
+    let started = Instant::now();
+    let err = supervisor.eval("(async () => tysel.sleep(5000))()").expect_err("timeout");
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "supervisor stayed blocked for {:?}",
+        started.elapsed()
+    );
+    assert!(
+        err.to_string().to_ascii_lowercase().contains("timeout")
+            || err.to_string().contains("Interrupted"),
+        "error was {err}"
+    );
+    let value = supervisor.eval("1 + 1").expect("eval after timeout");
     assert_eq!(value, Value::Number(2.0));
 }
 

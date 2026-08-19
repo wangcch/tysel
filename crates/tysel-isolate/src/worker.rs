@@ -1,9 +1,9 @@
 use std::io::{self, BufReader, Write};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use tysel_engine::{IsolateConfig, Value};
+use tysel_engine::{InterruptReason, IsolateConfig, Value};
 use tysel_engine_qjs::{
     IoCompletion, IoRequest, IsolateCancel, OpId, eval_with_reactor, open_bridge,
 };
@@ -58,6 +58,8 @@ pub fn run() -> Result<(), IsolateError> {
                 )?;
             }
             Message::Shutdown => return Ok(()),
+            // A timed-out eval can still have a CapOk in flight. Drop it.
+            Message::CapOk { .. } | Message::CapErr { .. } => {}
             other => {
                 return Err(IsolateError::Worker(format!(
                     "unexpected supervisor message {other:?}"
@@ -73,29 +75,47 @@ fn eval_source(
     stdout: &Arc<Mutex<io::Stdout>>,
     stdin_rx: &mpsc::Receiver<Message>,
 ) -> Result<Value, IsolateError> {
+    let cancel = IsolateCancel::new();
+    let deadline = Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
     let (reactor, mut requests, complete_tx) = open_bridge();
     let stdout_caps = stdout.clone();
+    let cancel_caps = cancel.clone();
+    let complete_caps = complete_tx.clone();
     thread::Builder::new()
         .name("tysel-worker-caps".into())
         .spawn(move || {
             while let Some(request) = requests.blocking_recv() {
-                let _ = write_locked(&stdout_caps, &cap_call(&request));
+                match request {
+                    IoRequest::Sleep { id, millis } => {
+                        let result = wait_interruptible(
+                            Duration::from_millis(millis),
+                            &cancel_caps,
+                            deadline,
+                        );
+                        let _ = complete_caps.send(IoCompletion { id, result });
+                    }
+                    other => {
+                        let _ = write_locked(&stdout_caps, &cap_call(&other));
+                    }
+                }
             }
         })
         .map_err(|err| IsolateError::Worker(err.to_string()))?;
 
     let script = source.to_owned();
+    let cancel_eval = cancel.clone();
     let (result_tx, result_rx) = mpsc::channel();
     thread::Builder::new()
         .name("tysel-qjs".into())
         .spawn(move || {
-            let result = eval_with_reactor(&script, config, IsolateCancel::new(), reactor);
+            let result = eval_with_reactor(&script, config, cancel_eval, reactor);
             let _ = result_tx.send(result);
         })
         .map_err(|err| IsolateError::Worker(err.to_string()))?;
 
     loop {
         if let Ok(result) = result_rx.try_recv() {
+            cancel.cancel();
             return result.map_err(|err| IsolateError::Worker(err.to_string()));
         }
         match stdin_rx.recv_timeout(Duration::from_millis(5)) {
@@ -107,26 +127,49 @@ fn eval_source(
                 let _ = complete_tx.send(IoCompletion { id: OpId(id), result: Err(error) });
             }
             Ok(Message::Shutdown) => {
+                cancel.cancel();
                 return Err(IsolateError::Worker("shutdown during eval".into()));
             }
             Ok(other) => {
+                cancel.cancel();
                 return Err(IsolateError::Worker(format!("unexpected during eval: {other:?}")));
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
+                cancel.cancel();
                 return Err(IsolateError::Worker("stdin closed".into()));
             }
         }
     }
 }
 
+fn wait_interruptible(
+    duration: Duration,
+    cancel: &IsolateCancel,
+    deadline: Instant,
+) -> Result<Value, String> {
+    let sleep_until = Instant::now() + duration;
+    loop {
+        if cancel.is_cancelled() {
+            return Err(format!("{:?}", InterruptReason::Cancelled));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("{:?}", InterruptReason::Timeout));
+        }
+        let now = Instant::now();
+        if now >= sleep_until {
+            return Ok(Value::Null);
+        }
+        let slice = (sleep_until - now)
+            .min(deadline.saturating_duration_since(now))
+            .min(Duration::from_millis(5));
+        thread::sleep(slice);
+    }
+}
+
 fn cap_call(request: &IoRequest) -> Message {
     match request {
-        IoRequest::Sleep { id, millis } => Message::CapCall {
-            id: id.0,
-            op: "sleep".into(),
-            args: vec![WireValue::Number { v: *millis as f64 }],
-        },
+        IoRequest::Sleep { .. } => unreachable!("sleep stays in the worker"),
         IoRequest::Echo { id, value } => Message::CapCall {
             id: id.0,
             op: "echo".into(),

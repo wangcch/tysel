@@ -22,6 +22,10 @@ impl IsolateCancel {
         self.0.store(true, Ordering::SeqCst);
     }
 
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
     pub(crate) fn flag(&self) -> Arc<AtomicBool> {
         self.0.clone()
     }
@@ -159,6 +163,7 @@ pub(crate) fn wait_until_settled(
             });
         }
         if let Some(reason) = wait_reason(cancel, request_deadline) {
+            cancel.cancel();
             context.with(|ctx| host::reject_all(&ctx, reason).map_err(js_err))?;
             return Err(EngineError::Interrupted(reason));
         }
