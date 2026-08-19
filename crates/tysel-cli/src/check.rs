@@ -31,13 +31,13 @@ pub fn run(manifest_path: &Path) -> Result<()> {
     Ok(())
 }
 
-enum Typecheck {
+pub(crate) enum Typecheck {
     Ok,
     Skipped(&'static str),
     Failed(String),
 }
 
-fn typecheck(root: &Path) -> Typecheck {
+pub(crate) fn typecheck(root: &Path) -> Typecheck {
     let tsconfig = root.join("tsconfig.json");
     if !tsconfig.is_file() {
         return Typecheck::Skipped("no tsconfig.json");

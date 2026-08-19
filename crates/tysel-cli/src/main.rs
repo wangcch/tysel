@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tysel_manifest::Manifest;
 
+mod build;
 mod check;
 mod dev;
 
@@ -98,8 +99,8 @@ fn run() -> Result<()> {
                 .context("tokio runtime")?;
             runtime.block_on(dev::run(manifest, entry))
         }
-        Commands::Build { entry, stub, output, manifest, target: _, profile: _, release: _ } => {
-            build(manifest, entry, stub, output)
+        Commands::Build { entry, stub, output, manifest, target, profile, release } => {
+            build::run(manifest, entry, stub, output, target, profile, release)
         }
         other => unimplemented_command(other),
     }
@@ -110,45 +111,6 @@ fn inspect(path: &Path) -> Result<()> {
         Manifest::from_path(path).with_context(|| format!("failed to read {}", path.display()))?;
     print!("{}", manifest.inspect_report());
     Ok(())
-}
-
-fn build(
-    manifest_path: PathBuf,
-    entry: Option<PathBuf>,
-    stub: Option<PathBuf>,
-    output: Option<PathBuf>,
-) -> Result<()> {
-    let manifest = Manifest::from_path(&manifest_path)
-        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-    let root = manifest_path.parent().unwrap_or(Path::new("."));
-    let entry = entry.unwrap_or_else(|| root.join(&manifest.app.entry));
-    let (bundle, source_map) = tysel_build::read_bundle(&entry)
-        .with_context(|| format!("failed to read {}", entry.display()))?;
-    let stub = resolve_stub(stub)?;
-    let output = output.unwrap_or_else(|| PathBuf::from("dist").join(&manifest.app.name));
-    let tap = tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), bundle, source_map);
-    tysel_build::embed(&stub, &output, &tap)
-        .with_context(|| format!("failed to write {}", output.display()))?;
-    println!("wrote {}", output.display());
-    Ok(())
-}
-
-fn resolve_stub(stub: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(path) = stub {
-        return Ok(path);
-    }
-    if let Ok(path) = std::env::var("TYSEL_STUB") {
-        return Ok(PathBuf::from(path));
-    }
-    let exe = std::env::current_exe().context("failed to locate current executable")?;
-    let candidate = exe.parent().unwrap_or(Path::new(".")).join("tysel-service");
-    if candidate.is_file() {
-        return Ok(candidate);
-    }
-    anyhow::bail!(
-        "runtime stub not found; pass --stub or set TYSEL_STUB (looked for {})",
-        candidate.display()
-    )
 }
 
 fn unimplemented_command(command: Commands) -> Result<()> {

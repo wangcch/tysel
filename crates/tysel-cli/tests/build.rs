@@ -30,7 +30,7 @@ listen = "127.0.0.1:0"
     fs::write(&stub, b"stub-runtime").unwrap();
     let output = dir.join("dist").join("hello-service");
 
-    let status = Command::new(cli_exe())
+    let result = Command::new(cli_exe())
         .args([
             "build",
             "--manifest",
@@ -40,9 +40,15 @@ listen = "127.0.0.1:0"
             "--output",
             output.to_str().unwrap(),
         ])
-        .status()
+        .output()
         .expect("run tysel build");
-    assert!(status.success());
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("Type check       skipped"), "{stdout}");
+    assert!(stdout.contains("Bundle           "), "{stdout}");
+    assert!(stdout.contains("Capabilities     sqlite"), "{stdout}");
+    assert!(stdout.contains("Runtime          service"), "{stdout}");
+    assert!(stdout.contains("Output           "), "{stdout}");
 
     let tap = Tap::from_path(&output).expect("extract tap");
     assert!(fs::read(&output).unwrap().starts_with(b"stub-runtime"));
@@ -106,6 +112,98 @@ export default {
     let origin = tap.parsed_source_map().unwrap().original_position(1, 1).unwrap();
     assert!(origin.source.ends_with("src/index.ts"));
     assert!(origin.content.unwrap().contains("request: Request"));
+}
+
+#[test]
+fn build_rejects_a_cross_compile_target() {
+    let dir = temp_js_app("build-target");
+    let stub = dir.join("tysel-service");
+    fs::write(&stub, b"stub-runtime").unwrap();
+    let output = Command::new(cli_exe())
+        .args([
+            "build",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            stub.to_str().unwrap(),
+            "--target",
+            "linux-riscv64",
+            "--output",
+            dir.join("dist/app").to_str().unwrap(),
+        ])
+        .output()
+        .expect("run tysel build");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cross-compilation is not implemented"), "{stderr}");
+}
+
+#[test]
+fn build_rejects_a_mismatched_profile() {
+    let dir = temp_js_app("build-profile");
+    let stub = dir.join("tysel-service");
+    fs::write(&stub, b"stub-runtime").unwrap();
+    let output = Command::new(cli_exe())
+        .args([
+            "build",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            stub.to_str().unwrap(),
+            "--profile",
+            "worker",
+            "--output",
+            dir.join("dist/app").to_str().unwrap(),
+        ])
+        .output()
+        .expect("run tysel build");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("does not match manifest profile service"), "{stderr}");
+}
+
+#[test]
+fn build_fails_when_the_stub_is_missing() {
+    let dir = temp_js_app("build-missing-stub");
+    let output = Command::new(cli_exe())
+        .args([
+            "build",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            dir.join("missing-stub").to_str().unwrap(),
+            "--output",
+            dir.join("dist/app").to_str().unwrap(),
+        ])
+        .output()
+        .expect("run tysel build");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("runtime stub not found"), "{stderr}");
+}
+
+fn temp_js_app(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("tysel-cli-{name}-{}", std::process::id()));
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        "export default { async fetch() { return new Response(\"ok\"); } };\n",
+    )
+    .unwrap();
+    dir
 }
 
 fn cli_exe() -> PathBuf {
