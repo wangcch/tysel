@@ -15,8 +15,8 @@ worker claims. Durable foundations now include an ordered SQLite event log,
 deterministic replay validation, persisted wakeups, and atomic sleep-event/timer
 writes. Wakeup claims are leased and generation-scoped, and task histories are
 bounded to 10,000 events or 16 MiB. An explicit QuickJS durable session exposes
-`step`, `effect`, `sleep`, `now`, and `random` with replay and stale-writer
-protection; CLI task dispatch is not wired yet. `tysel check` validates a
+`step`, `effect`, `sleep`, `waitForSignal`, `now`, and `random` with replay and
+stale-writer protection; CLI task dispatch is not wired yet. `tysel check` validates a
 project; `tysel dev` serves with file-watch reload; `tysel run` serves without
 watching files; `tysel build` emits a single native executable. The full plan
 is in [roadmap.md](./roadmap.md).
@@ -92,13 +92,24 @@ When `[app] profile = "isolated"`, outbound fetch, SQLite, WebSocket, Postgres, 
 `setTimeout` / `setInterval` run while the current request or eval is pending; leftover timers are dropped when the request ends. `TextEncoder` / `TextDecoder` are UTF-8 only. `crypto.getRandomValues` fills at most 65536 bytes. `crypto.subtle` is not implemented yet.
 
 The experimental Rust `eval_durable` path installs `tysel.durable.step`,
-`effect`, `sleep`, `now`, and `random`. Durable boundaries must be awaited
-sequentially. Completed values are JSON-serialized and replayed without running
-their callbacks again. A sleep event and wakeup are committed atomically;
-timeout or cancellation leaves the wakeup available for a later leased run.
+`effect`, `sleep`, `waitForSignal`, `now`, and `random`. Durable boundaries must
+be awaited sequentially. Completed values are JSON-serialized and replayed
+without running their callbacks again. A sleep event and wakeup are committed
+atomically; reaching a pending sleep or signal boundary immediately suspends the
+current evaluation and leaves the wakeup available for a later leased run.
 Only the current wakeup generation can complete it, and the execution side
 checks the real due time before replaying a recorded sleep.
-The service CLI does not dispatch durable tasks yet.
+Signals are persisted in a bounded FIFO inbox through `SqliteStore::send_signal`.
+A matching signal atomically records its replay value and wakes a suspended task;
+consumption requires the current wakeup lease.
+`tysel-runtime::DurableDispatcher` starts local tasks and resumes due wakeups with
+per-run lease renewal, execution outcome classification, and a caller-provided
+task-program resolver. `DurableProgramRegistry` and `DurablePoller` provide a
+bounded in-memory program registry plus a cancellable Tokio polling loop; task
+execution uses up to 16 blocking workers, only registered task ids are claimed,
+and registered program text has a 64MiB aggregate limit.
+The registry must be repopulated after restart. The service CLI does not start
+this polling loop yet.
 
 Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
 

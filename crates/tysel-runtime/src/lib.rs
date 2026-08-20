@@ -3,9 +3,17 @@
 //! Spike B owns the native HTTP listener. Spike C runs that listener from a
 //! runtime stub that memory-maps an embedded TAP trailer.
 
+mod durable;
+mod durable_poll;
 mod http;
 mod service;
 
+pub use durable::{
+    DispatchError, DurableDispatcher, DurableRun, DurableRunError, DurableRunStatus,
+};
+pub use durable_poll::{
+    DurablePoller, DurableProgramRegistry, PollerError, PollerShutdown, ProgramRegistryError,
+};
 pub use http::{
     AppIsolate, HttpError, SharedPool, bind, bind_with, bind_with_request_limit, handle_stream,
     serve, serve_with_websocket, spawn_app_isolate,
