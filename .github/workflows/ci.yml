@@ -37,6 +37,26 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets
 
+  rust-msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets
+
+  component-host-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p tysel-engine-wasm --all-targets
+
   # Landlock, seccomp allowlist, and isolate workers are Linux-only.
   # x86_64 coverage already comes from the rust job; re-run the sandbox
   # crates on arm64 because seccomp syscall tables differ by architecture.
@@ -60,6 +80,51 @@ jobs:
           cache: pnpm
       - run: pnpm install
       - run: pnpm check
+
+  component-sdk-go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.5
+          cache-dependency-path: |
+            sdk/component-go/go.mod
+            sdk/examples/go-echo/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: go test ./...
+        working-directory: sdk/component-go
+      - run: go install github.com/bytecodealliance/componentize-go/cmd/componentize-go@v0.4.1
+      - run: componentize-go -d ../../../wit/component -w task build -o echo.component.wasm
+        working-directory: sdk/examples/go-echo
+      - run: cargo test -p tysel-engine-wasm --test sdk_fixtures
+        env:
+          TYSEL_GO_COMPONENT_FIXTURE: sdk/examples/go-echo/echo.component.wasm
+
+  component-sdk-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: "1.247.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sdk/examples/rust-echo
+      - run: >-
+          cargo build --manifest-path sdk/examples/rust-echo/Cargo.toml
+          --target wasm32-unknown-unknown --release
+      - run: >-
+          wasm-tools component new
+          sdk/examples/rust-echo/target/wasm32-unknown-unknown/release/tysel_rust_echo_component.wasm
+          -o sdk/examples/rust-echo/target/echo.component.wasm
+      - run: cargo test -p tysel-engine-wasm --test sdk_fixtures
+        env:
+          TYSEL_RUST_COMPONENT_FIXTURE: sdk/examples/rust-echo/target/echo.component.wasm
 
   # Roadmap §30 idle PSS is Linux-only. macOS RSS from tysel-bench is a proxy.
   linux-pss:
