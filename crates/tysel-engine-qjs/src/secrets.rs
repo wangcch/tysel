@@ -37,10 +37,10 @@ pub fn handle_for(
     if name.is_empty() || name.contains(':') || name.chars().any(char::is_whitespace) {
         return Err("invalid secret name".into());
     }
-    if let Some(map) = configured {
-        if !map.contains_key(name) {
-            return Err(format!("unknown secret {name}"));
-        }
+    if let Some(map) = configured
+        && !map.contains_key(name)
+    {
+        return Err(format!("unknown secret {name}"));
     }
     Ok(format!("secret:{name}"))
 }
@@ -51,16 +51,16 @@ pub fn load_declared(
 ) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for name in names {
-        if let Ok(value) = std::env::var(name) {
-            if !value.is_empty() {
-                out.insert(name.clone(), value);
-                continue;
-            }
+        if let Ok(value) = std::env::var(name)
+            && !value.is_empty()
+        {
+            out.insert(name.clone(), value);
+            continue;
         }
-        if let Some(value) = file_values.get(name) {
-            if !value.is_empty() {
-                out.insert(name.clone(), value.clone());
-            }
+        if let Some(value) = file_values.get(name)
+            && !value.is_empty()
+        {
+            out.insert(name.clone(), value.clone());
         }
     }
     out

@@ -279,10 +279,9 @@ async fn dispatch_inner(
         .get(hyper::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
+        && len > max_request_bytes as u64
     {
-        if len > max_request_bytes as u64 {
-            return Err(HttpError::BodyTooLarge(max_request_bytes));
-        }
+        return Err(HttpError::BodyTooLarge(max_request_bytes));
     }
     let upgrade = websocket_enabled && is_websocket_upgrade(&request);
     let ws_key = upgrade
@@ -336,26 +335,25 @@ async fn dispatch_inner(
         Err(err) => return Err(err.into()),
     };
 
-    if let (Some(request), Some(key)) = (pending_upgrade, ws_key) {
-        if head.websocket && head.status == 101 {
-            tokio::spawn(async move {
-                if let Ok(upgraded) = hyper::upgrade::on(request).await {
-                    pump_websocket(upgraded, ws_to_js_tx, ws_from_js_rx).await;
-                }
-            });
-            let accept = derive_accept_key(key.as_bytes());
-            let mut builder = Response::builder()
-                .status(StatusCode::SWITCHING_PROTOCOLS)
-                .header(hyper::header::UPGRADE, "websocket")
-                .header(hyper::header::CONNECTION, "Upgrade")
-                .header(hyper::header::SEC_WEBSOCKET_ACCEPT, accept);
-            for (name, value) in head.headers {
-                builder = builder.header(name, value);
+    if let (Some(request), Some(key)) = (pending_upgrade, ws_key)
+        && head.websocket
+        && head.status == 101
+    {
+        tokio::spawn(async move {
+            if let Ok(upgraded) = hyper::upgrade::on(request).await {
+                pump_websocket(upgraded, ws_to_js_tx, ws_from_js_rx).await;
             }
-            return builder
-                .body(HttpBody::Once(None))
-                .map_err(|err| HttpError::Hyper(err.to_string()));
+        });
+        let accept = derive_accept_key(key.as_bytes());
+        let mut builder = Response::builder()
+            .status(StatusCode::SWITCHING_PROTOCOLS)
+            .header(hyper::header::UPGRADE, "websocket")
+            .header(hyper::header::CONNECTION, "Upgrade")
+            .header(hyper::header::SEC_WEBSOCKET_ACCEPT, accept);
+        for (name, value) in head.headers {
+            builder = builder.header(name, value);
         }
+        return builder.body(HttpBody::Once(None)).map_err(|err| HttpError::Hyper(err.to_string()));
     }
 
     let mut builder = Response::builder().status(head.status);

@@ -1,16 +1,15 @@
 [package]
-name = "tysel-capability"
+name = "tysel-component-sdk"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "Capability registry, WIT ABI handles, and permission intersection"
+description = "Language-level JSON task contract for Tysel Wasm Components."
 
 [lints]
 workspace = true
 
 [dependencies]
-semver.workspace = true
 serde.workspace = true
-thiserror.workspace = true
+serde_json.workspace = true

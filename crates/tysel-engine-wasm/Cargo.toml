@@ -11,4 +11,13 @@ description = "Wasmtime Component execution engine (M4)."
 workspace = true
 
 [dependencies]
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tysel-capability.workspace = true
 tysel-engine.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+
+[dev-dependencies]
+wat = "1"

@@ -1,0 +1,6 @@
+package tysel:component@0.4.0;
+
+/// Stable JSON-string data boundary for the M4 Component SDKs.
+world task {
+    export run: func(input: string) -> result<string, string>;
+}

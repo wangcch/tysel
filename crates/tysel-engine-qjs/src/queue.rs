@@ -578,24 +578,23 @@ async fn outbound_fetch(
         let hop =
             fetch_hop(&method, &url, &headers.headers, body.clone(), &cancel, deadline).await?;
         let status = hop.response.status();
-        if status.is_redirection() {
-            if let Some(location) = hop
+        if status.is_redirection()
+            && let Some(location) = hop
                 .response
                 .headers()
                 .get(hyper::header::LOCATION)
                 .and_then(|value| value.to_str().ok())
-            {
-                let next = resolve_redirect(&url, location)?;
-                if !crate::fetch_policy::same_origin(&url, &next)? {
-                    crate::fetch_policy::strip_credentials_for_cross_origin(&mut headers);
-                }
-                url = next;
-                if matches!(status.as_u16(), 301..=303) && method != "HEAD" {
-                    method = "GET".into();
-                    body = Bytes::new();
-                }
-                continue;
+        {
+            let next = resolve_redirect(&url, location)?;
+            if !crate::fetch_policy::same_origin(&url, &next)? {
+                crate::fetch_policy::strip_credentials_for_cross_origin(&mut headers);
             }
+            url = next;
+            if matches!(status.as_u16(), 301..=303) && method != "HEAD" {
+                method = "GET".into();
+                body = Bytes::new();
+            }
+            continue;
         }
         let code = status.as_u16();
         let headers_json = response_headers_json(hop.response.headers());

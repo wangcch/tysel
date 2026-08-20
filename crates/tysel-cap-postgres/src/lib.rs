@@ -101,10 +101,11 @@ impl Checkout {
 
 impl Drop for Checkout {
     fn drop(&mut self) {
-        if let Some(client) = self.client.take() {
-            if self.recycle && !client.is_closed() {
-                self.pool.idle.lock().expect("postgres idle lock").push(client);
-            }
+        if let Some(client) = self.client.take()
+            && self.recycle
+            && !client.is_closed()
+        {
+            self.pool.idle.lock().expect("postgres idle lock").push(client);
         }
     }
 }

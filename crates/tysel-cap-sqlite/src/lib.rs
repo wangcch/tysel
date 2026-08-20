@@ -59,12 +59,11 @@ pub fn query(sql: &str, params_json: &str) -> Result<Value, String> {
 
 /// Open a SQLite database, creating parent directories for file paths.
 pub fn open(path: &str) -> Result<Connection, String> {
-    if path != ":memory:" {
-        if let Some(parent) = Path::new(path).parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-            }
-        }
+    if path != ":memory:"
+        && let Some(parent) = Path::new(path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
     let conn = Connection::open(path).map_err(sql_err)?;
     conn.busy_timeout(Duration::from_secs(5)).map_err(sql_err)?;

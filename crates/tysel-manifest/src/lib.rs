@@ -279,12 +279,11 @@ pub fn parse_postgres_grant(raw: &str) -> Result<PostgresGrant, String> {
             "postgres permission {raw:?} must be a connection name (e.g. main:read-write)"
         ));
     }
-    if let Some(mode) = mode {
-        if mode != "read-write" && mode != "read-only" {
-            return Err(format!(
-                "postgres permission {raw:?} mode must be read-write or read-only"
-            ));
-        }
+    if let Some(mode) = mode
+        && mode != "read-write"
+        && mode != "read-only"
+    {
+        return Err(format!("postgres permission {raw:?} mode must be read-write or read-only"));
     }
     Ok(PostgresGrant { name: name.to_owned(), mode: mode.map(str::to_owned) })
 }

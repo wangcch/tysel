@@ -161,10 +161,11 @@ fn normalize_host(value: &str) -> String {
     if let Some(inner) = host.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
         return inner.0.to_owned();
     }
-    if let Some((name, _)) = host.rsplit_once(':') {
-        if !name.is_empty() && host.chars().filter(|c| *c == ':').count() == 1 {
-            host = name.to_owned();
-        }
+    if let Some((name, _)) = host.rsplit_once(':')
+        && !name.is_empty()
+        && host.chars().filter(|c| *c == ':').count() == 1
+    {
+        host = name.to_owned();
     }
     host.trim_end_matches('.').to_owned()
 }

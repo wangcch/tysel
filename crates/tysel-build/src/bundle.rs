@@ -582,10 +582,10 @@ fn emit_bundle(modules: &[CompiledModule], entry_id: &str) -> Result<(Vec<u8>, V
 
 fn original_for_factory_line(module: &CompiledModule, line_index: usize) -> Option<(u32, u32)> {
     let pos = *module.origins.get(line_index)?;
-    if let Some(map) = &module.js_to_ts {
-        if let Some(found) = map.original_position(pos.line + 1, pos.column + 1) {
-            return Some((found.line.saturating_sub(1), found.column.saturating_sub(1)));
-        }
+    if let Some(map) = &module.js_to_ts
+        && let Some(found) = map.original_position(pos.line + 1, pos.column + 1)
+    {
+        return Some((found.line.saturating_sub(1), found.column.saturating_sub(1)));
     }
     Some((pos.line, pos.column))
 }

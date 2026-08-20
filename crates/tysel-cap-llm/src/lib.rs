@@ -272,10 +272,10 @@ fn extract_output_text(response: &Value) -> Option<String> {
     let mut output = String::new();
     for item in response.get("output")?.as_array()? {
         for content in item.get("content").and_then(Value::as_array).into_iter().flatten() {
-            if content.get("type").and_then(Value::as_str) == Some("output_text") {
-                if let Some(text) = content.get("text").and_then(Value::as_str) {
-                    output.push_str(text);
-                }
+            if content.get("type").and_then(Value::as_str) == Some("output_text")
+                && let Some(text) = content.get("text").and_then(Value::as_str)
+            {
+                output.push_str(text);
             }
         }
     }

@@ -199,10 +199,10 @@ pub fn find_stub() -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
     let mut candidates = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("tysel-service"));
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join("tysel-service"));
     }
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
         let dir = PathBuf::from(dir);

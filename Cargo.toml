@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["sdk/examples/rust-echo"]
 members = [
     "crates/tysel-cli",
     "crates/tysel-build",
@@ -9,6 +10,7 @@ members = [
     "crates/tysel-engine",
     "crates/tysel-engine-qjs",
     "crates/tysel-engine-wasm",
+    "crates/tysel-component-sdk",
     "crates/tysel-scheduler",
     "crates/tysel-task",
     "crates/tysel-task-rpc",
@@ -31,7 +33,7 @@ members = [
 version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.85.0"
+rust-version = "1.95.0"
 authors = ["Tysel Contributors"]
 description = "A lightweight native runtime for TypeScript services and agents."
 
@@ -54,13 +56,18 @@ native-tls = "0.2"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect"] }
 serde_json = "1"
+semver = "1"
 sha2 = "0.10"
+wasmtime = { version = "=32.0.1", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "=32.0.1", default-features = false }
 libc = "0.2"
 oxc = { version = "0.146", features = ["semantic", "transformer", "codegen"] }
 oxc_resolver = "11"
 
 tysel-manifest = { path = "crates/tysel-manifest" }
 tysel-engine = { path = "crates/tysel-engine" }
+tysel-engine-wasm = { path = "crates/tysel-engine-wasm" }
+tysel-component-sdk = { path = "crates/tysel-component-sdk" }
 tysel-engine-qjs = { path = "crates/tysel-engine-qjs" }
 tysel-package = { path = "crates/tysel-package" }
 tysel-build = { path = "crates/tysel-build" }
