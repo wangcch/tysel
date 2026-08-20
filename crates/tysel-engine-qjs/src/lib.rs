@@ -19,7 +19,7 @@ mod trust;
 pub use fetch_policy::configure as configure_fetch_hosts;
 pub use isolate::{IsolateCancel, eval, eval_cancellable, eval_with_reactor};
 pub use pool::{IncomingHttp, IsolatePool};
-pub use queue::{IoCompletion, IoRequest, OpId, Reactor, STREAM_WINDOW, open_bridge};
+pub use queue::{IoCompletion, IoRequest, IoWork, OpId, Reactor, STREAM_WINDOW, open_bridge};
 pub use secrets::{
     configure as configure_secrets, load_declared, parse_dotenv, resolve as resolve_secret,
 };
@@ -60,8 +60,8 @@ pub fn configure_fs(read: Vec<String>, write: Vec<String>, root: Option<&Path>) 
 
 /// Pin the trusted-path Postgres URL resolved from `TYSEL_POSTGRES_<NAME>`.
 /// `None` leaves Postgres unconfigured.
-pub fn configure_postgres(url: Option<String>) {
-    tysel_cap_postgres::configure(url);
+pub fn configure_postgres(url: Option<String>, read_only: bool) {
+    tysel_cap_postgres::configure(url, read_only);
 }
 
 #[cfg(test)]

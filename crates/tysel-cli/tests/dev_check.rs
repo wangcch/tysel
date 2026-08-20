@@ -141,6 +141,67 @@ listen = "127.0.0.1:0"
 }
 
 #[test]
+fn run_serves_hello_until_killed() {
+    let dir = temp_app("run-hello");
+    write_js_app(
+        &dir,
+        r#"export default {
+  async fetch() {
+    return Response.json({ ok: true });
+  },
+};
+"#,
+    );
+
+    let mut child = Command::new(cli_exe())
+        .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn tysel run");
+    let stdout = child.stdout.take().expect("stdout");
+    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let body = http_get(&addr);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(body.contains("200"), "{body}");
+    assert!(body.contains("\"ok\":true") || body.contains("\"ok\": true"), "{body}");
+}
+
+#[test]
+fn run_does_not_reload_when_source_changes() {
+    let dir = temp_app("run-no-reload");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"v1\"); } };\n");
+
+    let mut child = Command::new(cli_exe())
+        .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel run");
+    let stdout = child.stdout.take().expect("stdout");
+    let log = capture_output(child.stderr.take().expect("stderr"));
+    let addr = wait_listen(stdout, Duration::from_secs(8));
+    assert!(http_get(&addr).contains("v1"), "initial body");
+
+    fs::write(
+        dir.join("src/index.js"),
+        "export default { async fetch() { return new Response(\"v2\"); } };\n",
+    )
+    .unwrap();
+    thread::sleep(Duration::from_millis(500));
+    assert!(
+        !log.lock().expect("log").contains("tysel reload"),
+        "tysel run reloaded on source change: {}",
+        log.lock().expect("log")
+    );
+    assert!(http_get(&addr).contains("v1"), "tysel run served reloaded source");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
 fn dev_reloads_source_but_ignores_node_modules() {
     let dir = temp_app("dev-reload");
     write_js_app(&dir, "export default { async fetch() { return new Response(\"v1\"); } };\n");
@@ -346,13 +407,20 @@ fetch = ["192.0.2.1"]
         .spawn()
         .expect("spawn tysel dev");
     let stdout = child.stdout.take().expect("stdout");
+    let log = capture_output(child.stderr.take().expect("stderr"));
     let started = std::time::Instant::now();
     let addr = wait_listen(stdout, Duration::from_secs(8));
     let body = http_get(&addr);
+    wait_log(&log, "\"capability\":\"fetch\"", Duration::from_secs(2));
     assert!(started.elapsed() < Duration::from_secs(2), "deny took {:?}", started.elapsed());
     assert!(body.contains("403"), "{body}");
     assert!(body.contains("isolated profile"), "{body}");
     assert!(!body.contains("not permitted"), "{body}");
+    let captured = log.lock().expect("log").clone();
+    assert!(captured.contains("\"capability\":\"fetch\""), "{captured}");
+    assert!(captured.contains("\"operation\":\"request\""), "{captured}");
+    assert!(captured.contains("\"result\":\"denied\""), "{captured}");
+    assert_matching_rid(&captured, "fetch");
 
     let _ = child.kill();
     let _ = child.wait();
@@ -515,12 +583,14 @@ fs_write = ["./data"]
     let mut child = Command::new(cli_exe())
         .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel dev");
     let stdout = child.stdout.take().expect("stdout");
+    let log = capture_output(child.stderr.take().expect("stderr"));
     let addr = wait_listen(stdout, Duration::from_secs(8));
     let body = http_get(&addr);
+    wait_log(&log, "\"capability\":\"fs\"", Duration::from_secs(2));
     let _ = child.kill();
     let _ = child.wait();
     assert!(body.contains("200"), "{body}");
@@ -528,6 +598,14 @@ fs_write = ["./data"]
     assert!(body.contains("not permitted"), "{body}");
     assert_eq!(fs::read_to_string(dir.join("data/out.txt")).unwrap(), "ok");
     assert_eq!(fs::read_to_string(dir.join("secret.txt")).unwrap(), "no");
+    let captured = log.lock().expect("log").clone();
+    assert!(captured.contains("\"capability\":\"fs\""), "{captured}");
+    assert!(captured.contains("\"operation\":\"read\""), "{captured}");
+    assert!(captured.contains("\"operation\":\"write\""), "{captured}");
+    assert!(captured.contains("\"result\":\"ok\""), "{captured}");
+    assert!(captured.contains("\"result\":\"error\""), "{captured}");
+    assert!(!captured.contains("secret.txt"), "{captured}");
+    assert_matching_rid(&captured, "fs");
 }
 
 fn spawn_header_echo() -> (String, std::sync::Arc<std::sync::Mutex<String>>) {
@@ -590,6 +668,35 @@ fn wait_log(log: &std::sync::Arc<std::sync::Mutex<String>>, needle: &str, timeou
         thread::sleep(Duration::from_millis(20));
     }
     panic!("timed out waiting for {needle:?}: {}", log.lock().expect("log"));
+}
+
+fn json_rid(line: &str) -> Option<u64> {
+    let idx = line.find("\"rid\":")?;
+    let rest = line[idx + 6..].trim_start();
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+fn assert_matching_rid(captured: &str, capability: &str) {
+    let cap_needle = format!("\"capability\":\"{capability}\"");
+    let mut http_rids = Vec::new();
+    let mut cap_rids = Vec::new();
+    for line in captured.lines() {
+        if line.contains("\"method\"") && line.contains("\"path\"") {
+            http_rids.push(json_rid(line));
+        }
+        if line.contains(&cap_needle) {
+            cap_rids.push(json_rid(line));
+        }
+    }
+    assert_eq!(http_rids.len(), 1, "expected one HTTP log line: {captured}");
+    let rid = http_rids[0].expect("HTTP rid");
+    assert!(rid > 0, "HTTP rid should be nonzero: {captured}");
+    assert!(!cap_rids.is_empty(), "expected {capability} log lines: {captured}");
+    assert!(
+        cap_rids.iter().all(|value| *value == Some(rid)),
+        "{capability} rids {cap_rids:?} did not match HTTP rid {rid}: {captured}"
+    );
 }
 
 fn wait_listen(stdout: impl Read + Send + 'static, timeout: Duration) -> String {

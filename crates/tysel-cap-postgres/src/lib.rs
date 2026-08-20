@@ -6,11 +6,12 @@
 
 use std::error::Error;
 use std::pin::pin;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use bytes::BytesMut;
 use futures_util::StreamExt;
-use tokio_postgres::NoTls;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio_postgres::Client;
 use tokio_postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 use tysel_engine::Value;
 
@@ -18,37 +19,129 @@ const MAX_SQL_BYTES: usize = 1_048_576;
 const MAX_PARAMS: usize = 999;
 const MAX_ROWS: usize = 10_000;
 const MAX_RESULT_BYTES: usize = 1_048_576;
+const MAX_CONNECTIONS: usize = 4;
 
-static URL: RwLock<Option<String>> = RwLock::new(None);
+struct Pool {
+    url: String,
+    read_only: bool,
+    slots: Arc<Semaphore>,
+    idle: std::sync::Mutex<Vec<Client>>,
+}
+
+static POOL: RwLock<Option<Arc<Pool>>> = RwLock::new(None);
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
 /// Replace the process-wide connection URL. `None` or a blank string leaves
-/// Postgres unconfigured.
-pub fn configure(url: Option<String>) {
-    let url = url.and_then(|item| {
+/// Postgres unconfigured. Existing pooled sessions are dropped.
+pub fn configure(url: Option<String>, read_only: bool) {
+    let pool = url.and_then(|item| {
         let trimmed = item.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed.to_owned()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(Arc::new(Pool {
+                url: trimmed.to_owned(),
+                read_only,
+                slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
+                idle: std::sync::Mutex::new(Vec::new()),
+            }))
+        }
     });
-    *URL.write().expect("postgres url lock") = url;
+    *POOL.write().expect("postgres pool lock") = pool;
 }
 
 pub async fn exec(sql: &str, params_json: &str) -> Result<f64, String> {
     let sql = check_sql(sql)?;
     let params = parse_params(params_json)?;
-    let client = connect().await?;
+    let mut checkout = checkout(true).await?;
     let refs = param_refs(&params);
-    let n = client.execute(sql, &refs).await.map_err(pg_err)?;
-    Ok(n as f64)
+    let result = checkout.client().execute(sql, &refs).await.map_err(pg_err).map(|n| n as f64);
+    if result.is_err() {
+        checkout.discard();
+    }
+    result
 }
 
 pub async fn query(sql: &str, params_json: &str) -> Result<Value, String> {
     let sql = check_sql(sql)?;
     let params = parse_params(params_json)?;
-    let client = connect().await?;
+    let mut checkout = checkout(false).await?;
     let refs = param_refs(&params);
+    let result = collect_rows(checkout.client(), sql, refs).await;
+    if result.is_err() {
+        checkout.discard();
+    }
+    result
+}
+
+struct Checkout {
+    client: Option<Client>,
+    pool: Arc<Pool>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl Checkout {
+    fn client(&self) -> &Client {
+        self.client.as_ref().expect("postgres checkout")
+    }
+
+    fn discard(&mut self) {
+        self.client.take();
+    }
+}
+
+impl Drop for Checkout {
+    fn drop(&mut self) {
+        if let Some(client) = self.client.take() {
+            if !client.is_closed() {
+                self.pool.idle.lock().expect("postgres idle lock").push(client);
+            }
+        }
+    }
+}
+
+async fn checkout(write: bool) -> Result<Checkout, String> {
+    let pool =
+        POOL.read().expect("postgres pool lock").clone().ok_or("postgres is not configured")?;
+    if write && pool.read_only {
+        return Err("postgres connection is read-only".into());
+    }
+    let permit = pool
+        .slots
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "postgres pool is closed".to_string())?;
+    let idle = pool.idle.lock().expect("postgres idle lock").pop();
+    let client = match idle {
+        Some(client) if !client.is_closed() => client,
+        _ => open_client(&pool.url, pool.read_only).await?,
+    };
+    Ok(Checkout { client: Some(client), pool, _permit: permit })
+}
+
+async fn open_client(url: &str, read_only: bool) -> Result<Client, String> {
+    let tls = postgres_native_tls::MakeTlsConnector::new(
+        native_tls::TlsConnector::new().map_err(|err| err.to_string())?,
+    );
+    let (client, connection) = tokio_postgres::connect(url, tls).await.map_err(pg_err)?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    if read_only {
+        client.batch_execute("SET default_transaction_read_only = on").await.map_err(pg_err)?;
+    }
+    Ok(client)
+}
+
+async fn collect_rows(
+    client: &Client,
+    sql: &str,
+    refs: Vec<&(dyn ToSql + Sync)>,
+) -> Result<Value, String> {
     let stream = client.query_raw(sql, refs).await.map_err(pg_err)?;
     let mut stream = pin!(stream);
     let mut out = Vec::new();
@@ -70,15 +163,6 @@ pub async fn query(sql: &str, params_json: &str) -> Result<Value, String> {
         out.push(value);
     }
     Ok(Value::Array(out))
-}
-
-async fn connect() -> Result<tokio_postgres::Client, String> {
-    let url = URL.read().expect("postgres url lock").clone().ok_or("postgres is not configured")?;
-    let (client, connection) = tokio_postgres::connect(&url, NoTls).await.map_err(pg_err)?;
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    Ok(client)
 }
 
 fn check_sql(sql: &str) -> Result<&str, String> {
@@ -305,5 +389,21 @@ mod tests {
     async fn unconfigured_query_errors() {
         let err = query("SELECT 1", "[]").await.unwrap_err();
         assert!(err.contains("not configured"), "{err}");
+    }
+
+    #[test]
+    fn default_sslmode_prefers_tls() {
+        let config: tokio_postgres::Config = "postgres://tysel@127.0.0.1/tysel".parse().unwrap();
+        assert_eq!(config.get_ssl_mode(), tokio_postgres::config::SslMode::Prefer);
+    }
+
+    #[test]
+    fn sslmode_query_param_is_honored() {
+        let require: tokio_postgres::Config =
+            "postgres://tysel@127.0.0.1/tysel?sslmode=require".parse().unwrap();
+        assert_eq!(require.get_ssl_mode(), tokio_postgres::config::SslMode::Require);
+        let disable: tokio_postgres::Config =
+            "postgres://tysel@127.0.0.1/tysel?sslmode=disable".parse().unwrap();
+        assert_eq!(disable.get_ssl_mode(), tokio_postgres::config::SslMode::Disable);
     }
 }

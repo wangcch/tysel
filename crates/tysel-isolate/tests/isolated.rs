@@ -63,6 +63,31 @@ fn kill_worker_recovers_on_next_eval() {
 }
 
 #[test]
+fn kill_worker_recovers_on_next_http() {
+    let mut supervisor = Supervisor::spawn(worker_exe(), spec(), HashMap::new()).expect("spawn");
+    supervisor
+        .load_handler(
+            r#"export default { async fetch() { return new Response("ok"); } };"#,
+            Vec::new(),
+        )
+        .expect("load");
+    let request = HttpRequest {
+        method: "GET".into(),
+        url: "http://tysel.local/".into(),
+        headers: Vec::new(),
+        body: Vec::new(),
+        request_id: 0,
+    };
+    let (head, body) = supervisor.http(&request).expect("http");
+    assert_eq!(head.status, 200);
+    assert_eq!(body, b"ok");
+    supervisor.kill_worker().expect("kill");
+    let (head, body) = supervisor.http(&request).expect("http after kill");
+    assert_eq!(head.status, 200);
+    assert_eq!(body, b"ok");
+}
+
+#[test]
 fn isolated_sleep_resolves_without_broker() {
     let mut supervisor = supervisor();
     let value =
@@ -219,6 +244,7 @@ fn isolated_http_handler_runs_in_the_worker() {
             url: "http://tysel.local/".into(),
             headers: Vec::new(),
             body: Vec::new(),
+            request_id: 0,
         })
         .expect("dispatch");
     assert_eq!(head.status, 200);
@@ -240,6 +266,7 @@ fn isolated_http_handler_does_not_see_supervisor_env() {
             url: "http://tysel.local/".into(),
             headers: Vec::new(),
             body: Vec::new(),
+            request_id: 0,
         })
         .expect("dispatch");
     let text = String::from_utf8(body).expect("utf8");
@@ -274,6 +301,7 @@ fn isolated_http_denies_outbound_fetch() {
             url: "http://tysel.local/".into(),
             headers: Vec::new(),
             body: Vec::new(),
+            request_id: 0,
         })
         .expect("dispatch");
     assert_eq!(head.status, 403);

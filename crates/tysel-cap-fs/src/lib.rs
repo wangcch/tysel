@@ -14,8 +14,14 @@ const MAX_BYTES: u64 = 1_048_576;
 
 struct Policy {
     base: PathBuf,
-    read: Vec<PathBuf>,
-    write: Vec<PathBuf>,
+    read: Vec<AllowedRoot>,
+    write: Vec<AllowedRoot>,
+}
+
+struct AllowedRoot {
+    parts: Vec<std::ffi::OsString>,
+    #[cfg(unix)]
+    dir: Result<File, String>,
 }
 
 static POLICY: RwLock<Option<Policy>> = RwLock::new(None);
@@ -50,13 +56,20 @@ pub fn write(path: &str, data: &str) -> Result<(), String> {
 
 fn read_with(path: &str, policy: Option<&Policy>) -> Result<String, String> {
     let policy = policy.ok_or("filesystem is not configured")?;
-    let mut file = open_confined(path, &policy.base, &policy.read, false)?;
-    let len = file.metadata().map_err(|err| err.to_string())?.len();
+    let file = open_confined(path, &policy.base, &policy.read, false)?;
+    let metadata = file.metadata().map_err(|err| err.to_string())?;
+    if !metadata.file_type().is_file() {
+        return Err("path is not a regular file".into());
+    }
+    let len = metadata.len();
     if len > MAX_BYTES {
         return Err(format!("file exceeds {MAX_BYTES} bytes"));
     }
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|err| err.to_string())?;
+    file.take(MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|err| err.to_string())?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(format!("file exceeds {MAX_BYTES} bytes"));
+    }
     String::from_utf8(bytes).map_err(|_| "file is not valid utf-8".into())
 }
 
@@ -66,10 +79,14 @@ fn write_with(path: &str, data: &str, policy: Option<&Policy>) -> Result<(), Str
         return Err(format!("write exceeds {MAX_BYTES} bytes"));
     }
     let mut file = open_confined(path, &policy.base, &policy.write, true)?;
+    if !file.metadata().map_err(|err| err.to_string())?.file_type().is_file() {
+        return Err("path is not a regular file".into());
+    }
+    file.set_len(0).map_err(|err| err.to_string())?;
     file.write_all(data.as_bytes()).map_err(|err| err.to_string())
 }
 
-fn resolve_roots(paths: &[String], base: &Path) -> Vec<PathBuf> {
+fn resolve_roots(paths: &[String], base: &Path) -> Vec<AllowedRoot> {
     paths
         .iter()
         .filter_map(|raw| {
@@ -77,12 +94,23 @@ fn resolve_roots(paths: &[String], base: &Path) -> Vec<PathBuf> {
             if trimmed.is_empty() {
                 return None;
             }
-            Some(absolute(Path::new(trimmed), base))
+            let path = absolute(Path::new(trimmed), base);
+            let parts = lexical_components(&path).ok()?;
+            Some(AllowedRoot {
+                parts,
+                #[cfg(unix)]
+                dir: unix::open_root(&path),
+            })
         })
         .collect()
 }
 
-fn open_confined(path: &str, base: &Path, roots: &[PathBuf], write: bool) -> Result<File, String> {
+fn open_confined(
+    path: &str,
+    base: &Path,
+    roots: &[AllowedRoot],
+    write: bool,
+) -> Result<File, String> {
     if path.trim().is_empty() {
         return Err("path must not be empty".into());
     }
@@ -92,8 +120,7 @@ fn open_confined(path: &str, base: &Path, roots: &[PathBuf], write: bool) -> Res
     let requested = absolute(Path::new(path), base);
     let request_parts = lexical_components(&requested)?;
     for root in roots {
-        let root_parts = lexical_components(root)?;
-        if let Some(relative) = strip_prefix(&request_parts, &root_parts) {
+        if let Some(relative) = strip_prefix(&request_parts, &root.parts) {
             if relative.is_empty() {
                 return Err("path is not permitted".into());
             }
@@ -139,13 +166,17 @@ fn absolute(path: &Path, base: &Path) -> PathBuf {
 }
 
 #[cfg(unix)]
-fn open_beneath(root: &Path, relative: &[std::ffi::OsString], write: bool) -> Result<File, String> {
+fn open_beneath(
+    root: &AllowedRoot,
+    relative: &[std::ffi::OsString],
+    write: bool,
+) -> Result<File, String> {
     unix::open_beneath(root, relative, write)
 }
 
 #[cfg(not(unix))]
 fn open_beneath(
-    _root: &Path,
+    _root: &AllowedRoot,
     _relative: &[std::ffi::OsString],
     _write: bool,
 ) -> Result<File, String> {
@@ -156,39 +187,45 @@ fn open_beneath(
 mod unix {
     use std::ffi::{CString, OsStr, OsString};
     use std::fs::File;
-    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::fd::FromRawFd;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::io::AsRawFd;
     use std::path::Path;
 
-    pub fn open_beneath(root: &Path, relative: &[OsString], write: bool) -> Result<File, String> {
-        let dir = open_dir(root)?;
+    use super::AllowedRoot;
+
+    pub fn open_beneath(
+        root: &AllowedRoot,
+        relative: &[OsString],
+        write: bool,
+    ) -> Result<File, String> {
+        let dir = root.dir.as_ref().map_err(Clone::clone)?;
         #[cfg(target_os = "linux")]
-        if let Ok(file) = openat2_beneath(&dir, relative, write) {
+        if let Ok(file) = openat2_beneath(dir, relative, write) {
             return Ok(file);
         }
         openat_walk(dir, relative, write)
     }
 
-    fn open_dir(path: &Path) -> Result<OwnedFd, String> {
+    pub fn open_root(path: &Path) -> Result<File, String> {
         let c_path = cstring(path.as_os_str())?;
         // SAFETY: c_path is a valid C string for the duration of the call.
         #[allow(unsafe_code)]
         let fd = unsafe {
             libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC)
         };
-        owned_fd(fd)
+        owned_file(fd)
     }
 
-    fn openat_walk(root: OwnedFd, relative: &[OsString], write: bool) -> Result<File, String> {
-        let mut current = root;
+    fn openat_walk(root: &File, relative: &[OsString], write: bool) -> Result<File, String> {
+        let mut current = root.try_clone().map_err(|err| err.to_string())?;
         for (index, component) in relative.iter().enumerate() {
             let last = index + 1 == relative.len();
             let mut flags = libc::O_CLOEXEC | libc::O_NOFOLLOW;
             if last && write {
-                flags |= libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC;
+                flags |= libc::O_WRONLY | libc::O_CREAT | libc::O_NONBLOCK;
             } else if last {
-                flags |= libc::O_RDONLY;
+                flags |= libc::O_RDONLY | libc::O_NONBLOCK;
             } else {
                 flags |= libc::O_RDONLY | libc::O_DIRECTORY;
             }
@@ -197,13 +234,13 @@ mod unix {
             // SAFETY: current is an open directory fd; c_name is a valid C string.
             #[allow(unsafe_code)]
             let fd = unsafe { libc::openat(current.as_raw_fd(), c_name.as_ptr(), flags, mode) };
-            current = owned_fd(fd)?;
+            current = owned_file(fd)?;
         }
-        Ok(File::from(current))
+        Ok(current)
     }
 
     #[cfg(target_os = "linux")]
-    fn openat2_beneath(root: &OwnedFd, relative: &[OsString], write: bool) -> Result<File, String> {
+    fn openat2_beneath(root: &File, relative: &[OsString], write: bool) -> Result<File, String> {
         #[repr(C)]
         struct OpenHow {
             flags: u64,
@@ -213,10 +250,10 @@ mod unix {
         let mut flags = (libc::O_CLOEXEC | libc::O_NOFOLLOW) as u64;
         let mut mode = 0u64;
         if write {
-            flags |= (libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC) as u64;
+            flags |= (libc::O_WRONLY | libc::O_CREAT | libc::O_NONBLOCK) as u64;
             mode = 0o644;
         } else {
-            flags |= libc::O_RDONLY as u64;
+            flags |= (libc::O_RDONLY | libc::O_NONBLOCK) as u64;
         }
         let how = OpenHow {
             flags,
@@ -240,9 +277,7 @@ mod unix {
         if fd < 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
-        // SAFETY: openat2 returned a new file descriptor we now own.
-        #[allow(unsafe_code)]
-        Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd as i32) }))
+        owned_file(fd as i32)
     }
 
     #[cfg(target_os = "linux")]
@@ -261,13 +296,13 @@ mod unix {
         CString::new(name.as_bytes()).map_err(|_| "path must not contain NUL".into())
     }
 
-    fn owned_fd(fd: libc::c_int) -> Result<OwnedFd, String> {
+    fn owned_file(fd: libc::c_int) -> Result<File, String> {
         if fd < 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
         // SAFETY: fd is a newly opened descriptor.
         #[allow(unsafe_code)]
-        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+        Ok(unsafe { File::from_raw_fd(fd) })
     }
 }
 
@@ -353,6 +388,53 @@ mod tests {
         let err = read_with("data/link", Some(&policy)).unwrap_err();
         assert!(!err.contains("no\n") && !err.contains("not configured"), "{err}");
         assert_eq!(std::fs::read_to_string(dir.join("secret.txt")).unwrap(), "no");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_root_fd_survives_path_replacement() {
+        let dir = temp_tree("root-swap");
+        std::fs::write(dir.join("data/inside.txt"), "inside").unwrap();
+        std::fs::create_dir_all(dir.join("outside")).unwrap();
+        std::fs::write(dir.join("outside/secret.txt"), "secret").unwrap();
+        let policy = policy_for(&dir, &["./data"], &[]);
+
+        std::fs::rename(dir.join("data"), dir.join("pinned-data")).unwrap();
+        std::os::unix::fs::symlink(dir.join("outside"), dir.join("data")).unwrap();
+
+        assert_eq!(read_with("data/inside.txt", Some(&policy)).unwrap(), "inside");
+        let err = read_with("data/secret.txt", Some(&policy)).unwrap_err();
+        assert!(!err.contains("secret"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_fifo_without_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = temp_tree("fifo");
+        let fifo = dir.join("data/pipe");
+        let path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: path is a valid C string and points into the temporary test tree.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::mkfifo(path.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "{}", std::io::Error::last_os_error());
+        let policy = policy_for(&dir, &["./data"], &["./data"]);
+        let read_err = read_with("data/pipe", Some(&policy)).unwrap_err();
+        assert!(read_err.contains("regular file"), "{read_err}");
+        let _write_err = write_with("data/pipe", "x", Some(&policy)).unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_oversized_reads() {
+        let dir = temp_tree("read-size");
+        std::fs::write(dir.join("data/big.txt"), vec![b'a'; MAX_BYTES as usize + 1]).unwrap();
+        let policy = policy_for(&dir, &["./data"], &[]);
+        let err = read_with("data/big.txt", Some(&policy)).unwrap_err();
+        assert!(err.contains("exceeds"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

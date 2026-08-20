@@ -383,6 +383,7 @@ async fn fetch_handler_streams_body_chunks() {
             url: "http://tysel.local/stream".into(),
             headers: vec![],
             body: vec![],
+            request_id: 0,
         })
         .await
         .expect("dispatch");
@@ -417,6 +418,7 @@ async fn fetch_handler_sleep_does_not_exhaust_cpu_budget() {
             url: "http://tysel.local/".into(),
             headers: vec![],
             body: vec![],
+            request_id: 0,
         })
         .await
         .expect("dispatch");
@@ -452,6 +454,7 @@ async fn fetch_handler_sqlite_increments_counter() {
             url: "http://tysel.local/".into(),
             headers: vec![],
             body: vec![],
+            request_id: 0,
         })
         .await
         .expect("dispatch");
@@ -490,6 +493,7 @@ async fn headers_accepts_sequence_initializer() {
             url: "http://tysel.local/".into(),
             headers: vec![],
             body: vec![],
+            request_id: 0,
         })
         .await
         .expect("dispatch");
@@ -526,6 +530,7 @@ async fn fetch_handler_reads_streamed_request_body() {
         body: rx,
         ws_in: None,
         ws_out: None,
+        request_id: 0,
     });
     tx.send(Ok(b"hel".to_vec())).await.unwrap();
     tx.send(Ok(b"lo".to_vec())).await.unwrap();
@@ -560,6 +565,7 @@ async fn streamed_request_body_applies_backpressure() {
             body: rx,
             ws_in: None,
             ws_out: None,
+            request_id: 0,
         })
         .await
     });
@@ -593,6 +599,7 @@ async fn oversized_streamed_body_is_body_too_large() {
         body: rx,
         ws_in: None,
         ws_out: None,
+        request_id: 0,
     });
     tx.send(Ok(b"ok".to_vec())).await.unwrap();
     tx.send(Err(EngineError::BodyTooLarge.to_string())).await.unwrap();
@@ -849,6 +856,7 @@ async fn accepted_websocket_echoes_text() {
         body: rx,
         ws_in: Some(to_js_rx),
         ws_out: Some(from_js_tx),
+        request_id: 0,
     });
     let (head, _body) = dispatch.await.expect("dispatch");
     assert_eq!(head.status, 101);

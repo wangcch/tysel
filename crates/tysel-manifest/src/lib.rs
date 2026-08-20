@@ -238,6 +238,12 @@ impl Manifest {
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
+        if self.permissions.postgres.len() > 1 {
+            return Err(ManifestError::Invalid(
+                "this runtime supports exactly one Postgres connection; declare at most one grant"
+                    .into(),
+            ));
+        }
         for item in &self.permissions.postgres {
             parse_postgres_grant(item).map_err(ManifestError::Invalid)?;
         }
@@ -287,22 +293,28 @@ pub fn postgres_url_env_key(name: &str) -> String {
     format!("TYSEL_POSTGRES_{}", name.replace('-', "_").to_ascii_uppercase())
 }
 
-/// Resolve the first declared connection's URL from `TYSEL_POSTGRES_<NAME>`.
+/// Resolve the declared connection's URL and access mode from
+/// `TYSEL_POSTGRES_<NAME>`.
 /// Invalid grants (including URLs) are ignored so they are never used as
 /// connection strings.
-pub fn resolve_postgres_url(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedPostgres {
+    pub url: String,
+    pub read_only: bool,
+}
+
+pub fn resolve_postgres(
     grants: &[String],
     file_values: &std::collections::HashMap<String, String>,
-) -> Option<String> {
+) -> Option<ResolvedPostgres> {
     let raw = grants.iter().map(|item| item.trim()).find(|item| !item.is_empty())?;
     let grant = parse_postgres_grant(raw).ok()?;
     let key = postgres_url_env_key(&grant.name);
-    if let Ok(value) = std::env::var(&key) {
-        if !value.is_empty() {
-            return Some(value);
-        }
-    }
-    file_values.get(&key).filter(|value| !value.is_empty()).cloned()
+    let url = std::env::var(&key)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| file_values.get(&key).filter(|value| !value.is_empty()).cloned())?;
+    Some(ResolvedPostgres { url, read_only: grant.mode.as_deref() == Some("read-only") })
 }
 
 fn is_postgres_alias(name: &str) -> bool {
@@ -346,6 +358,8 @@ listen = "127.0.0.1:3000"
         assert_eq!(grant.name, "main");
         assert_eq!(grant.mode.as_deref(), Some("read-write"));
         assert_eq!(postgres_url_env_key("main"), "TYSEL_POSTGRES_MAIN");
+        let bare = parse_postgres_grant("main").unwrap();
+        assert_eq!(bare.mode, None);
     }
 
     #[test]
@@ -368,11 +382,37 @@ postgres = ["postgres://user:pass@localhost/db"]
     }
 
     #[test]
-    fn resolve_postgres_url_ignores_embedded_urls() {
-        let url = resolve_postgres_url(
+    fn resolve_postgres_ignores_embedded_urls() {
+        let url = resolve_postgres(
             &["postgres://user:pass@localhost/db".into()],
             &std::collections::HashMap::new(),
         );
         assert_eq!(url, None);
+    }
+
+    #[test]
+    fn resolve_postgres_preserves_read_only_mode() {
+        let mut file_values = std::collections::HashMap::new();
+        file_values.insert("TYSEL_POSTGRES_REVIEW_RO".into(), "postgres://localhost/app".into());
+        let resolved = resolve_postgres(&["review_ro:read-only".into()], &file_values).unwrap();
+        assert_eq!(resolved.url, "postgres://localhost/app");
+        assert!(resolved.read_only);
+    }
+
+    #[test]
+    fn rejects_multiple_postgres_connections_until_named_api_exists() {
+        let err = Manifest::parse(
+            r#"
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+postgres = ["main:read-write", "audit:read-only"]
+"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("at most one grant"), "{err}");
     }
 }

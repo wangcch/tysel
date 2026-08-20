@@ -6,6 +6,11 @@ use tysel_engine::{HttpHead, HttpRequest, IsolateConfig};
 
 use crate::supervisor::{IsolateError, Supervisor, WorkerSpec};
 
+fn spec_from_config(config: IsolateConfig) -> WorkerSpec {
+    let (app, json_logs) = tysel_observability::json_log_state();
+    WorkerSpec { app, json_logs, ..WorkerSpec::from(config) }
+}
+
 /// Fetch-handler pool that runs QuickJS in `tysel-worker`. The supervisor keeps
 /// the HTTP listener and secret values; the worker only sees secret names.
 pub struct IsolatedHttpPool {
@@ -35,7 +40,7 @@ impl IsolatedHttpPool {
         config: IsolateConfig,
         secret_names: Vec<String>,
     ) -> Result<Self, IsolateError> {
-        Self::spawn(worker_bin, source, WorkerSpec::from(config), secret_names)
+        Self::spawn(worker_bin, source, spec_from_config(config), secret_names)
     }
 
     pub fn dispatch_sync(&self, request: HttpRequest) -> Result<(HttpHead, Vec<u8>), IsolateError> {

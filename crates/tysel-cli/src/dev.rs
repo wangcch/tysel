@@ -19,24 +19,43 @@ struct Watch {
 }
 
 pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
+    serve(manifest_path, entry, true).await
+}
+
+/// Serve without watching sources. Same load path as `tysel dev`.
+pub async fn run_once(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
+    serve(manifest_path, entry, false).await
+}
+
+async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> Result<()> {
     let (isolate, max_request_bytes, addr, websocket) = load(&manifest_path, entry.as_deref())?;
     let pool = SharedPool::with_websocket(isolate, max_request_bytes, websocket);
     let listener = TcpListener::bind(addr).await.with_context(|| format!("bind {addr}"))?;
     let bound = listener.local_addr()?;
     println!("tysel listen {bound}");
     io::stdout().flush()?;
-    let mut changes = watch(manifest_path.parent().unwrap_or(Path::new(".")))?;
-
+    if reload {
+        let mut changes = watch(manifest_path.parent().unwrap_or(Path::new(".")))?;
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => return Ok(()),
+                _ = wait_change(&mut changes.rx) => match load(&manifest_path, entry.as_deref()) {
+                    Ok((next, max_bytes, _, websocket)) => {
+                        eprintln!("tysel reload");
+                        pool.replace_with(next, max_bytes, websocket);
+                    }
+                    Err(err) => eprintln!("error: {err:#}"),
+                },
+                accepted = listener.accept() => {
+                    let (stream, _) = accepted.context("accept")?;
+                    handle_stream(stream, pool.clone());
+                }
+            }
+        }
+    }
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => return Ok(()),
-            _ = wait_change(&mut changes.rx) => match load(&manifest_path, entry.as_deref()) {
-                Ok((next, max_bytes, _, websocket)) => {
-                    eprintln!("tysel reload");
-                    pool.replace_with(next, max_bytes, websocket);
-                }
-                Err(err) => eprintln!("error: {err:#}"),
-            },
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("accept")?;
                 handle_stream(stream, pool.clone());
@@ -69,10 +88,11 @@ fn load(
         .ok()
         .map(|text| tysel_engine_qjs::parse_dotenv(&text))
         .unwrap_or_default();
-    tysel_engine_qjs::configure_postgres(tysel_manifest::resolve_postgres_url(
-        &tap.manifest.postgres,
-        &file_values,
-    ));
+    let postgres = tysel_manifest::resolve_postgres(&tap.manifest.postgres, &file_values);
+    tysel_engine_qjs::configure_postgres(
+        postgres.as_ref().map(|config| config.url.clone()),
+        postgres.is_some_and(|config| config.read_only),
+    );
     tysel_engine_qjs::configure_secrets(tysel_engine_qjs::load_declared(
         &tap.manifest.secret_names,
         &file_values,

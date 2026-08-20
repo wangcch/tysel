@@ -28,6 +28,10 @@ pub enum Message {
         cpu_ms_per_turn: u64,
         request_timeout_ms: u64,
         rlimit_as_bytes: usize,
+        #[serde(default)]
+        app: String,
+        #[serde(default)]
+        json_logs: bool,
     },
     Started,
     Eval {
@@ -56,6 +60,8 @@ pub enum Message {
         url: String,
         headers: Vec<(String, String)>,
         body: String,
+        #[serde(default)]
+        request_id: u64,
     },
     HttpOk {
         id: u64,
@@ -182,6 +188,7 @@ mod tests {
                 url: "http://tysel.local/".into(),
                 headers: vec![("accept".into(), "*/*".into())],
                 body: String::new(),
+                request_id: 9,
             },
         )
         .unwrap();
@@ -194,6 +201,7 @@ mod tests {
                 url: "http://tysel.local/".into(),
                 headers: vec![("accept".into(), "*/*".into())],
                 body: String::new(),
+                request_id: 9,
             }
         );
     }

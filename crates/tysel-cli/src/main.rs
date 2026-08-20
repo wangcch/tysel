@@ -2,6 +2,7 @@
 //!
 //! `inspect` and `build` ship a TAP trailer. `check` validates a project.
 //! `dev` watches sources and serves with process-level reload (roadmap §21).
+//! `run` serves the same way without watching files.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -44,8 +45,12 @@ enum Commands {
         #[arg(long, default_value = "tysel.toml")]
         manifest: PathBuf,
     },
-    /// Run an application without a production build.
-    Run { entry: Option<PathBuf> },
+    /// Run an application without watching files for reload.
+    Run {
+        entry: Option<PathBuf>,
+        #[arg(long, default_value = "tysel.toml")]
+        manifest: PathBuf,
+    },
     /// Run application tests.
     Test,
     /// Bundle the app and emit a single native executable.
@@ -99,6 +104,13 @@ fn run() -> Result<()> {
                 .context("tokio runtime")?;
             runtime.block_on(dev::run(manifest, entry))
         }
+        Commands::Run { entry, manifest } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("tokio runtime")?;
+            runtime.block_on(dev::run_once(manifest, entry))
+        }
         Commands::Build { entry, stub, output, manifest, target, profile, release } => {
             build::run(manifest, entry, stub, output, target, profile, release)
         }
@@ -116,7 +128,6 @@ fn inspect(path: &Path) -> Result<()> {
 fn unimplemented_command(command: Commands) -> Result<()> {
     let name = match command {
         Commands::Init { .. } => "init",
-        Commands::Run { .. } => "run",
         Commands::Test => "test",
         Commands::Compat => "compat",
         Commands::Bench => "bench",
@@ -124,7 +135,8 @@ fn unimplemented_command(command: Commands) -> Result<()> {
         Commands::Inspect { .. }
         | Commands::Build { .. }
         | Commands::Check { .. }
-        | Commands::Dev { .. } => unreachable!(),
+        | Commands::Dev { .. }
+        | Commands::Run { .. } => unreachable!(),
     };
     anyhow::bail!("`tysel {name}` is not implemented yet (see roadmap.md §21)")
 }

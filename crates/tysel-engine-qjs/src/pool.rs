@@ -20,6 +20,7 @@ pub struct IncomingHttp {
     pub body: mpsc::Receiver<Result<Vec<u8>, String>>,
     pub ws_in: Option<mpsc::Receiver<Result<Vec<u8>, String>>>,
     pub ws_out: Option<mpsc::Sender<Vec<u8>>>,
+    pub request_id: u64,
 }
 
 impl From<HttpRequest> for IncomingHttp {
@@ -31,6 +32,7 @@ impl From<HttpRequest> for IncomingHttp {
             body: sealed_body(request.body),
             ws_in: None,
             ws_out: None,
+            request_id: request.request_id,
         }
     }
 }
@@ -199,6 +201,7 @@ fn run_worker(
         reactor.io.inbound.clear();
         reactor.io.ws_in.clear();
         reactor.io.ws_out.clear();
+        reactor.io.bind_request(0);
         let _ = context.with(|ctx| {
             let _ = host::reset_timers(&ctx);
             let _ = ctx.globals().remove("__tysel_response");
@@ -240,6 +243,7 @@ fn handle_job(
     cpu: &CpuBudget,
 ) -> Result<(), EngineError> {
     let Job { request, head_tx, body_tx } = job;
+    reactor.io.bind_request(request.request_id);
     reactor.io.inbound.install(request.body);
     if let Some(ws_in) = request.ws_in {
         reactor.io.ws_in.install(ws_in);
@@ -256,6 +260,7 @@ fn handle_job(
                 url: request.url,
                 headers: request.headers,
                 body: Vec::new(),
+                request_id: request.request_id,
             },
         )
     }) {

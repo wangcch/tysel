@@ -8,7 +8,7 @@ Tysel runs TypeScript services, workers, and agents as a single native executabl
 
 The public API prefers Web standards (`Request`, `Response`, `fetch`, streams, `crypto`). Platform capabilities are granted explicitly, not through ambient Node modules.
 
-This repository is in **M1**. `tysel check` validates a project; `tysel dev` serves with file-watch reload; `tysel build` emits a single native executable. The full plan is in [roadmap.md](./roadmap.md).
+This repository is wrapping **M2**. `tysel check` validates a project; `tysel dev` serves with file-watch reload; `tysel run` serves without watching files; `tysel build` emits a single native executable. The full plan is in [roadmap.md](./roadmap.md).
 
 ## Layout
 
@@ -37,6 +37,7 @@ cargo test --workspace
 cargo run -p tysel-cli -- --help
 cargo run -p tysel-cli -- check --manifest examples/hello-service/tysel.toml
 cargo run -p tysel-cli -- dev --manifest examples/hello-service/tysel.toml
+cargo run -p tysel-cli -- run --manifest examples/hello-service/tysel.toml
 ```
 
 Minimal application:
@@ -64,13 +65,14 @@ cargo run -p tysel-cli -- build --manifest examples/hello-service/tysel.toml
 ```bash
 cargo run -p tysel-cli -- check --manifest tysel.toml
 cargo run -p tysel-cli -- dev --manifest tysel.toml
+cargo run -p tysel-cli -- run --manifest tysel.toml
 cargo run -p tysel-cli -- inspect --manifest tysel.toml
 cargo run -p tysel-cli -- build --manifest tysel.toml
 ```
 
 `tysel check` loads the manifest, bundles the entry, and runs `tsc --noEmit` when a `tsconfig.json` and TypeScript are present. Missing TypeScript is skipped, not a failure.
 
-`tysel dev` serves the bundled app, prints `tysel listen <addr>`, and reloads isolates when `ts` / `js` / `json` / `toml` files change. It does not watch `node_modules`, `target`, `dist`, `.git`, or `data`. Reload keeps the same port; keep-alive connections pick up the new isolate on the next request.
+`tysel dev` serves the bundled app, prints `tysel listen <addr>`, and reloads isolates when `ts` / `js` / `json` / `toml` files change. It does not watch `node_modules`, `target`, `dist`, `.git`, or `data`. Reload keeps the same port; keep-alive connections pick up the new isolate on the next request. `tysel run` uses the same load path without a file watcher.
 
 Trusted-path `fetch` supports HTTP and HTTPS GET, HEAD, POST, PUT, PATCH, and DELETE. Hosts must be listed in `[permissions] fetch`; an empty list denies every outbound request. Header values that are `secret:name` or `Bearer secret:name` are expanded in the host and never returned to JavaScript. String bodies are sent as-is (GET/HEAD ignore a body) and are capped at 16MiB. The returned `Response` exposes origin headers (hop-by-hop headers omitted). Redirects are followed (max 20) and isolate timeout and cancel are honored. `tysel.httpGet(url)` is a GET wrapper.
 
@@ -82,15 +84,15 @@ Inbound WebSocket is available on the trusted path when `[server] websocket = tr
 
 Trusted-path SQLite is available as `tysel.sqlite.exec(sql, params?)` and `tysel.sqlite.query(sql, params?)`. Parameters are bound (never concatenated). Isolated workers cannot open SQLite. The default database is in-memory; `[durable] store = "sqlite"` with `path` pins a file (created on first use). `tysel dev` resolves a relative path against the manifest directory; a packaged binary resolves it against the process working directory. See `examples/sqlite-worker`.
 
-Trusted-path Postgres is available as `tysel.postgres.exec(sql, params?)` and `tysel.postgres.query(sql, params?)` when `[permissions] postgres` lists a named connection such as `main:read-write`. Connection URLs must not appear in the manifest or TAP trailer; the host reads `TYSEL_POSTGRES_<NAME>` from the process environment (`tysel dev` also reads a sibling `.env`). Placeholders are `$1`, `$2`, … (not SQLite `?`). JSON integers are encoded to match the target column (INT2/INT4/INT8). Queries stream rows and stop at 10,000 rows or 1MiB of result payload. Isolated workers cannot open Postgres. TLS and connection pooling are not implemented yet. See `examples/postgres-service`.
+Trusted-path Postgres is available as `tysel.postgres.exec(sql, params?)` and `tysel.postgres.query(sql, params?)` when `[permissions] postgres` lists one named connection such as `main:read-write`; multiple named connections will arrive with the named API. A `read-only` grant rejects `exec` and configures every database session as read-only. Connection URLs must not appear in the manifest or TAP trailer; the host reads `TYSEL_POSTGRES_<NAME>` from the process environment (`tysel dev` also reads a sibling `.env`). Placeholders are `$1`, `$2`, … (not SQLite `?`). JSON integers are encoded to match the target column (INT2/INT4/INT8). Queries stream rows and stop at 10,000 rows or 1MiB of result payload. Connections are pooled (up to 4) for the process lifetime. TLS follows the URL `sslmode` (`prefer` by default, using the platform TLS stack; `require` fails if the server has no TLS; `disable` stays plaintext). Isolated workers cannot open Postgres. See `examples/postgres-service`.
 
-Trusted-path filesystem access is available as `tysel.fs.read(path)` and `tysel.fs.write(path, data)` when `[permissions] fs_read` / `fs_write` list directory roots. Relative roots and relative request paths are resolved against the manifest directory in `tysel dev`, and against the process working directory in a packaged binary. Paths are opened relative to the root directory fd (`openat`, and `openat2` with `RESOLVE_BENEATH` on Linux); `..` and symlinks cannot escape the allowlist. Reads and writes are capped at 1MiB UTF-8. Unconfigured processes deny every path. Isolated workers cannot use the filesystem.
+Trusted-path filesystem access is available as `tysel.fs.read(path)` and `tysel.fs.write(path, data)` when `[permissions] fs_read` / `fs_write` list directory roots. Relative roots and relative request paths are resolved against the manifest directory in `tysel dev`, and against the process working directory in a packaged binary. Root directory fds are pinned when the app is configured; paths are opened beneath them with `openat` (and `openat2` with `RESOLVE_BENEATH` on Linux), so `..`, symlinks, and root-path replacement cannot escape the allowlist. Only regular files are accepted. Reads and writes are capped at 1MiB UTF-8. Unconfigured processes deny every path. Isolated workers cannot use the filesystem.
 
 Trusted-path secrets are opaque handles: `tysel.secrets.ref("OPENAI_API_KEY")` returns `secret:OPENAI_API_KEY` and never the raw value. Names come from `[permissions] secrets`; values are loaded from the process environment, and `tysel dev` also reads a sibling `.env` for those names only. `tysel dev` reloads declared secrets when `tysel.toml` or `.env` changes. Isolated workers can mint handles through the supervisor broker but cannot read raw secrets.
 
-When `[observability] logs = "json"` (the default), each HTTP request writes one JSON line to stderr with `ts`, `app`, `method`, `path`, `status`, and `ms`. Query strings and headers are omitted. Set `logs` to any other value to disable.
+When `[observability] logs = "json"` (the default), each HTTP request writes one JSON line to stderr with `ts`, `app`, `method`, `path`, `status`, `ms`, and `rid`. Capability calls write a second kind of line with `capability`, `operation`, `result` (`ok` / `error` / `denied`), `ms`, and the same `rid`. SQL, filesystem paths, URLs, and secret values are omitted. Isolated denials are recorded with `result` `denied`. Query strings and headers are omitted. Set `logs` to any other value to disable.
 
-Isolate hot-swap and `tysel run` are not implemented yet.
+Isolate hot-swap is not implemented yet.
 
 ## License
 

@@ -25,6 +25,7 @@ tysel-cap-fs.workspace = true
 tysel-cap-postgres.workspace = true
 tysel-cap-sqlite.workspace = true
 tysel-engine.workspace = true
+tysel-observability.workspace = true
 tysel-policy.workspace = true
 
 [dev-dependencies]

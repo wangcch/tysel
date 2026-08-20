@@ -43,8 +43,11 @@ pub fn run() -> Result<(), IsolateError> {
                 cpu_ms_per_turn,
                 request_timeout_ms,
                 rlimit_as_bytes,
+                app,
+                json_logs,
             } => {
                 config = IsolateConfig { memory_limit_bytes, cpu_ms_per_turn, request_timeout_ms };
+                tysel_observability::configure_http_log(app, json_logs);
                 rlimit::apply_resource_limits(rlimit_as_bytes)?;
                 landlock::apply()?;
                 seccomp::apply()?;
@@ -60,13 +63,14 @@ pub fn run() -> Result<(), IsolateError> {
                 };
                 write_locked(&stdout, &reply)?;
             }
-            Message::Http { id, method, url, headers, body } => {
+            Message::Http { id, method, url, headers, body, request_id } => {
                 let reply = match handler.as_ref() {
                     Some(pool) => match pool.dispatch_sync(HttpRequest {
                         method,
                         url,
                         headers,
                         body: body.into_bytes(),
+                        request_id,
                     }) {
                         Ok((head, bytes)) => Message::HttpOk {
                             id,
@@ -114,7 +118,7 @@ fn load_handler(
 ) -> Result<IsolatePool, IsolateError> {
     tysel_engine_qjs::configure_execution_profile("isolated");
     tysel_engine_qjs::configure_fetch_hosts(Vec::new());
-    tysel_engine_qjs::configure_postgres(None);
+    tysel_engine_qjs::configure_postgres(None, false);
     tysel_engine_qjs::configure_fs(Vec::new(), Vec::new(), None);
     let mut secrets = HashMap::new();
     for name in secret_names {
@@ -139,8 +143,8 @@ fn eval_source(
     thread::Builder::new()
         .name("tysel-worker-caps".into())
         .spawn(move || {
-            while let Some(request) = requests.blocking_recv() {
-                match request {
+            while let Some(work) = requests.blocking_recv() {
+                match work.request {
                     IoRequest::Sleep { id, millis } => {
                         let result = wait_interruptible(
                             Duration::from_millis(millis),
@@ -153,6 +157,15 @@ fn eval_source(
                         if let Some(message) = cap_call(&other) {
                             let _ = write_locked(&stdout_caps, &message);
                         } else {
+                            if let Some((capability, operation)) = other.audit_target() {
+                                tysel_observability::log_capability(
+                                    capability,
+                                    operation,
+                                    "denied",
+                                    Duration::ZERO,
+                                    work.request_id,
+                                );
+                            }
                             let _ = complete_caps.send(IoCompletion {
                                 id: other.id(),
                                 result: Err(

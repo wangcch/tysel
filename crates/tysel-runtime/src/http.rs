@@ -105,6 +105,7 @@ async fn dispatch_isolated(
             url: request.url,
             headers: request.headers,
             body,
+            request_id: request.request_id,
         })
     })
     .await
@@ -192,14 +193,17 @@ pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
                 let method = request.method().as_str().to_owned();
                 let path = request.uri().path().to_owned();
                 let started = Instant::now();
+                let request_id = tysel_observability::next_request_id();
                 let (isolate, max_request_bytes) = pool.current();
                 let response =
-                    dispatch(isolate, request, max_request_bytes, pool.websocket()).await;
+                    dispatch(isolate, request, max_request_bytes, pool.websocket(), request_id)
+                        .await;
                 tysel_observability::log_http(
                     &method,
                     &path,
                     response.status().as_u16(),
                     started.elapsed(),
+                    request_id,
                 );
                 Ok::<_, Infallible>(response)
             }
@@ -243,8 +247,9 @@ async fn dispatch(
     request: Request<Incoming>,
     max_request_bytes: usize,
     websocket: bool,
+    request_id: u64,
 ) -> Response<HttpBody> {
-    match dispatch_inner(pool, request, max_request_bytes, websocket).await {
+    match dispatch_inner(pool, request, max_request_bytes, websocket, request_id).await {
         Ok(response) => response,
         Err(HttpError::BodyTooLarge(limit)) => Response::builder()
             .status(StatusCode::PAYLOAD_TOO_LARGE)
@@ -267,6 +272,7 @@ async fn dispatch_inner(
     request: Request<Incoming>,
     max_request_bytes: usize,
     websocket_enabled: bool,
+    request_id: u64,
 ) -> Result<Response<HttpBody>, HttpError> {
     if let Some(len) = request
         .headers()
@@ -321,6 +327,7 @@ async fn dispatch_inner(
             body: rx,
             ws_in: upgrade.then_some(ws_to_js_rx),
             ws_out: upgrade.then_some(ws_from_js_tx),
+            request_id,
         })
         .await
     {

@@ -94,6 +94,7 @@ export default app;
             url: "http://tysel.local/".into(),
             headers: vec![],
             body: vec![],
+            request_id: 0,
         })
         .await
         .expect("dispatch /");
@@ -106,6 +107,7 @@ export default app;
             url: "http://tysel.local/hello/tysel".into(),
             headers: vec![],
             body: vec![],
+            request_id: 0,
         })
         .await
         .expect("dispatch /hello/:name");
@@ -139,6 +141,7 @@ async fn real_hono_example_handles_json_routes() {
             url: "http://tysel.local/".into(),
             headers: vec![],
             body: vec![],
+            request_id: 0,
         })
         .await
         .expect("dispatch /");
@@ -152,6 +155,7 @@ async fn real_hono_example_handles_json_routes() {
             url: "http://tysel.local/hello/tysel".into(),
             headers: vec![],
             body: vec![],
+            request_id: 0,
         })
         .await
         .expect("dispatch /hello/:name");

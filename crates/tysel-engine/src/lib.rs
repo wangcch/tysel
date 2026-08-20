@@ -63,12 +63,14 @@ pub enum EngineError {
     BodyTooLarge,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// Correlates HTTP and capability JSON lines. Zero omits `rid`.
+    pub request_id: u64,
 }
 
 #[derive(Debug, Clone)]

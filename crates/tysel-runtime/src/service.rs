@@ -40,10 +40,12 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         tap.manifest.fs_write.clone(),
         None,
     );
-    tysel_engine_qjs::configure_postgres(tysel_manifest::resolve_postgres_url(
-        &tap.manifest.postgres,
-        &std::collections::HashMap::new(),
-    ));
+    let postgres =
+        tysel_manifest::resolve_postgres(&tap.manifest.postgres, &std::collections::HashMap::new());
+    tysel_engine_qjs::configure_postgres(
+        postgres.as_ref().map(|config| config.url.clone()),
+        postgres.is_some_and(|config| config.read_only),
+    );
     tysel_engine_qjs::configure_secrets(tysel_engine_qjs::load_declared(
         &tap.manifest.secret_names,
         &std::collections::HashMap::new(),

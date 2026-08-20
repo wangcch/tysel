@@ -16,6 +16,8 @@ futures-util.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"] }
+native-tls.workspace = true
+postgres-native-tls = "0.5"
 tysel-engine.workspace = true
 
 [dev-dependencies]

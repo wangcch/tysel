@@ -95,6 +95,27 @@ impl IoRequest {
             Self::FsRead { .. } | Self::FsWrite { .. } => Cap::Fs,
         }
     }
+
+    /// Capability audit identity. Sleep, echo, and stream-chunk reads are omitted.
+    pub fn audit_target(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::HttpGet { .. } => Some(("fetch", "request")),
+            Self::SqliteExec { .. } => Some(("sqlite", "exec")),
+            Self::SqliteQuery { .. } => Some(("sqlite", "query")),
+            Self::PostgresExec { .. } => Some(("postgres", "exec")),
+            Self::PostgresQuery { .. } => Some(("postgres", "query")),
+            Self::FsRead { .. } => Some(("fs", "read")),
+            Self::FsWrite { .. } => Some(("fs", "write")),
+            Self::SecretRef { .. } => Some(("secrets", "ref")),
+            Self::WsSend { .. } => Some(("websocket", "send")),
+            Self::WsClose { .. } => Some(("websocket", "close")),
+            Self::Sleep { .. }
+            | Self::Echo { .. }
+            | Self::ReadBody { .. }
+            | Self::HttpRead { .. }
+            | Self::WsRead { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -174,18 +195,30 @@ impl SendSlot {
 
 #[derive(Clone)]
 pub struct IoHandle {
-    tx: UnboundedSender<IoRequest>,
+    tx: UnboundedSender<IoWork>,
     next_id: Arc<AtomicU64>,
+    request_id: Arc<AtomicU64>,
     pub inbound: StreamSlot,
     pub outbound: StreamSlot,
     pub ws_in: StreamSlot,
     pub ws_out: SendSlot,
 }
 
+/// One host I/O op plus the HTTP request id that submitted it.
+pub struct IoWork {
+    pub request: IoRequest,
+    pub request_id: u64,
+}
+
 impl IoHandle {
+    pub fn bind_request(&self, request_id: u64) {
+        self.request_id.store(request_id, Ordering::Relaxed);
+    }
+
     pub fn submit(&self, request: impl FnOnce(OpId) -> IoRequest) -> OpId {
         let id = OpId(self.next_id.fetch_add(1, Ordering::Relaxed));
-        let _ = self.tx.send(request(id));
+        let request_id = self.request_id.load(Ordering::Relaxed);
+        let _ = self.tx.send(IoWork { request: request(id), request_id });
         id
     }
 }
@@ -226,6 +259,7 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
         io: IoHandle {
             tx: req_tx,
             next_id: Arc::new(AtomicU64::new(1)),
+            request_id: Arc::new(AtomicU64::new(0)),
             inbound,
             outbound,
             ws_in,
@@ -240,8 +274,8 @@ pub fn spawn_reactor_until_cancel(cancel: Arc<AtomicBool>) -> Reactor {
 }
 
 /// Split I/O so a process-isolated worker can proxy host calls over IPC.
-pub fn open_bridge()
--> (Reactor, UnboundedReceiver<IoRequest>, std::sync::mpsc::Sender<IoCompletion>) {
+pub fn open_bridge() -> (Reactor, UnboundedReceiver<IoWork>, std::sync::mpsc::Sender<IoCompletion>)
+{
     let (req_tx, req_rx) = unbounded_channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     (
@@ -249,6 +283,7 @@ pub fn open_bridge()
             io: IoHandle {
                 tx: req_tx,
                 next_id: Arc::new(AtomicU64::new(1)),
+                request_id: Arc::new(AtomicU64::new(0)),
                 inbound: StreamSlot::new(),
                 outbound: StreamSlot::new(),
                 ws_in: StreamSlot::new(),
@@ -269,13 +304,13 @@ struct IoSlots {
 }
 
 async fn run_reactor(
-    mut requests: UnboundedReceiver<IoRequest>,
+    mut requests: UnboundedReceiver<IoWork>,
     completions: std::sync::mpsc::Sender<IoCompletion>,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
     slots: IoSlots,
 ) {
-    while let Some(request) = requests.recv().await {
+    while let Some(work) = requests.recv().await {
         let completions = completions.clone();
         let cancel = cancel.clone();
         let slots = IoSlots {
@@ -285,7 +320,7 @@ async fn run_reactor(
             ws_out: slots.ws_out.clone(),
         };
         tokio::spawn(async move {
-            let completion = execute(request, cancel, deadline, slots).await;
+            let completion = execute(work.request, work.request_id, cancel, deadline, slots).await;
             let _ = completions.send(completion);
         });
     }
@@ -293,14 +328,18 @@ async fn run_reactor(
 
 async fn execute(
     request: IoRequest,
+    request_id: u64,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
     slots: IoSlots,
 ) -> IoCompletion {
+    let audit = request.audit_target();
+    let started = Instant::now();
     if let Err(error) = crate::trust::require(request.capability()) {
+        audit_log(audit, "denied", started, request_id);
         return IoCompletion { id: request.id(), result: Err(error) };
     }
-    match request {
+    let completion = match request {
         IoRequest::Sleep { id, millis } => IoCompletion {
             id,
             result: wait(Duration::from_millis(millis), &cancel, deadline).await.map_err(io_err),
@@ -365,6 +404,26 @@ async fn execute(
             })
             .await,
         },
+    };
+    let result = if completion.result.is_ok() { "ok" } else { "error" };
+    audit_log(audit, result, started, request_id);
+    completion
+}
+
+fn audit_log(
+    audit: Option<(&'static str, &'static str)>,
+    result: &str,
+    started: Instant,
+    request_id: u64,
+) {
+    if let Some((capability, operation)) = audit {
+        tysel_observability::log_capability(
+            capability,
+            operation,
+            result,
+            started.elapsed(),
+            request_id,
+        );
     }
 }
 

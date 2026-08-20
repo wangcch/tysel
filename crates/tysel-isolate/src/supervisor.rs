@@ -36,6 +36,8 @@ pub struct WorkerSpec {
     pub cpu_ms_per_turn: u64,
     pub request_timeout_ms: u64,
     pub rlimit_as_bytes: usize,
+    pub app: String,
+    pub json_logs: bool,
 }
 
 impl Default for WorkerSpec {
@@ -45,6 +47,8 @@ impl Default for WorkerSpec {
             cpu_ms_per_turn: 200,
             request_timeout_ms: 2_000,
             rlimit_as_bytes: 256 * 1024 * 1024,
+            app: String::new(),
+            json_logs: false,
         }
     }
 }
@@ -173,14 +177,9 @@ impl Supervisor {
     pub fn http(&mut self, request: &HttpRequest) -> Result<(HttpHead, Vec<u8>), IsolateError> {
         match self.http_inner(request) {
             Ok(value) => Ok(value),
-            Err(err) if self.worker_exited() => {
-                self.ensure_worker()?;
-                if self.handler_source.is_some() {
-                    self.send_load()?;
-                }
-                self.http_inner(request)
-                    .map_err(|retry| IsolateError::Worker(format!("{err}; retry: {retry}")))
-            }
+            Err(err) if self.worker_exited() => self
+                .http_inner(request)
+                .map_err(|retry| IsolateError::Worker(format!("{err}; retry: {retry}"))),
             Err(err) => Err(err),
         }
     }
@@ -217,6 +216,7 @@ impl Supervisor {
                     url: request.url.clone(),
                     headers: request.headers.clone(),
                     body: String::from_utf8_lossy(&request.body).into_owned(),
+                    request_id: request.request_id,
                 },
             )?;
         }
@@ -321,6 +321,8 @@ impl Supervisor {
                 cpu_ms_per_turn: self.spec.cpu_ms_per_turn,
                 request_timeout_ms: self.spec.request_timeout_ms,
                 rlimit_as_bytes: self.spec.rlimit_as_bytes,
+                app: self.spec.app.clone(),
+                json_logs: self.spec.json_logs,
             },
         )?;
         match read_message(&mut conn.stdout) {
@@ -334,6 +336,9 @@ impl Supervisor {
         let pid = conn.child.id();
         self.cgroup = crate::cgroup::attach(pid, self.spec.rlimit_as_bytes);
         self.child = Some(conn);
+        if self.handler_source.is_some() {
+            self.send_load()?;
+        }
         Ok(())
     }
 

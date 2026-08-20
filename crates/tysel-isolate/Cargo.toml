@@ -15,6 +15,7 @@ thiserror.workspace = true
 tysel-engine.workspace = true
 tysel-engine-qjs.workspace = true
 tysel-ipc.workspace = true
+tysel-observability.workspace = true
 tysel-policy.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
