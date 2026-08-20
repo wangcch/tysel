@@ -7,6 +7,7 @@ use rquickjs::{Context, Ctx, Promise, Runtime};
 use tysel_engine::{EngineError, InterruptReason, IsolateConfig, Value};
 
 use crate::cpu::CpuBudget;
+use crate::durable::DurableSession;
 use crate::host;
 use crate::queue::{self, IoCompletion};
 
@@ -40,13 +41,30 @@ pub fn eval_cancellable(
     config: IsolateConfig,
     cancel: IsolateCancel,
 ) -> Result<Value, EngineError> {
+    eval_cancellable_with_durable(script, config, cancel, None)
+}
+
+pub fn eval_durable(
+    script: &str,
+    config: IsolateConfig,
+    session: DurableSession,
+) -> Result<Value, EngineError> {
+    eval_cancellable_with_durable(script, config, IsolateCancel::new(), Some(session))
+}
+
+fn eval_cancellable_with_durable(
+    script: &str,
+    config: IsolateConfig,
+    cancel: IsolateCancel,
+    durable: Option<DurableSession>,
+) -> Result<Value, EngineError> {
     let script = script.to_owned();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("tysel-qjs".into())
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_on_worker(&script, config, cancel)
+                run_on_worker(&script, config, cancel, durable)
             }))
             .unwrap_or_else(|_| Err(EngineError::Isolate("quickjs worker panicked".into())));
             let _ = tx.send(result);
@@ -59,11 +77,12 @@ fn run_on_worker(
     script: &str,
     config: IsolateConfig,
     cancel: IsolateCancel,
+    durable: Option<DurableSession>,
 ) -> Result<Value, EngineError> {
     let request_deadline = Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
     let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
     let reactor = queue::spawn_reactor(cancel.flag(), request_deadline);
-    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu)
+    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu, durable)
 }
 
 /// Evaluate `script` using a caller-supplied I/O reactor (local or IPC proxy).
@@ -75,7 +94,7 @@ pub fn eval_with_reactor(
 ) -> Result<Value, EngineError> {
     let request_deadline = Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
     let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
-    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu)
+    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu, None)
 }
 
 fn run_with_reactor(
@@ -85,6 +104,7 @@ fn run_with_reactor(
     reactor: queue::Reactor,
     request_deadline: Instant,
     cpu: Arc<CpuBudget>,
+    durable: Option<DurableSession>,
 ) -> Result<Value, EngineError> {
     let cancel_flag = cancel.flag();
 
@@ -101,7 +121,15 @@ fn run_with_reactor(
     }
     let context = Context::full(&runtime).map_err(js_err)?;
     let started_async = context.with(|ctx| {
-        start_script(ctx, script, reactor.io.clone(), &cancel, request_deadline, &cpu)
+        start_script(
+            ctx,
+            script,
+            reactor.io.clone(),
+            &cancel,
+            request_deadline,
+            &cpu,
+            durable.clone(),
+        )
     })?;
 
     let result = match started_async {
@@ -113,6 +141,12 @@ fn run_with_reactor(
                 .ok_or_else(|| EngineError::Isolate("async script did not settle".into()))
         }
     };
+
+    if result.is_ok()
+        && let Some(durable) = &durable
+    {
+        durable.ensure_consumed().map_err(EngineError::Isolate)?;
+    }
 
     let _ = context.with(|ctx| {
         let _ = host::drop_host(&ctx);
@@ -132,8 +166,12 @@ fn start_script(
     cancel: &IsolateCancel,
     request_deadline: Instant,
     cpu: &CpuBudget,
+    durable: Option<DurableSession>,
 ) -> Result<Option<Value>, EngineError> {
-    host::install(ctx.clone(), io, 0).map_err(js_err)?;
+    match durable {
+        Some(durable) => host::install_durable(ctx.clone(), io, 0, durable).map_err(js_err)?,
+        None => host::install(ctx.clone(), io, 0).map_err(js_err)?,
+    }
     let evaluated = ctx
         .eval::<rquickjs::Value, _>(script)
         .map_err(|err| map_eval_error(err, cancel, request_deadline, cpu))?;

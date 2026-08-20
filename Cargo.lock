@@ -2688,9 +2688,11 @@ dependencies = [
  "tysel-cap-fs",
  "tysel-cap-postgres",
  "tysel-cap-sqlite",
+ "tysel-durable",
  "tysel-engine",
  "tysel-observability",
  "tysel-policy",
+ "tysel-task",
 ]
 
 [[package]]

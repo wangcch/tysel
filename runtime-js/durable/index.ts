@@ -2,5 +2,7 @@
 export interface DurableHost {
   step<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
   effect<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
-  sleep(duration: string): Promise<void>;
+  sleep(duration: string | number): Promise<void>;
+  now(): Date;
+  random(): number;
 }

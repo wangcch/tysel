@@ -1,10 +1,11 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::task::{Context, Poll};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -12,9 +13,14 @@ use hyper::body::Frame;
 use hyper::{Request as HyperRequest, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
+use tysel_durable::{EventKind, NewEvent, SqliteStore};
 use tysel_engine::{EngineError, HttpRequest, InterruptReason, IsolateConfig, Value};
+use tysel_task::TaskId;
 
-use crate::{IncomingHttp, IsolateCancel, IsolatePool, STREAM_WINDOW, eval, eval_cancellable};
+use crate::{
+    DurableSession, IncomingHttp, IsolateCancel, IsolatePool, STREAM_WINDOW, eval,
+    eval_cancellable, eval_durable,
+};
 
 fn config() -> IsolateConfig {
     IsolateConfig {
@@ -38,6 +44,175 @@ fn promise_resolves_from_rust_async_echo() {
     )
     .expect("eval");
     assert_eq!(value, Value::String("hello".into()));
+}
+
+#[test]
+fn durable_step_replays_without_running_the_callback() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(101);
+    let script = r#"
+        (async () => {
+            let calls = 0;
+            const value = await tysel.durable.step("load", () => {
+                calls += 1;
+                return { answer: 42 };
+            });
+            return JSON.stringify({ value, calls });
+        })()
+    "#;
+    let first = eval_durable(script, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect("first durable run");
+    assert_eq!(first, Value::String(r#"{"value":{"answer":42},"calls":1}"#.into()));
+    let replayed = eval_durable(script, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect("replayed durable run");
+    assert_eq!(replayed, Value::String(r#"{"value":{"answer":42},"calls":0}"#.into()));
+    let history = store.load_history(id).unwrap();
+    assert_eq!(history.events.len(), 1);
+    assert_eq!(history.events[0].kind, EventKind::Step);
+}
+
+#[test]
+fn durable_now_and_random_are_stable_on_replay() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(102);
+    let script = "JSON.stringify([tysel.durable.now().toISOString(), tysel.durable.random()])";
+    let first = eval_durable(script, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect("first durable run");
+    let replayed = eval_durable(script, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect("replayed durable run");
+    assert_eq!(replayed, first);
+    assert_eq!(store.load_history(id).unwrap().events.len(), 2);
+}
+
+#[test]
+fn durable_replay_rejects_changed_boundary_order() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(103);
+    eval_durable(
+        r#"(async () => tysel.durable.step("one", () => 1))()"#,
+        config(),
+        DurableSession::new(store.clone(), id).unwrap(),
+    )
+    .expect("first durable run");
+    let err = eval_durable(
+        r#"(async () => tysel.durable.step("two", () => 2))()"#,
+        config(),
+        DurableSession::new(store, id).unwrap(),
+    )
+    .expect_err("changed history must be rejected");
+    assert!(matches!(err, EngineError::Isolate(_)));
+}
+
+#[test]
+fn durable_replay_rejects_unconsumed_history() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(104);
+    eval_durable(
+        r#"(async () => {
+            await tysel.durable.step("one", () => 1);
+            return tysel.durable.step("two", () => 2);
+        })()"#,
+        config(),
+        DurableSession::new(store.clone(), id).unwrap(),
+    )
+    .expect("first durable run");
+    let err = eval_durable(
+        r#"(async () => tysel.durable.step("one", () => 1))()"#,
+        config(),
+        DurableSession::new(store, id).unwrap(),
+    )
+    .expect_err("truncated history must be rejected");
+    match err {
+        EngineError::Isolate(message) => assert!(message.contains("sequence 1"), "{message}"),
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn durable_stale_session_cannot_append_a_second_history() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(106);
+    let first_session = DurableSession::new(store.clone(), id).unwrap();
+    let stale_session = DurableSession::new(store.clone(), id).unwrap();
+    eval_durable(
+        r#"(async () => tysel.durable.step("winner", () => 1))()"#,
+        config(),
+        first_session,
+    )
+    .expect("winning execution");
+    let err = eval_durable(
+        r#"(async () => tysel.durable.step("stale", () => 2))()"#,
+        config(),
+        stale_session,
+    )
+    .expect_err("stale execution must conflict");
+    assert!(matches!(err, EngineError::Isolate(_)));
+    let history = store.load_history(id).unwrap();
+    assert_eq!(history.events.len(), 1);
+    assert_eq!(history.events[0].key, "winner");
+}
+
+#[test]
+fn durable_sleep_preserves_wakeup_on_timeout_and_clears_it_on_replay() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(105);
+    let script = r#"(async () => { await tysel.durable.sleep("50ms"); return "awake"; })()"#;
+    let err = eval_durable(
+        script,
+        IsolateConfig { request_timeout_ms: 10, ..config() },
+        DurableSession::new(store.clone(), id).unwrap(),
+    )
+    .expect_err("first run suspends past its execution deadline");
+    assert!(matches!(err, EngineError::Interrupted(InterruptReason::Timeout)));
+    assert_eq!(store.load_history(id).unwrap().events[0].kind, EventKind::Sleep);
+    let wakeup = store.wakeup(id).unwrap().expect("persisted wakeup");
+    let early = match DurableSession::new(store.clone(), id) {
+        Ok(_) => panic!("unclaimed task resumed"),
+        Err(error) => error,
+    };
+    assert!(early.contains("suspended until"), "{early}");
+
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    thread::sleep(Duration::from_millis(wakeup.wake_at_ms.saturating_sub(now_ms) + 1));
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let claim =
+        store.claim_due_wakeups(now_ms, 1, "test-runner", 5_000).unwrap().pop().expect("due claim");
+    assert!(store.claim_due_wakeups(now_ms, 1, "other-runner", 5_000).unwrap().is_empty());
+    let replayed =
+        eval_durable(script, config(), DurableSession::from_claim(store.clone(), claim).unwrap())
+            .expect("claimed task resumes from recorded sleep");
+    assert_eq!(replayed, Value::String("awake".into()));
+    assert_eq!(store.wakeup(id).unwrap(), None);
+}
+
+#[test]
+fn durable_claim_cannot_resume_before_the_real_wakeup_time() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(107);
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let wake_at_ms = now_ms + 60_000;
+    store
+        .append_event_with_wakeup(
+            id,
+            NewEvent {
+                kind: EventKind::Sleep,
+                key: "sleep:future".into(),
+                payload: serde_json::json!({"duration_ms": 60_000}),
+                recorded_at_ms: now_ms,
+            },
+            wake_at_ms,
+        )
+        .unwrap();
+    let claim = store
+        .claim_due_wakeups(wake_at_ms, 1, "bad-clock-runner", 5_000)
+        .unwrap()
+        .pop()
+        .expect("claim made with an invalid future clock");
+    let error = match DurableSession::from_claim(store, claim) {
+        Ok(_) => panic!("future wakeup resumed"),
+        Err(error) => error,
+    };
+    assert!(error.contains("not due until"), "{error}");
 }
 
 #[test]

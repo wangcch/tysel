@@ -8,7 +8,18 @@ Tysel runs TypeScript services, workers, and agents as a single native executabl
 
 The public API prefers Web standards (`Request`, `Response`, `fetch`, streams, `crypto`). Platform capabilities are granted explicitly, not through ambient Node modules.
 
-This repository is wrapping **M2**. `tysel check` validates a project; `tysel dev` serves with file-watch reload; `tysel run` serves without watching files; `tysel build` emits a single native executable. The full plan is in [roadmap.md](./roadmap.md).
+This repository has completed the **M2** capability and isolation foundation and
+has started **M3**. The first M3 slice defines the unified task lifecycle and a
+bounded scheduler with deadlines, cancellation, retry requeueing, and FIFO
+worker claims. Durable foundations now include an ordered SQLite event log,
+deterministic replay validation, persisted wakeups, and atomic sleep-event/timer
+writes. Wakeup claims are leased and generation-scoped, and task histories are
+bounded to 10,000 events or 16 MiB. An explicit QuickJS durable session exposes
+`step`, `effect`, `sleep`, `now`, and `random` with replay and stale-writer
+protection; CLI task dispatch is not wired yet. `tysel check` validates a
+project; `tysel dev` serves with file-watch reload; `tysel run` serves without
+watching files; `tysel build` emits a single native executable. The full plan
+is in [roadmap.md](./roadmap.md).
 
 ## Layout
 
@@ -79,6 +90,15 @@ Trusted-path `fetch` supports HTTP and HTTPS GET, HEAD, POST, PUT, PATCH, and DE
 When `[app] profile = "isolated"`, outbound fetch, SQLite, WebSocket, Postgres, and filesystem access are denied even if listed in `[permissions]`. `tysel.sleep`, `tysel.echo`, and `tysel.secrets.ref` remain available. `tysel dev` and a packaged stub run the fetch handler in a `tysel-worker` child process (set `TYSEL_WORKER` or place the binary next to `tysel`). Request and response bodies over the worker pipe are capped at 32KiB. The supervisor keeps secret values; the worker only sees declared names. Isolated bundles must fit in a 64KiB IPC frame. On Linux the worker also applies Landlock (no host files except `/dev/urandom` / `/dev/random`) and a seccomp allowlist (no exec, sockets, ptrace, mount, or bpf). The supervisor best-effort attaches the worker to a cgroup v2 `memory.max` when the host allows it. macOS is not that security gate.
 
 `setTimeout` / `setInterval` run while the current request or eval is pending; leftover timers are dropped when the request ends. `TextEncoder` / `TextDecoder` are UTF-8 only. `crypto.getRandomValues` fills at most 65536 bytes. `crypto.subtle` is not implemented yet.
+
+The experimental Rust `eval_durable` path installs `tysel.durable.step`,
+`effect`, `sleep`, `now`, and `random`. Durable boundaries must be awaited
+sequentially. Completed values are JSON-serialized and replayed without running
+their callbacks again. A sleep event and wakeup are committed atomically;
+timeout or cancellation leaves the wakeup available for a later leased run.
+Only the current wakeup generation can complete it, and the execution side
+checks the real due time before replaying a recorded sleep.
+The service CLI does not dispatch durable tasks yet.
 
 Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
 

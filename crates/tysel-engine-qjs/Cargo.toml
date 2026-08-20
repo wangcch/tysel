@@ -24,9 +24,11 @@ tokio-native-tls.workspace = true
 tysel-cap-fs.workspace = true
 tysel-cap-postgres.workspace = true
 tysel-cap-sqlite.workspace = true
+tysel-durable = { path = "../tysel-durable" }
 tysel-engine.workspace = true
 tysel-observability.workspace = true
 tysel-policy.workspace = true
+tysel-task.workspace = true
 
 [dev-dependencies]
 tysel-build.workspace = true

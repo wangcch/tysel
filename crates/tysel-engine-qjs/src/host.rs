@@ -1,11 +1,30 @@
 use rquickjs::{Ctx, Exception, Function, IntoJs, Object, Promise, TypedArray};
 use tysel_engine::{InterruptReason, Value};
 
+use crate::DurableSession;
 use crate::queue::{IoHandle, IoRequest, OpId};
 
 const PENDING: &str = "__tysel_pending";
 
 pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<()> {
+    install_inner(ctx, io, isolate_id, None)
+}
+
+pub(crate) fn install_durable(
+    ctx: Ctx<'_>,
+    io: IoHandle,
+    isolate_id: u32,
+    durable: DurableSession,
+) -> rquickjs::Result<()> {
+    install_inner(ctx, io, isolate_id, Some(durable))
+}
+
+fn install_inner(
+    ctx: Ctx<'_>,
+    io: IoHandle,
+    isolate_id: u32,
+    durable: Option<DurableSession>,
+) -> rquickjs::Result<()> {
     crate::fetch::install_web_api(ctx.clone())?;
     ctx.globals().set(PENDING, Object::new(ctx.clone())?)?;
 
@@ -164,6 +183,60 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
             submit(ctx, &io_fs_write, |id| IoRequest::FsWrite { id, path, data })
         })?,
     )?;
+    let durable_enabled = durable.is_some();
+    if let Some(durable) = durable {
+        let lookup = durable.clone();
+        let record = durable.clone();
+        let record_sleep = durable.clone();
+        tysel.set(
+            "_durableLookup",
+            Function::new(ctx.clone(), move |ctx, kind: String, key: String| {
+                lookup.lookup_json(&kind, &key).map_err(|err| Exception::throw_type(&ctx, &err))
+            })?,
+        )?;
+        tysel.set(
+            "_durableRecord",
+            Function::new(
+                ctx.clone(),
+                move |ctx, kind: String, key: String, payload_json: String, recorded_at_ms: f64| {
+                    record
+                        .record(
+                            &kind,
+                            key,
+                            &payload_json,
+                            durable_millis(&ctx, recorded_at_ms, "recorded time")?,
+                        )
+                        .map_err(|err| Exception::throw_type(&ctx, &err))
+                },
+            )?,
+        )?;
+        tysel.set(
+            "_durableRecordSleep",
+            Function::new(
+                ctx.clone(),
+                move |ctx,
+                      key: String,
+                      payload_json: String,
+                      recorded_at_ms: f64,
+                      wake_at_ms: f64| {
+                    record_sleep
+                        .record_sleep(
+                            key,
+                            &payload_json,
+                            durable_millis(&ctx, recorded_at_ms, "recorded time")?,
+                            durable_millis(&ctx, wake_at_ms, "wakeup time")?,
+                        )
+                        .map_err(|err| Exception::throw_type(&ctx, &err))
+                },
+            )?,
+        )?;
+        tysel.set(
+            "_durableCompleteSleep",
+            Function::new(ctx.clone(), move |ctx| {
+                durable.complete_sleep().map_err(|err| Exception::throw_type(&ctx, &err))
+            })?,
+        )?;
+    }
     ctx.globals().set("tysel", tysel)?;
     ctx.eval::<(), _>(
         r#"
@@ -252,7 +325,123 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
         };
         "#,
     )?;
+    if durable_enabled {
+        ctx.eval::<(), _>(DURABLE_API)?;
+    }
     Ok(())
+}
+
+const DURABLE_API: &str = r#"
+(() => {
+  let active = false;
+
+  function lookup(kind, key) {
+    return JSON.parse(tysel._durableLookup(kind, key));
+  }
+
+  function encode(value) {
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) {
+      throw new TypeError("durable values must be JSON serializable");
+    }
+    return encoded;
+  }
+
+  function enter() {
+    if (active) {
+      throw new Error("durable boundaries must be awaited sequentially");
+    }
+    active = true;
+  }
+
+  function durationMs(value) {
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || value < 0) throw new TypeError("invalid durable duration");
+      return Math.floor(value);
+    }
+    const match = /^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)\s*$/.exec(String(value));
+    if (!match) throw new TypeError("invalid durable duration");
+    const scales = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 };
+    const millis = Number(match[1]) * scales[match[2]];
+    if (!Number.isSafeInteger(Math.floor(millis))) throw new TypeError("durable duration is too large");
+    return Math.floor(millis);
+  }
+
+  async function boundary(kind, name, fn) {
+    if (typeof fn !== "function") throw new TypeError("durable boundary requires a function");
+    enter();
+    try {
+      const replay = lookup(kind, String(name));
+      if (replay.found) return replay.payload;
+      const value = await fn();
+      tysel._durableRecord(kind, String(name), encode(value), Date.now());
+      return value;
+    } finally {
+      active = false;
+    }
+  }
+
+  const durable = {
+    step(name, fn) {
+      return boundary("step", name, fn);
+    },
+    effect(name, fn) {
+      return boundary("effect", name, fn);
+    },
+    now() {
+      enter();
+      try {
+        const replay = lookup("now", "now");
+        if (replay.found) return new Date(replay.payload);
+        const value = Date.now();
+        tysel._durableRecord("now", "now", encode(value), value);
+        return new Date(value);
+      } finally {
+        active = false;
+      }
+    },
+    random() {
+      enter();
+      try {
+        const replay = lookup("random", "random");
+        if (replay.found) return replay.payload;
+        const value = Math.random();
+        tysel._durableRecord("random", "random", encode(value), Date.now());
+        return value;
+      } finally {
+        active = false;
+      }
+    },
+    async sleep(duration) {
+      const millis = durationMs(duration);
+      const key = "sleep:" + millis;
+      enter();
+      try {
+        const replay = lookup("sleep", key);
+        if (replay.found) {
+          tysel._durableCompleteSleep();
+          return;
+        }
+        const now = Date.now();
+        const wakeAt = now + millis;
+        if (!Number.isSafeInteger(wakeAt)) throw new TypeError("durable wakeup is too large");
+        tysel._durableRecordSleep(key, encode({ durationMs: millis }), now, wakeAt);
+        await tysel.sleep(millis);
+        tysel._durableCompleteSleep();
+      } finally {
+        active = false;
+      }
+    },
+  };
+  globalThis.tysel.durable = durable;
+})();
+"#;
+
+fn durable_millis(ctx: &Ctx<'_>, value: f64, label: &str) -> rquickjs::Result<u64> {
+    if !value.is_finite() || value < 0.0 || value > i64::MAX as f64 {
+        return Err(Exception::throw_type(ctx, &format!("invalid durable {label}")));
+    }
+    Ok(value as u64)
 }
 
 fn submit<'js>(
