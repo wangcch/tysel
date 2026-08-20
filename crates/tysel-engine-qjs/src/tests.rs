@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -13,6 +14,10 @@ use hyper::body::Frame;
 use hyper::{Request as HyperRequest, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
+use tysel_cap_llm::{
+    LlmAuditSink, LlmGateway, LlmGatewayConfig, LlmProvider, LlmResponse, LlmRoute, LlmUsage,
+    NoopAudit, ProviderFuture, ProviderRequest, SecretResolver, SecretValue,
+};
 use tysel_durable::{EventKind, NewEvent, SqliteStore};
 use tysel_engine::{EngineError, HttpRequest, InterruptReason, IsolateConfig, Value};
 use tysel_task::TaskId;
@@ -44,6 +49,72 @@ fn promise_resolves_from_rust_async_echo() {
     )
     .expect("eval");
     assert_eq!(value, Value::String("hello".into()));
+}
+
+struct TestLlmProvider;
+
+impl LlmProvider for TestLlmProvider {
+    fn generate<'a>(&'a self, request: ProviderRequest) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            assert_eq!(request.credential.as_ref().map(SecretValue::expose), Some("test-key"));
+            Ok(LlmResponse {
+                output: serde_json::json!({ "echo": request.request.input }),
+                usage: LlmUsage { input_tokens: 2, output_tokens: 3 },
+                provider_request_id: Some("test-provider-1".into()),
+            })
+        })
+    }
+}
+
+struct TestLlmSecrets;
+
+impl SecretResolver for TestLlmSecrets {
+    fn resolve(&self, handle: &str) -> Option<SecretValue> {
+        (handle == "secret:LLM_TEST_KEY").then(|| SecretValue::new("test-key").unwrap())
+    }
+}
+
+#[test]
+fn llm_generate_runs_through_the_native_gateway() {
+    let audit: Arc<dyn LlmAuditSink> = Arc::new(NoopAudit);
+    let gateway = LlmGateway::new(
+        BTreeMap::from([(
+            "default".into(),
+            LlmRoute {
+                provider_name: "test".into(),
+                provider: Arc::new(TestLlmProvider),
+                credential_handle: Some("secret:LLM_TEST_KEY".into()),
+            },
+        )]),
+        Arc::new(TestLlmSecrets),
+        audit,
+        LlmGatewayConfig::default(),
+    )
+    .unwrap();
+    crate::configure_llm(Some(Arc::new(gateway)));
+
+    let value = eval(
+        r#"
+        (async () => {
+          const response = await tysel.llm.generate({
+            model: "default",
+            input: { customer: 7 },
+            maxOutputTokens: 20,
+          });
+          return JSON.stringify(response);
+        })()
+        "#,
+        config(),
+    )
+    .expect("LLM generate");
+    assert_eq!(
+        value,
+        Value::String(
+            r#"{"output":{"echo":{"customer":7}},"usage":{"input_tokens":2,"output_tokens":3},"provider_request_id":"test-provider-1"}"#
+                .into()
+        )
+    );
+    crate::configure_llm(None);
 }
 
 #[test]

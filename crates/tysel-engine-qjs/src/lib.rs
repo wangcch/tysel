@@ -12,6 +12,7 @@ mod fetch;
 mod fetch_policy;
 mod host;
 mod isolate;
+mod llm;
 mod pool;
 mod queue;
 mod secrets;
@@ -24,6 +25,7 @@ pub use isolate::{
     IsolateCancel, eval, eval_cancellable, eval_durable, eval_durable_module, eval_with_reactor,
     eval_with_reactor_deadline,
 };
+pub use llm::configure as configure_llm;
 pub use pool::{IncomingHttp, IsolatePool};
 pub use queue::{IoCompletion, IoRequest, IoWork, OpId, Reactor, STREAM_WINDOW, open_bridge};
 pub use secrets::{

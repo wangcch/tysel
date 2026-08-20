@@ -45,6 +45,7 @@ fn install_inner(
     let io_pg_query = io.clone();
     let io_fs_read = io.clone();
     let io_fs_write = io.clone();
+    let io_llm = io.clone();
     tysel.set(
         "sleep",
         Function::new(ctx.clone(), move |ctx, millis: f64| {
@@ -181,6 +182,12 @@ fn install_inner(
         "_fsWrite",
         Function::new(ctx.clone(), move |ctx, path: String, data: String| {
             submit(ctx, &io_fs_write, |id| IoRequest::FsWrite { id, path, data })
+        })?,
+    )?;
+    tysel.set(
+        "_llmGenerate",
+        Function::new(ctx.clone(), move |ctx, request_json: String| {
+            submit(ctx, &io_llm, |id| IoRequest::LlmGenerate { id, request_json })
         })?,
     )?;
     let durable_enabled = durable.is_some();
@@ -339,6 +346,14 @@ fn install_inner(
         globalThis.tysel.secrets = {
           ref(name) {
             return tysel.secretRef(String(name));
+          },
+        };
+        globalThis.tysel.llm = {
+          generate(options) {
+            if (options === null || typeof options !== "object" || Array.isArray(options)) {
+              throw new TypeError("llm.generate options must be an object");
+            }
+            return tysel._llmGenerate(JSON.stringify(options));
           },
         };
         "#,

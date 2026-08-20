@@ -2601,6 +2601,18 @@ version = "0.0.1"
 [[package]]
 name = "tysel-cap-llm"
 version = "0.0.1"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "native-tls",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-native-tls",
+]
 
 [[package]]
 name = "tysel-cap-mcp"
@@ -2693,6 +2705,7 @@ dependencies = [
  "tokio-native-tls",
  "tysel-build",
  "tysel-cap-fs",
+ "tysel-cap-llm",
  "tysel-cap-postgres",
  "tysel-cap-sqlite",
  "tysel-durable",
@@ -2780,6 +2793,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "tysel-cap-llm",
  "tysel-cap-mcp",
  "tysel-capability",
  "tysel-durable",

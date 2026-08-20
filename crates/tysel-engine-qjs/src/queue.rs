@@ -59,6 +59,7 @@ pub enum IoRequest {
     PostgresQuery { id: OpId, sql: String, params_json: String },
     FsRead { id: OpId, path: String },
     FsWrite { id: OpId, path: String, data: String },
+    LlmGenerate { id: OpId, request_json: String },
 }
 
 impl IoRequest {
@@ -78,7 +79,8 @@ impl IoRequest {
             | Self::PostgresExec { id, .. }
             | Self::PostgresQuery { id, .. }
             | Self::FsRead { id, .. }
-            | Self::FsWrite { id, .. } => *id,
+            | Self::FsWrite { id, .. }
+            | Self::LlmGenerate { id, .. } => *id,
         }
     }
 
@@ -93,6 +95,7 @@ impl IoRequest {
             Self::SqliteExec { .. } | Self::SqliteQuery { .. } => Cap::Sqlite,
             Self::PostgresExec { .. } | Self::PostgresQuery { .. } => Cap::Postgres,
             Self::FsRead { .. } | Self::FsWrite { .. } => Cap::Fs,
+            Self::LlmGenerate { .. } => Cap::Llm,
         }
     }
 
@@ -106,6 +109,7 @@ impl IoRequest {
             Self::PostgresQuery { .. } => Some(("postgres", "query")),
             Self::FsRead { .. } => Some(("fs", "read")),
             Self::FsWrite { .. } => Some(("fs", "write")),
+            Self::LlmGenerate { .. } => Some(("llm", "generate")),
             Self::SecretRef { .. } => Some(("secrets", "ref")),
             Self::WsSend { .. } => Some(("websocket", "send")),
             Self::WsClose { .. } => Some(("websocket", "close")),
@@ -403,6 +407,10 @@ async fn execute(
                 tysel_cap_fs::write(&path, &data).map(|()| Value::Null)
             })
             .await,
+        },
+        IoRequest::LlmGenerate { id, request_json } => IoCompletion {
+            id,
+            result: crate::llm::generate(request_json, request_id, id, cancel, deadline).await,
         },
     };
     let result = if completion.result.is_ok() { "ok" } else { "error" };
@@ -783,7 +791,7 @@ async fn wait(
     }
 }
 
-async fn cancelled(cancel: &AtomicBool, deadline: Instant) {
+pub(crate) async fn cancelled(cancel: &AtomicBool, deadline: Instant) {
     loop {
         if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
             return;

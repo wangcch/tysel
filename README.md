@@ -165,6 +165,16 @@ bounded newline-delimited stdio frames. `McpTaskEndpoint` maps valid calls into
 the same TaskRPC scheduler and converts the worker's fenced terminal outcome
 back into structured MCP content; tool failures remain visible to the model via
 `isError` results.
+`tysel.llm.generate({ model, input, system?, maxOutputTokens?, temperature? })`
+uses a bounded native provider gateway on the trusted path. Model aliases are
+deny-by-default routes, provider credentials are resolved from opaque secret
+handles only at the outbound boundary, and cancellation, timeout, concurrency,
+request/response size, retry classification, and metadata-only audit are
+enforced centrally. Set `TYSEL_LLM_ENDPOINT` to an exact OpenAI-compatible
+Responses URL, `TYSEL_LLM_MODEL` to its upstream model, and optionally
+`TYSEL_LLM_ALIAS` (default `default`) and `TYSEL_LLM_SECRET` (default
+`OPENAI_API_KEY`). The secret name must also be declared in
+`[permissions].secrets`; raw credentials never enter the TAP or QuickJS heap.
 
 Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
 

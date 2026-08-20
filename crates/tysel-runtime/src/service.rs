@@ -1,7 +1,12 @@
 use std::io::{self, Write};
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use tokio::net::TcpListener;
+use tysel_cap_llm::{
+    LlmAuditEvent, LlmAuditSink, LlmGateway, LlmGatewayConfig, LlmRoute, OpenAiCompatibleProvider,
+    SecretResolver, SecretValue,
+};
 use tysel_engine::IsolateConfig;
 use tysel_package::Tap;
 
@@ -22,6 +27,10 @@ pub enum StubError {
     #[cfg(unix)]
     #[error(transparent)]
     TaskService(#[from] ModuleTaskServiceError),
+    #[error(transparent)]
+    LlmCapability(#[from] tysel_cap_llm::LlmError),
+    #[error("LLM configuration: {0}")]
+    Llm(String),
     #[error("invalid listen address '{0}'")]
     Listen(String),
 }
@@ -55,6 +64,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         &tap.manifest.secret_names,
         &std::collections::HashMap::new(),
     ));
+    configure_llm_from_env(tap.manifest.request_timeout_ms)?;
     tysel_engine_qjs::configure_fetch_hosts(tap.manifest.fetch_hosts.clone());
     tysel_engine_qjs::configure_execution_profile(&tap.manifest.execution_profile);
     tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);
@@ -95,5 +105,65 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         service.shutdown().await?;
     }
     result?;
+    Ok(())
+}
+
+struct EngineSecretResolver;
+
+impl SecretResolver for EngineSecretResolver {
+    fn resolve(&self, handle: &str) -> Option<SecretValue> {
+        tysel_engine_qjs::resolve_secret(handle).ok().and_then(|value| SecretValue::new(value).ok())
+    }
+}
+
+struct RuntimeLlmAudit;
+
+impl LlmAuditSink for RuntimeLlmAudit {
+    fn record(&self, event: LlmAuditEvent) {
+        tracing::info!(
+            request_id = %event.request_id,
+            model = %event.model,
+            provider = %event.provider,
+            input_bytes = event.input_bytes,
+            output_bytes = event.output_bytes,
+            elapsed_ms = event.elapsed_ms,
+            outcome = ?event.outcome,
+            "LLM capability"
+        );
+    }
+}
+
+pub fn configure_llm_from_env(request_timeout_ms: u64) -> Result<(), StubError> {
+    let Ok(endpoint) = std::env::var("TYSEL_LLM_ENDPOINT") else {
+        tysel_engine_qjs::configure_llm(None);
+        return Ok(());
+    };
+    if endpoint.is_empty() {
+        tysel_engine_qjs::configure_llm(None);
+        return Ok(());
+    }
+    let upstream_model = std::env::var("TYSEL_LLM_MODEL").map_err(|_| {
+        StubError::Llm("TYSEL_LLM_MODEL is required with TYSEL_LLM_ENDPOINT".into())
+    })?;
+    let alias = std::env::var("TYSEL_LLM_ALIAS").unwrap_or_else(|_| "default".into());
+    let secret_name = std::env::var("TYSEL_LLM_SECRET").unwrap_or_else(|_| "OPENAI_API_KEY".into());
+    let provider = Arc::new(OpenAiCompatibleProvider::new(&endpoint, Some(upstream_model))?);
+    let gateway = LlmGateway::new(
+        std::collections::BTreeMap::from([(
+            alias,
+            LlmRoute {
+                provider_name: "openai-compatible".into(),
+                provider,
+                credential_handle: Some(format!("secret:{secret_name}")),
+            },
+        )]),
+        Arc::new(EngineSecretResolver),
+        Arc::new(RuntimeLlmAudit),
+        LlmGatewayConfig {
+            timeout_ms: request_timeout_ms.clamp(1, tysel_cap_llm::MAX_LLM_TIMEOUT_MS),
+            ..LlmGatewayConfig::default()
+        },
+    )?;
+    tysel_engine_qjs::configure_llm(Some(Arc::new(gateway)));
     Ok(())
 }

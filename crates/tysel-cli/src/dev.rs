@@ -97,6 +97,7 @@ fn load(
         &tap.manifest.secret_names,
         &file_values,
     ));
+    tysel_runtime::configure_llm_from_env(tap.manifest.request_timeout_ms)?;
     tysel_engine_qjs::configure_fetch_hosts(tap.manifest.fetch_hosts.clone());
     tysel_engine_qjs::configure_execution_profile(&tap.manifest.execution_profile);
     tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);

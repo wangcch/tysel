@@ -22,6 +22,7 @@ pub enum Cap {
     WebSocket,
     Postgres,
     Fs,
+    Llm,
 }
 
 /// Resolved permission set for one isolate. Construct from an execution
@@ -82,6 +83,7 @@ impl Policy {
                         | Cap::WebSocket
                         | Cap::Postgres
                         | Cap::Fs
+                        | Cap::Llm
                 )
             }
         }
@@ -124,6 +126,7 @@ mod tests {
         assert!(!policy.allows(Cap::WebSocket));
         assert!(!policy.allows(Cap::Postgres));
         assert!(!policy.allows(Cap::Fs));
+        assert!(!policy.allows(Cap::Llm));
         assert_eq!(
             policy.require(Cap::Fetch).unwrap_err(),
             "capability is not available in the isolated profile"
@@ -139,6 +142,7 @@ mod tests {
         assert!(policy.allows(Cap::WebSocket));
         assert!(policy.allows(Cap::Postgres));
         assert!(policy.allows(Cap::Fs));
+        assert!(policy.allows(Cap::Llm));
         policy.require(Cap::Fetch).unwrap();
     }
 
