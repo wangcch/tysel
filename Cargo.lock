@@ -2801,6 +2801,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tysel-task-rpc"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tysel-task",
+]
+
+[[package]]
 name = "tysel-testkit"
 version = "0.0.1"
 dependencies = [

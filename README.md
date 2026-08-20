@@ -123,6 +123,17 @@ source. The cancellable polling loop reads only due persistent programs on a
 blocking worker, uses up to 16 execution workers, only registered task ids are
 claimed, and registered program text has a 64MiB aggregate limit. The service CLI
 does not start this polling loop yet.
+The SQLite durable log carries an explicit schema version. Unversioned databases
+from earlier builds are upgraded transactionally to version 1; databases written
+by a newer runtime are rejected before their schema is changed.
+`tysel-task-rpc` defines a separate TaskRPC v1 wire contract for scheduler/worker
+claim, generation-fenced leases, renewal, release, cancellation, and result
+commit. Its 64 KiB frames and semantic limits are validated before dispatch; it
+does not reuse the isolated-worker IPC message namespace.
+The in-memory scheduler implements the matching lease lifecycle: expired worker
+claims are requeued with a new generation, graceful release observes queue
+backpressure, cancellation and task deadlines fence the old generation, and
+late renewals or commits are rejected.
 
 Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
 

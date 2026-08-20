@@ -11,6 +11,7 @@ members = [
     "crates/tysel-engine-wasm",
     "crates/tysel-scheduler",
     "crates/tysel-task",
+    "crates/tysel-task-rpc",
     "crates/tysel-durable",
     "crates/tysel-policy",
     "crates/tysel-capability",
@@ -72,6 +73,7 @@ tysel-cap-fs = { path = "crates/tysel-cap-fs" }
 tysel-cap-postgres = { path = "crates/tysel-cap-postgres" }
 tysel-observability = { path = "crates/tysel-observability" }
 tysel-task = { path = "crates/tysel-task" }
+tysel-task-rpc = { path = "crates/tysel-task-rpc" }
 
 [workspace.lints.rust]
 unsafe_code = "warn"

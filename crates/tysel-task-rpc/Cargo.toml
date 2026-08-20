@@ -1,0 +1,17 @@
+[package]
+name = "tysel-task-rpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Versioned, bounded TaskRPC protocol for Tysel schedulers and workers."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tysel-task.workspace = true
