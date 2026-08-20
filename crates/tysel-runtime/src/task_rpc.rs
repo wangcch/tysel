@@ -71,6 +71,10 @@ impl TaskRpcBroker {
         self.outcomes.get(&task_id)
     }
 
+    pub fn remaining_capacity(&self) -> usize {
+        self.scheduler.remaining_capacity()
+    }
+
     pub fn requeue_expired(
         &mut self,
         now_ms: u64,

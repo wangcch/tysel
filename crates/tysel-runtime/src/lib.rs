@@ -7,6 +7,7 @@ mod durable;
 mod durable_poll;
 mod http;
 mod service;
+mod task_ingress;
 mod task_rpc;
 
 pub use durable::{
@@ -21,6 +22,9 @@ pub use http::{
     serve, serve_with_websocket, spawn_app_isolate,
 };
 pub use service::{StubError, run_stub, run_tap};
+pub use task_ingress::{
+    CronExpression, TaskIngress, TaskIngressError, TaskRegistry, TriggeredTask,
+};
 #[cfg(unix)]
 pub use task_rpc::{
     TaskModuleWorker, TaskModuleWorkerError, TaskRpcServerError, TaskRpcServerShutdown,

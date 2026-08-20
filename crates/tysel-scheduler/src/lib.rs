@@ -287,6 +287,10 @@ impl Scheduler {
         self.capacity
     }
 
+    pub fn remaining_capacity(&self) -> usize {
+        self.capacity.saturating_sub(self.queue.len())
+    }
+
     fn require_live_claim(
         &mut self,
         claim: &TaskClaim,

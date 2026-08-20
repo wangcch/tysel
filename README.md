@@ -151,6 +151,11 @@ and MCP registrations from an application's default `tasks` export.
 `TaskModuleWorker` claims one task at a time, invokes the selected module handler
 with its JSON input and request context under isolate budgets, and commits the
 generation-fenced result through TaskRPC.
+`TaskIngress` validates five-field UTC cron expressions, deduplicates each
+scheduled minute, bounds catch-up to one day, and atomically observes scheduler
+capacity for multi-handler cron batches. Queue submissions route registered
+queue names to module handlers while preserving bounded JSON input and message
+identity; scheduler capacity provides producer backpressure.
 
 Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
 
