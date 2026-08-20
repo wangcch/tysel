@@ -11,3 +11,4 @@ description = "Four-layer capability intersection and deny-by-default policy."
 workspace = true
 
 [dependencies]
+tysel-capability.workspace = true

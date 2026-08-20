@@ -2310,6 +2310,7 @@ dependencies = [
  "tysel-build",
  "tysel-cap-sqlite",
  "tysel-engine",
+ "tysel-policy",
 ]
 
 [[package]]
@@ -2338,6 +2339,7 @@ dependencies = [
  "tysel-engine",
  "tysel-engine-qjs",
  "tysel-ipc",
+ "tysel-policy",
 ]
 
 [[package]]
@@ -2369,6 +2371,9 @@ dependencies = [
 [[package]]
 name = "tysel-policy"
 version = "0.0.1"
+dependencies = [
+ "tysel-capability",
+]
 
 [[package]]
 name = "tysel-runtime"
@@ -2387,6 +2392,7 @@ dependencies = [
  "tysel-capability",
  "tysel-engine",
  "tysel-engine-qjs",
+ "tysel-isolate",
  "tysel-observability",
  "tysel-package",
  "tysel-task",

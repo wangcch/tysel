@@ -12,6 +12,7 @@ use tokio::runtime::{Handle, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::{Mutex, mpsc};
 use tysel_engine::{InterruptReason, Value};
+use tysel_policy::Cap;
 
 pub const STREAM_WINDOW: usize = 16;
 
@@ -23,7 +24,7 @@ static IO_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 /// independently, so `IsolatePool::spawn` can submit work from a blocked
 /// `#[tokio::test]` current-thread runtime without deadlocking. IO is enabled
 /// so outbound fetch can connect without borrowing a test runtime.
-fn io_handle() -> Handle {
+pub(crate) fn io_handle() -> Handle {
     IO_RUNTIME
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
@@ -70,6 +71,18 @@ impl IoRequest {
             | Self::WsClose { id }
             | Self::SqliteExec { id, .. }
             | Self::SqliteQuery { id, .. } => *id,
+        }
+    }
+
+    pub fn capability(&self) -> Cap {
+        match self {
+            Self::Sleep { .. } => Cap::Sleep,
+            Self::Echo { .. } => Cap::Echo,
+            Self::SecretRef { .. } => Cap::SecretRef,
+            Self::ReadBody { .. } => Cap::ReadBody,
+            Self::HttpGet { .. } | Self::HttpRead { .. } => Cap::Fetch,
+            Self::WsRead { .. } | Self::WsSend { .. } | Self::WsClose { .. } => Cap::WebSocket,
+            Self::SqliteExec { .. } | Self::SqliteQuery { .. } => Cap::Sqlite,
         }
     }
 }
@@ -274,6 +287,9 @@ async fn execute(
     deadline: Instant,
     slots: IoSlots,
 ) -> IoCompletion {
+    if let Err(error) = crate::trust::require(request.capability()) {
+        return IoCompletion { id: request.id(), result: Err(error) };
+    }
     match request {
         IoRequest::Sleep { id, millis } => IoCompletion {
             id,

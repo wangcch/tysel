@@ -14,6 +14,7 @@ mod isolate;
 mod pool;
 mod queue;
 mod secrets;
+mod trust;
 
 pub use fetch_policy::configure as configure_fetch_hosts;
 pub use isolate::{IsolateCancel, eval, eval_cancellable, eval_with_reactor};
@@ -22,6 +23,13 @@ pub use queue::{IoCompletion, IoRequest, OpId, Reactor, STREAM_WINDOW, open_brid
 pub use secrets::{
     configure as configure_secrets, load_declared, parse_dotenv, resolve as resolve_secret,
 };
+pub use trust::configure as configure_policy;
+
+/// Apply the TAP execution profile. `isolated` denies fetch, SQLite, and
+/// WebSocket; every other profile is the trusted service path.
+pub fn configure_execution_profile(profile: &str) {
+    trust::configure(tysel_policy::Policy::from_profile(profile));
+}
 
 /// Pin the process-wide SQLite file used by trusted-path `tysel.sqlite`.
 ///
