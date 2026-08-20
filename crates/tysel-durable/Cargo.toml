@@ -11,3 +11,7 @@ description = "Durable task history, replay, and wakeup store."
 workspace = true
 
 [dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tysel-task.workspace = true

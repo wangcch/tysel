@@ -2656,6 +2656,12 @@ dependencies = [
 [[package]]
 name = "tysel-durable"
 version = "0.0.1"
+dependencies = [
+ "rusqlite",
+ "serde_json",
+ "thiserror",
+ "tysel-task",
+]
 
 [[package]]
 name = "tysel-engine"
