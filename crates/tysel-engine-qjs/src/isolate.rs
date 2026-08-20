@@ -135,7 +135,15 @@ fn run_with_reactor(
     let result = match started_async {
         Some(value) => Ok(value),
         None => {
-            wait_until_settled(&runtime, &context, &reactor, &cancel, request_deadline, &cpu)?;
+            wait_until_settled(
+                &runtime,
+                &context,
+                &reactor,
+                &cancel,
+                request_deadline,
+                &cpu,
+                durable.as_ref(),
+            )?;
             context
                 .with(|ctx| take_settled(&ctx, &cancel, request_deadline, &cpu))?
                 .ok_or_else(|| EngineError::Isolate("async script did not settle".into()))
@@ -190,6 +198,7 @@ pub(crate) fn wait_until_settled(
     cancel: &IsolateCancel,
     request_deadline: Instant,
     cpu: &CpuBudget,
+    durable: Option<&DurableSession>,
 ) -> Result<(), EngineError> {
     loop {
         cpu.resume();
@@ -199,6 +208,14 @@ pub(crate) fn wait_until_settled(
                 Some(Err(err)) => Err(map_eval_error(err, cancel, request_deadline, cpu)),
                 _ => Ok(()),
             });
+        }
+        if durable
+            .map(DurableSession::is_suspended)
+            .transpose()
+            .map_err(EngineError::Isolate)?
+            .unwrap_or(false)
+        {
+            return Err(EngineError::Suspended);
         }
         if let Some(reason) = wait_reason(cancel, request_deadline) {
             cancel.cancel();

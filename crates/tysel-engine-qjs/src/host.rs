@@ -188,6 +188,7 @@ fn install_inner(
         let lookup = durable.clone();
         let record = durable.clone();
         let record_sleep = durable.clone();
+        let poll_signal = durable.clone();
         tysel.set(
             "_durableLookup",
             Function::new(ctx.clone(), move |ctx, kind: String, key: String| {
@@ -234,6 +235,14 @@ fn install_inner(
             "_durableCompleteSleep",
             Function::new(ctx.clone(), move |ctx| {
                 durable.complete_sleep().map_err(|err| Exception::throw_type(&ctx, &err))
+            })?,
+        )?;
+        tysel.set(
+            "_durablePollSignal",
+            Function::new(ctx.clone(), move |ctx, signal_name: String| {
+                poll_signal
+                    .poll_signal_json(&signal_name)
+                    .map_err(|err| Exception::throw_type(&ctx, &err))
             })?,
         )?;
     }
@@ -428,6 +437,20 @@ const DURABLE_API: &str = r#"
         tysel._durableRecordSleep(key, encode({ durationMs: millis }), now, wakeAt);
         await tysel.sleep(millis);
         tysel._durableCompleteSleep();
+      } finally {
+        active = false;
+      }
+    },
+    async waitForSignal(name) {
+      const key = String(name);
+      if (!key) throw new TypeError("durable signal name cannot be empty");
+      enter();
+      try {
+        const replay = lookup("signal", key);
+        if (replay.found) return replay.payload;
+        const signal = JSON.parse(tysel._durablePollSignal(key));
+        if (signal.found) return signal.payload;
+        await new Promise(() => {});
       } finally {
         active = false;
       }

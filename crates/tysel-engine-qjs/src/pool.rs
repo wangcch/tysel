@@ -184,6 +184,7 @@ fn run_worker(
         &cancel,
         Instant::now() + Duration::from_secs(5),
         &load_cpu,
+        None,
     )?;
     context.with(|ctx| {
         let _: Function = ctx.globals().get("__tysel_fetch").map_err(isolate::js_err)?;
@@ -271,9 +272,15 @@ fn handle_job(
         }
     };
     if pending {
-        if let Err(err) =
-            isolate::wait_until_settled(runtime, context, reactor, cancel, request_deadline, cpu)
-        {
+        if let Err(err) = isolate::wait_until_settled(
+            runtime,
+            context,
+            reactor,
+            cancel,
+            request_deadline,
+            cpu,
+            None,
+        ) {
             let _ = head_tx.send(Err(err.clone()));
             return Err(err);
         }
@@ -284,7 +291,15 @@ fn handle_job(
     }
     context.with(|ctx| fetch::emit_response(ctx, head_tx, body_tx))?;
     if context.with(fetch::arm_websocket)? {
-        isolate::wait_until_settled(runtime, context, reactor, cancel, request_deadline, cpu)?;
+        isolate::wait_until_settled(
+            runtime,
+            context,
+            reactor,
+            cancel,
+            request_deadline,
+            cpu,
+            None,
+        )?;
     }
     Ok(())
 }

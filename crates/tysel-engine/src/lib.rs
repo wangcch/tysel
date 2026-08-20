@@ -61,6 +61,8 @@ pub enum EngineError {
     Interrupted(InterruptReason),
     #[error("request body exceeds limit")]
     BodyTooLarge,
+    #[error("durable execution suspended")]
+    Suspended,
 }
 
 #[derive(Debug, Clone, Default)]

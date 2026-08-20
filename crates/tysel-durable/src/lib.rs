@@ -13,6 +13,7 @@ const MAX_EVENT_KEY_BYTES: usize = 256;
 const MAX_EVENT_PAYLOAD_BYTES: usize = 1_048_576;
 const MAX_HISTORY_EVENTS: usize = 10_000;
 const MAX_HISTORY_BYTES: usize = 16 * 1_048_576;
+const MAX_PENDING_SIGNALS: usize = 1_000;
 const MAX_LEASE_OWNER_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +67,13 @@ pub struct TaskEvent {
     pub key: String,
     pub payload: Value,
     pub recorded_at_ms: u64,
+    payload_json: String,
+}
+
+impl TaskEvent {
+    pub fn payload_json(&self) -> &str {
+        &self.payload_json
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -162,6 +170,13 @@ pub struct WakeupClaim {
     pub lease_until_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalWait {
+    pub task_id: TaskId,
+    pub sequence: u64,
+    pub signal_name: String,
+}
+
 pub struct SqliteStore {
     connection: Mutex<Connection>,
 }
@@ -205,19 +220,37 @@ impl SqliteStore {
                  task_id BLOB PRIMARY KEY,
                  event_count INTEGER NOT NULL CHECK (event_count >= 0),
                  payload_bytes INTEGER NOT NULL CHECK (payload_bytes >= 0)
+             );
+             CREATE TABLE IF NOT EXISTS durable_signal_inbox (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 task_id BLOB NOT NULL,
+                 signal_name TEXT NOT NULL,
+                 payload TEXT NOT NULL,
+                 sent_at_ms INTEGER NOT NULL CHECK (sent_at_ms >= 0)
+             );
+             CREATE TABLE IF NOT EXISTS durable_signal_waits (
+                 task_id BLOB PRIMARY KEY,
+                 sequence INTEGER NOT NULL CHECK (sequence >= 0),
+                 signal_name TEXT NOT NULL
              );",
         )?;
-        migrate_wakeup_columns(&connection)?;
+        let sequence_added = migrate_wakeup_columns(&connection)?;
+        if sequence_added {
+            connection.execute_batch(
+                "UPDATE durable_wakeups
+                 SET sequence = COALESCE((
+                     SELECT MAX(sequence) FROM durable_events
+                     WHERE durable_events.task_id = durable_wakeups.task_id
+                       AND kind = 'sleep'
+                 ), sequence);",
+            )?;
+        }
         connection.execute_batch(
             "DROP INDEX IF EXISTS durable_wakeups_due;
              CREATE INDEX durable_wakeups_due
                  ON durable_wakeups (wake_at_ms, lease_until_ms, task_id);
-             UPDATE durable_wakeups
-             SET sequence = COALESCE((
-                 SELECT MAX(sequence) FROM durable_events
-                 WHERE durable_events.task_id = durable_wakeups.task_id
-                   AND kind = 'sleep'
-             ), sequence);
+             CREATE INDEX IF NOT EXISTS durable_signal_inbox_task
+                 ON durable_signal_inbox (task_id, signal_name, id);
              INSERT OR REPLACE INTO durable_history_stats
                  (task_id, event_count, payload_bytes)
              SELECT task_id, COUNT(*), COALESCE(SUM(
@@ -249,6 +282,31 @@ impl SqliteStore {
         self.append_event_inner(task_id, Some(expected_sequence), event)
     }
 
+    pub fn append_event_json_at(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        kind: EventKind,
+        key: String,
+        payload_json: &str,
+        recorded_at_ms: u64,
+    ) -> Result<TaskEvent, DurableError> {
+        let event = raw_event(kind, key, payload_json, recorded_at_ms)?;
+        let recorded_at_ms = to_sql_integer(recorded_at_ms, "recorded_at_ms")?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let sequence = insert_event(
+            &transaction,
+            task_id,
+            Some(expected_sequence),
+            &event,
+            payload_json,
+            recorded_at_ms,
+        )?;
+        transaction.commit()?;
+        stored_event(task_id, sequence, event, payload_json.into())
+    }
+
     fn append_event_inner(
         &self,
         task_id: TaskId,
@@ -267,7 +325,7 @@ impl SqliteStore {
             recorded_at_ms,
         )?;
         transaction.commit()?;
-        stored_event(task_id, sequence, event)
+        stored_event(task_id, sequence, event, payload)
     }
 
     /// Record a sleep boundary and its wakeup atomically. A crash can expose
@@ -292,6 +350,33 @@ impl SqliteStore {
         self.append_event_with_wakeup_inner(task_id, Some(expected_sequence), event, wake_at_ms)
     }
 
+    pub fn append_event_json_with_wakeup_at(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        key: String,
+        payload_json: &str,
+        recorded_at_ms: u64,
+        wake_at_ms: u64,
+    ) -> Result<TaskEvent, DurableError> {
+        let event = raw_event(EventKind::Sleep, key, payload_json, recorded_at_ms)?;
+        let recorded_at_ms = to_sql_integer(recorded_at_ms, "recorded_at_ms")?;
+        let wake_at_ms = to_sql_integer(wake_at_ms, "wake_at_ms")?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let sequence = insert_event(
+            &transaction,
+            task_id,
+            Some(expected_sequence),
+            &event,
+            payload_json,
+            recorded_at_ms,
+        )?;
+        upsert_wakeup(&transaction, task_id, sequence, wake_at_ms)?;
+        transaction.commit()?;
+        stored_event(task_id, sequence, event, payload_json.into())
+    }
+
     fn append_event_with_wakeup_inner(
         &self,
         task_id: TaskId,
@@ -313,7 +398,7 @@ impl SqliteStore {
         )?;
         upsert_wakeup(&transaction, task_id, sequence, wake_at_ms_sql)?;
         transaction.commit()?;
-        stored_event(task_id, sequence, event)
+        stored_event(task_id, sequence, event, payload)
     }
 
     pub fn load_history(&self, task_id: TaskId) -> Result<History, DurableError> {
@@ -356,6 +441,7 @@ impl SqliteStore {
                 key,
                 payload: serde_json::from_str(&payload)?,
                 recorded_at_ms: from_sql_integer(recorded_at_ms, "recorded_at_ms")?,
+                payload_json: payload,
             });
         }
         Ok(History { task_id, events })
@@ -457,6 +543,56 @@ impl SqliteStore {
         Ok(claims)
     }
 
+    /// Lease one exact due task. This lets a dispatcher resolve a task program
+    /// before claiming, so unknown tasks cannot starve runnable registered work.
+    pub fn claim_wakeup(
+        &self,
+        task_id: TaskId,
+        now_ms: u64,
+        lease_owner: &str,
+        lease_duration_ms: u64,
+    ) -> Result<Option<WakeupClaim>, DurableError> {
+        validate_lease_owner(lease_owner)?;
+        let now_sql = to_sql_integer(now_ms, "now_ms")?;
+        let lease_until_ms = now_ms
+            .checked_add(lease_duration_ms.max(1))
+            .ok_or(DurableError::IntegerRange { field: "lease_until_ms" })?;
+        let lease_until_sql = to_sql_integer(lease_until_ms, "lease_until_ms")?;
+        let id = task_id_bytes(task_id);
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let wakeup = transaction
+            .query_row(
+                "SELECT sequence, wake_at_ms FROM durable_wakeups
+                 WHERE task_id = ?1 AND wake_at_ms <= ?2
+                   AND (lease_until_ms IS NULL OR lease_until_ms <= ?2)",
+                params![id.as_slice(), now_sql],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        let Some((sequence, wake_at_ms)) = wakeup else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+        let changed = transaction.execute(
+            "UPDATE durable_wakeups SET lease_owner = ?1, lease_until_ms = ?2
+             WHERE task_id = ?3 AND sequence = ?4 AND wake_at_ms = ?5
+               AND (lease_until_ms IS NULL OR lease_until_ms <= ?6)",
+            params![lease_owner, lease_until_sql, id.as_slice(), sequence, wake_at_ms, now_sql,],
+        )?;
+        transaction.commit()?;
+        if changed != 1 {
+            return Ok(None);
+        }
+        Ok(Some(WakeupClaim {
+            task_id,
+            sequence: from_sql_integer(sequence, "sequence")?,
+            wake_at_ms: from_sql_integer(wake_at_ms, "wake_at_ms")?,
+            lease_owner: lease_owner.into(),
+            lease_until_ms,
+        }))
+    }
+
     /// Complete only the exact wakeup generation owned by this execution.
     pub fn complete_wakeup(
         &self,
@@ -511,6 +647,62 @@ impl SqliteStore {
         Ok(found.is_some())
     }
 
+    /// Extend an exact claim token before executing work. Matching the prior
+    /// lease deadline prevents an expired runner from renewing over a re-claim.
+    pub fn renew_wakeup_claim(
+        &self,
+        claim: &WakeupClaim,
+        now_ms: u64,
+        lease_duration_ms: u64,
+    ) -> Result<Option<WakeupClaim>, DurableError> {
+        validate_lease_owner(&claim.lease_owner)?;
+        let lease_until_ms = now_ms
+            .checked_add(lease_duration_ms.max(1))
+            .ok_or(DurableError::IntegerRange { field: "lease_until_ms" })?;
+        let connection = self.lock()?;
+        let id = task_id_bytes(claim.task_id);
+        let changed = connection.execute(
+            "UPDATE durable_wakeups SET lease_until_ms = ?1
+             WHERE task_id = ?2 AND sequence = ?3 AND wake_at_ms = ?4
+               AND lease_owner = ?5 AND lease_until_ms = ?6",
+            params![
+                to_sql_integer(lease_until_ms, "lease_until_ms")?,
+                id.as_slice(),
+                to_sql_integer(claim.sequence, "sequence")?,
+                to_sql_integer(claim.wake_at_ms, "wake_at_ms")?,
+                claim.lease_owner,
+                to_sql_integer(claim.lease_until_ms, "lease_until_ms")?,
+            ],
+        )?;
+        Ok((changed == 1).then(|| WakeupClaim {
+            task_id: claim.task_id,
+            sequence: claim.sequence,
+            wake_at_ms: claim.wake_at_ms,
+            lease_owner: claim.lease_owner.clone(),
+            lease_until_ms,
+        }))
+    }
+
+    /// Release an exact claim without removing its wakeup generation.
+    pub fn release_wakeup_claim(&self, claim: &WakeupClaim) -> Result<bool, DurableError> {
+        validate_lease_owner(&claim.lease_owner)?;
+        let connection = self.lock()?;
+        let id = task_id_bytes(claim.task_id);
+        let changed = connection.execute(
+            "UPDATE durable_wakeups SET lease_owner = NULL, lease_until_ms = NULL
+             WHERE task_id = ?1 AND sequence = ?2 AND wake_at_ms = ?3
+               AND lease_owner = ?4 AND lease_until_ms = ?5",
+            params![
+                id.as_slice(),
+                to_sql_integer(claim.sequence, "sequence")?,
+                to_sql_integer(claim.wake_at_ms, "wake_at_ms")?,
+                claim.lease_owner,
+                to_sql_integer(claim.lease_until_ms, "lease_until_ms")?,
+            ],
+        )?;
+        Ok(changed == 1)
+    }
+
     pub fn wakeup(&self, task_id: TaskId) -> Result<Option<Wakeup>, DurableError> {
         let connection = self.lock()?;
         let id = task_id_bytes(task_id);
@@ -530,6 +722,212 @@ impl SqliteStore {
                 })
             })
             .transpose()
+    }
+
+    pub fn signal_wait(&self, task_id: TaskId) -> Result<Option<SignalWait>, DurableError> {
+        let connection = self.lock()?;
+        let id = task_id_bytes(task_id);
+        connection
+            .query_row(
+                "SELECT sequence, signal_name FROM durable_signal_waits WHERE task_id = ?1",
+                params![id.as_slice()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .map(|(sequence, signal_name)| {
+                Ok(SignalWait {
+                    task_id,
+                    sequence: from_sql_integer(sequence, "sequence")?,
+                    signal_name,
+                })
+            })
+            .transpose()
+    }
+
+    /// Persist a signal and make a matching suspended task immediately
+    /// claimable. Signals sent before a task starts waiting remain in FIFO order.
+    pub fn send_signal(
+        &self,
+        task_id: TaskId,
+        signal_name: &str,
+        payload: &Value,
+        sent_at_ms: u64,
+    ) -> Result<u64, DurableError> {
+        validate_signal_name(signal_name)?;
+        let payload = serde_json::to_string(payload)?;
+        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
+            return Err(DurableError::EventPayloadTooLarge);
+        }
+        let sent_at_ms = to_sql_integer(sent_at_ms, "sent_at_ms")?;
+        let id = task_id_bytes(task_id);
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (pending_count, pending_bytes) = transaction.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(
+                 length(CAST(signal_name AS BLOB)) + length(CAST(payload AS BLOB))
+             ), 0)
+             FROM durable_signal_inbox WHERE task_id = ?1",
+            params![id.as_slice()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        let signal_bytes =
+            signal_name.len().checked_add(payload.len()).ok_or(DurableError::SignalInboxLimit)?;
+        if pending_count >= MAX_PENDING_SIGNALS as i64
+            || pending_bytes
+                .checked_add(
+                    i64::try_from(signal_bytes).map_err(|_| DurableError::SignalInboxLimit)?,
+                )
+                .is_none_or(|bytes| bytes > MAX_HISTORY_BYTES as i64)
+        {
+            return Err(DurableError::SignalInboxLimit);
+        }
+        transaction.execute(
+            "INSERT INTO durable_signal_inbox (task_id, signal_name, payload, sent_at_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id.as_slice(), signal_name, payload, sent_at_ms],
+        )?;
+        let signal_id = transaction.last_insert_rowid();
+        let wait_sequence = transaction
+            .query_row(
+                "SELECT sequence FROM durable_signal_waits
+                 WHERE task_id = ?1 AND signal_name = ?2",
+                params![id.as_slice(), signal_name],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if let Some(sequence) = wait_sequence {
+            transaction.execute(
+                "INSERT INTO durable_wakeups
+                     (task_id, sequence, wake_at_ms, lease_owner, lease_until_ms)
+                 VALUES (?1, ?2, ?3, NULL, NULL)
+                 ON CONFLICT(task_id) DO NOTHING",
+                params![id.as_slice(), sequence, sent_at_ms],
+            )?;
+        }
+        transaction.commit()?;
+        from_sql_integer(signal_id, "signal_id")
+    }
+
+    /// Atomically consume the oldest matching signal and append its replay
+    /// event. If no signal exists, register the boundary as suspended.
+    pub fn poll_signal(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        signal_name: &str,
+        now_ms: u64,
+        claim: Option<&WakeupClaim>,
+    ) -> Result<Option<TaskEvent>, DurableError> {
+        validate_signal_name(signal_name)?;
+        let now_sql = to_sql_integer(now_ms, "now_ms")?;
+        let id = task_id_bytes(task_id);
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let actual_sequence: i64 = transaction.query_row(
+            "SELECT COALESCE(MAX(sequence) + 1, 0)
+             FROM durable_events WHERE task_id = ?1",
+            params![id.as_slice()],
+            |row| row.get(0),
+        )?;
+        let actual_sequence = from_sql_integer(actual_sequence, "sequence")?;
+        if actual_sequence != expected_sequence {
+            return Err(DurableError::HistoryConflict {
+                expected: expected_sequence,
+                actual: actual_sequence,
+            });
+        }
+        let existing_wait = transaction
+            .query_row(
+                "SELECT sequence, signal_name FROM durable_signal_waits WHERE task_id = ?1",
+                params![id.as_slice()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        if let Some((wait_sequence, wait_name)) = &existing_wait
+            && (from_sql_integer(*wait_sequence, "sequence")? != expected_sequence
+                || wait_name != signal_name)
+        {
+            return Err(DurableError::SignalWaitConflict);
+        }
+        let queued = transaction
+            .query_row(
+                "SELECT id, payload, sent_at_ms FROM durable_signal_inbox
+                 WHERE task_id = ?1 AND signal_name = ?2 ORDER BY id LIMIT 1",
+                params![id.as_slice(), signal_name],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)),
+            )
+            .optional()?;
+        let Some((signal_id, payload_json, sent_at_ms)) = queued else {
+            register_signal_wait(&transaction, task_id, expected_sequence, signal_name)?;
+            transaction.commit()?;
+            return Ok(None);
+        };
+
+        if let Some(claim) = claim {
+            if existing_wait.is_none()
+                || claim.task_id != task_id
+                || claim.sequence != expected_sequence
+            {
+                return Err(DurableError::WakeupClaimRequired);
+            }
+            let changed = transaction.execute(
+                "DELETE FROM durable_wakeups
+                 WHERE task_id = ?1 AND sequence = ?2 AND wake_at_ms = ?3
+                   AND lease_owner = ?4 AND lease_until_ms = ?5
+                   AND lease_until_ms > ?6",
+                params![
+                    id.as_slice(),
+                    to_sql_integer(claim.sequence, "sequence")?,
+                    to_sql_integer(claim.wake_at_ms, "wake_at_ms")?,
+                    claim.lease_owner,
+                    to_sql_integer(claim.lease_until_ms, "lease_until_ms")?,
+                    now_sql,
+                ],
+            )?;
+            if changed != 1 {
+                return Err(DurableError::WakeupClaimRequired);
+            }
+        } else {
+            if existing_wait.is_some() {
+                return Err(DurableError::WakeupClaimRequired);
+            }
+            let has_wakeup = transaction
+                .query_row(
+                    "SELECT 1 FROM durable_wakeups WHERE task_id = ?1",
+                    params![id.as_slice()],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if has_wakeup {
+                return Err(DurableError::WakeupClaimRequired);
+            }
+        }
+
+        let payload: Value = serde_json::from_str(&payload_json)?;
+        let event = NewEvent {
+            kind: EventKind::Signal,
+            key: signal_name.into(),
+            payload,
+            recorded_at_ms: from_sql_integer(sent_at_ms, "sent_at_ms")?,
+        };
+        let sequence = insert_event(
+            &transaction,
+            task_id,
+            Some(expected_sequence),
+            &event,
+            &payload_json,
+            sent_at_ms,
+        )?;
+        transaction
+            .execute("DELETE FROM durable_signal_inbox WHERE id = ?1", params![signal_id])?;
+        transaction.execute(
+            "DELETE FROM durable_signal_waits
+             WHERE task_id = ?1 AND sequence = ?2 AND signal_name = ?3",
+            params![id.as_slice(), sequence, signal_name],
+        )?;
+        transaction.commit()?;
+        stored_event(task_id, sequence, event, payload_json).map(Some)
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, DurableError> {
@@ -565,6 +963,16 @@ pub enum DurableError {
     HistoryByteLimit,
     #[error("lease owner must be 1..={MAX_LEASE_OWNER_BYTES} bytes")]
     InvalidLeaseOwner,
+    #[error("signal name must be 1..={MAX_EVENT_KEY_BYTES} bytes")]
+    InvalidSignalName,
+    #[error("task is already suspended on a different signal boundary")]
+    SignalWaitConflict,
+    #[error("an active wakeup claim is required to consume this signal")]
+    WakeupClaimRequired,
+    #[error(
+        "pending signal inbox exceeds {MAX_PENDING_SIGNALS} signals or {MAX_HISTORY_BYTES} bytes"
+    )]
+    SignalInboxLimit,
 }
 
 fn validate_event(event: &NewEvent) -> Result<(String, i64), DurableError> {
@@ -576,6 +984,21 @@ fn validate_event(event: &NewEvent) -> Result<(String, i64), DurableError> {
         return Err(DurableError::EventPayloadTooLarge);
     }
     Ok((payload, to_sql_integer(event.recorded_at_ms, "recorded_at_ms")?))
+}
+
+fn raw_event(
+    kind: EventKind,
+    key: String,
+    payload_json: &str,
+    recorded_at_ms: u64,
+) -> Result<NewEvent, DurableError> {
+    if key.len() > MAX_EVENT_KEY_BYTES {
+        return Err(DurableError::EventKeyTooLarge);
+    }
+    if payload_json.len() > MAX_EVENT_PAYLOAD_BYTES {
+        return Err(DurableError::EventPayloadTooLarge);
+    }
+    Ok(NewEvent { kind, key, payload: serde_json::from_str(payload_json)?, recorded_at_ms })
 }
 
 fn insert_event(
@@ -663,13 +1086,51 @@ fn validate_lease_owner(owner: &str) -> Result<(), DurableError> {
     Ok(())
 }
 
-fn migrate_wakeup_columns(connection: &Connection) -> Result<(), DurableError> {
+fn validate_signal_name(name: &str) -> Result<(), DurableError> {
+    if name.is_empty() || name.len() > MAX_EVENT_KEY_BYTES {
+        return Err(DurableError::InvalidSignalName);
+    }
+    Ok(())
+}
+
+fn register_signal_wait(
+    transaction: &Transaction<'_>,
+    task_id: TaskId,
+    sequence: u64,
+    signal_name: &str,
+) -> Result<(), DurableError> {
+    let id = task_id_bytes(task_id);
+    let existing = transaction
+        .query_row(
+            "SELECT sequence, signal_name FROM durable_signal_waits WHERE task_id = ?1",
+            params![id.as_slice()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    if let Some((existing_sequence, existing_name)) = existing {
+        if from_sql_integer(existing_sequence, "sequence")? != sequence
+            || existing_name != signal_name
+        {
+            return Err(DurableError::SignalWaitConflict);
+        }
+        return Ok(());
+    }
+    transaction.execute(
+        "INSERT INTO durable_signal_waits (task_id, sequence, signal_name)
+         VALUES (?1, ?2, ?3)",
+        params![id.as_slice(), to_sql_integer(sequence, "sequence")?, signal_name],
+    )?;
+    Ok(())
+}
+
+fn migrate_wakeup_columns(connection: &Connection) -> Result<bool, DurableError> {
     let columns = {
         let mut statement = connection.prepare("PRAGMA table_info(durable_wakeups)")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
-    if !columns.iter().any(|column| column == "sequence") {
+    let sequence_added = !columns.iter().any(|column| column == "sequence");
+    if sequence_added {
         connection.execute_batch(
             "ALTER TABLE durable_wakeups ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0",
         )?;
@@ -681,13 +1142,14 @@ fn migrate_wakeup_columns(connection: &Connection) -> Result<(), DurableError> {
         connection
             .execute_batch("ALTER TABLE durable_wakeups ADD COLUMN lease_until_ms INTEGER")?;
     }
-    Ok(())
+    Ok(sequence_added)
 }
 
 fn stored_event(
     task_id: TaskId,
     sequence: i64,
     event: NewEvent,
+    payload_json: String,
 ) -> Result<TaskEvent, DurableError> {
     Ok(TaskEvent {
         task_id,
@@ -696,6 +1158,7 @@ fn stored_event(
         key: event.key,
         payload: event.payload,
         recorded_at_ms: event.recorded_at_ms,
+        payload_json,
     })
 }
 
@@ -845,6 +1308,7 @@ mod tests {
                     key: "clock".into(),
                     payload: json!(1234),
                     recorded_at_ms: 1234,
+                    payload_json: "1234".into(),
                 },
                 TaskEvent {
                     task_id: TaskId(1),
@@ -853,6 +1317,7 @@ mod tests {
                     key: "next".into(),
                     payload: json!({"ok": true}),
                     recorded_at_ms: 1235,
+                    payload_json: r#"{"ok":true}"#.into(),
                 },
             ],
         };
@@ -898,6 +1363,34 @@ mod tests {
         assert!(store.complete_wakeup(TaskId(1), 2, Some("runner-b"), 120).unwrap());
         assert!(!store.complete_wakeup(TaskId(1), 2, Some("runner-a"), 120).unwrap());
         assert_eq!(store.wakeup(TaskId(1)).unwrap(), None);
+    }
+
+    #[test]
+    fn claim_renewal_and_release_require_the_exact_token() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.schedule_wakeup(Wakeup { task_id: TaskId(4), sequence: 2, wake_at_ms: 10 }).unwrap();
+        let original = store.claim_due_wakeups(10, 1, "runner", 100).unwrap().pop().unwrap();
+        let renewed = store.renew_wakeup_claim(&original, 50, 100).unwrap().unwrap();
+        assert_eq!(renewed.lease_until_ms, 150);
+        assert!(store.renew_wakeup_claim(&original, 60, 100).unwrap().is_none());
+        assert!(!store.release_wakeup_claim(&original).unwrap());
+        assert!(store.release_wakeup_claim(&renewed).unwrap());
+        assert_eq!(store.wakeup(TaskId(4)).unwrap().unwrap().sequence, 2);
+        assert_eq!(store.claim_due_wakeups(60, 1, "other", 100).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn exact_claim_leaves_other_due_tasks_available() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.schedule_wakeup(Wakeup { task_id: TaskId(40), sequence: 1, wake_at_ms: 10 }).unwrap();
+        store.schedule_wakeup(Wakeup { task_id: TaskId(41), sequence: 2, wake_at_ms: 10 }).unwrap();
+        assert_eq!(store.claim_wakeup(TaskId(41), 9, "runner", 100).unwrap(), None);
+        let claim = store.claim_wakeup(TaskId(41), 10, "runner", 100).unwrap().unwrap();
+        assert_eq!(claim.task_id, TaskId(41));
+        assert!(store.claim_wakeup(TaskId(41), 10, "other", 100).unwrap().is_none());
+        let remaining = store.claim_due_wakeups(10, 10, "other", 100).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].task_id, TaskId(40));
     }
 
     #[test]
@@ -961,6 +1454,81 @@ mod tests {
     }
 
     #[test]
+    fn signal_sent_before_wait_is_consumed_in_fifo_order() {
+        let store = SqliteStore::in_memory().unwrap();
+        let id = TaskId(30);
+        store.send_signal(id, "approval", &json!({"order": 1}), 10).unwrap();
+        store.send_signal(id, "approval", &json!({"order": 2}), 11).unwrap();
+
+        let first = store.poll_signal(id, 0, "approval", 12, None).unwrap().unwrap();
+        let second = store.poll_signal(id, 1, "approval", 13, None).unwrap().unwrap();
+        assert_eq!(first.payload, json!({"order": 1}));
+        assert_eq!(second.payload, json!({"order": 2}));
+        assert_eq!(store.load_history(id).unwrap().events, vec![first, second]);
+        assert_eq!(store.signal_wait(id).unwrap(), None);
+        assert_eq!(store.wakeup(id).unwrap(), None);
+    }
+
+    #[test]
+    fn waiting_signal_is_woken_and_requires_its_claim() {
+        let store = SqliteStore::in_memory().unwrap();
+        let id = TaskId(31);
+        assert_eq!(store.poll_signal(id, 0, "approval", 10, None).unwrap(), None);
+        assert_eq!(
+            store.signal_wait(id).unwrap(),
+            Some(SignalWait { task_id: id, sequence: 0, signal_name: "approval".into() })
+        );
+        store.send_signal(id, "ignored", &json!(false), 11).unwrap();
+        assert_eq!(store.wakeup(id).unwrap(), None);
+        store.send_signal(id, "approval", &json!({"ok": true}), 12).unwrap();
+        let wakeup = store.wakeup(id).unwrap().expect("signal wakeup");
+        assert_eq!(wakeup.sequence, 0);
+        let claim = store.claim_due_wakeups(12, 1, "signal-runner", 100).unwrap().pop().unwrap();
+        assert!(matches!(
+            store.poll_signal(id, 0, "ignored", 12, Some(&claim)),
+            Err(DurableError::SignalWaitConflict)
+        ));
+        assert!(matches!(
+            store.poll_signal(id, 0, "approval", 12, None),
+            Err(DurableError::WakeupClaimRequired)
+        ));
+        let event = store.poll_signal(id, 0, "approval", 12, Some(&claim)).unwrap().unwrap();
+        assert_eq!(event.kind, EventKind::Signal);
+        assert_eq!(event.payload, json!({"ok": true}));
+        assert_eq!(store.signal_wait(id).unwrap(), None);
+        assert_eq!(store.wakeup(id).unwrap(), None);
+    }
+
+    #[test]
+    fn reopening_does_not_rewrite_a_signal_wakeup_generation() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-durable-signal-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let id = TaskId(32);
+        {
+            let store = SqliteStore::open(&path).unwrap();
+            store.append_event(id, event(EventKind::Sleep, "old", json!(null), 1)).unwrap();
+            assert_eq!(store.poll_signal(id, 1, "next", 2, None).unwrap(), None);
+            store.send_signal(id, "next", &json!("ready"), 3).unwrap();
+            assert_eq!(store.wakeup(id).unwrap().unwrap().sequence, 1);
+        }
+        let reopened = SqliteStore::open(&path).unwrap();
+        assert_eq!(reopened.wakeup(id).unwrap().unwrap().sequence, 1);
+        let claim = reopened
+            .claim_due_wakeups(3, 1, "restarted-runner", 100)
+            .unwrap()
+            .pop()
+            .expect("signal claim after reopen");
+        let event = reopened.poll_signal(id, 1, "next", 3, Some(&claim)).unwrap().unwrap();
+        assert_eq!(event.payload, json!("ready"));
+        assert_eq!(reopened.wakeup(id).unwrap(), None);
+        drop(reopened);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn oversized_timestamp_is_rejected() {
         let store = SqliteStore::in_memory().unwrap();
         let err = store
@@ -987,6 +1555,33 @@ mod tests {
             .unwrap_err();
         assert!(matches!(payload_err, DurableError::EventPayloadTooLarge));
         assert!(store.load_history(TaskId(1)).unwrap().events.is_empty());
+    }
+
+    #[test]
+    fn pending_signal_inbox_is_bounded() {
+        let store = SqliteStore::in_memory().unwrap();
+        let id = task_id_bytes(TaskId(33));
+        {
+            let mut connection = store.lock().unwrap();
+            let transaction = connection.transaction().unwrap();
+            {
+                let mut statement = transaction
+                    .prepare(
+                        "INSERT INTO durable_signal_inbox
+                         (task_id, signal_name, payload, sent_at_ms)
+                         VALUES (?1, 'queued', 'null', 1)",
+                    )
+                    .unwrap();
+                for _ in 0..MAX_PENDING_SIGNALS {
+                    statement.execute(params![id.as_slice()]).unwrap();
+                }
+            }
+            transaction.commit().unwrap();
+        }
+        assert!(matches!(
+            store.send_signal(TaskId(33), "queued", &json!(null), 2),
+            Err(DurableError::SignalInboxLimit)
+        ));
     }
 
     #[test]
