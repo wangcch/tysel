@@ -113,7 +113,10 @@ async fn read_only_grant_blocks_writes_and_allows_queries() {
     let exec_err = exec("CREATE TABLE must_not_exist (id INTEGER)", "[]").await.unwrap_err();
     assert!(exec_err.contains("read-only"), "{exec_err}");
     let query_err = query("CREATE TABLE must_not_exist (id INTEGER)", "[]").await.unwrap_err();
-    assert!(query_err.to_ascii_lowercase().contains("read-only"), "{query_err}");
+    assert!(
+        query_err.to_ascii_lowercase().contains("read-only") && query_err.contains("25006"),
+        "{query_err}"
+    );
 }
 
 #[tokio::test]
@@ -128,7 +131,7 @@ async fn read_only_query_ignores_session_guc_reset() {
     let _ = query("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", "[]").await;
     let _ = query("SET TRANSACTION READ WRITE", "[]").await;
     let err = query("CREATE TABLE must_not_exist_after_guc (id INTEGER)", "[]").await.unwrap_err();
-    assert!(err.to_ascii_lowercase().contains("read-only"), "{err}");
+    assert!(err.to_ascii_lowercase().contains("read-only") && err.contains("25006"), "{err}");
     let rows = query("SELECT 1::INTEGER AS n", "[]").await.unwrap();
     assert_eq!(rows, Value::Array(vec![Value::Record(vec![("n".into(), Value::Number(1.0))])]));
 }

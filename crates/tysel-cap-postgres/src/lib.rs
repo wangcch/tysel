@@ -13,6 +13,7 @@ use bytes::BytesMut;
 use futures_util::StreamExt;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_postgres::Client;
+use tokio_postgres::error::SqlState;
 use tokio_postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 use tysel_engine::Value;
 
@@ -366,7 +367,18 @@ fn value_bytes(value: &Value) -> usize {
 }
 
 fn pg_err(err: tokio_postgres::Error) -> String {
+    if let Some(db) = err.as_db_error() {
+        let code = db.code();
+        if *code == SqlState::READ_ONLY_SQL_TRANSACTION {
+            return read_only_error(code);
+        }
+        return format!("postgres database error (SQLSTATE {})", code.code());
+    }
     err.to_string()
+}
+
+fn read_only_error(code: &SqlState) -> String {
+    format!("postgres connection is read-only (SQLSTATE {})", code.code())
 }
 
 #[cfg(test)]
@@ -376,6 +388,12 @@ mod tests {
     #[test]
     fn crate_is_named() {
         assert!(!crate_name().is_empty());
+    }
+
+    #[test]
+    fn read_only_sqlstate_has_a_stable_safe_message() {
+        let code = SqlState::READ_ONLY_SQL_TRANSACTION;
+        assert_eq!(read_only_error(&code), "postgres connection is read-only (SQLSTATE 25006)");
     }
 
     #[test]
