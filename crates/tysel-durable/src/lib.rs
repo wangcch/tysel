@@ -16,6 +16,8 @@ const MAX_HISTORY_EVENTS: usize = 10_000;
 const MAX_HISTORY_BYTES: usize = 16 * 1_048_576;
 const MAX_PENDING_SIGNALS: usize = 1_000;
 const MAX_LEASE_OWNER_BYTES: usize = 128;
+/// Durable SQLite schema and replay-log contract supported by this runtime.
+pub const DURABLE_LOG_VERSION: u32 = 1;
 pub const MAX_DURABLE_PROGRAM_BYTES: usize = 1_048_576;
 pub const MAX_DURABLE_PROGRAM_TOTAL_BYTES: usize = 64 * 1_048_576;
 pub const MAX_DURABLE_PROGRAMS: usize = 10_000;
@@ -248,65 +250,15 @@ impl SqliteStore {
 
     fn from_connection(mut connection: Connection) -> Result<Self, DurableError> {
         connection.busy_timeout(Duration::from_secs(5))?;
-        connection.execute_batch(
-            "PRAGMA foreign_keys = ON;
-             CREATE TABLE IF NOT EXISTS durable_events (
-                 task_id BLOB NOT NULL,
-                 sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                 kind TEXT NOT NULL,
-                 event_key TEXT NOT NULL,
-                 payload TEXT NOT NULL,
-                 recorded_at_ms INTEGER NOT NULL CHECK (recorded_at_ms >= 0),
-                 PRIMARY KEY (task_id, sequence)
-             );
-             CREATE TABLE IF NOT EXISTS durable_wakeups (
-                 task_id BLOB PRIMARY KEY,
-                 sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                 wake_at_ms INTEGER NOT NULL CHECK (wake_at_ms >= 0),
-                 lease_owner TEXT,
-                 lease_until_ms INTEGER CHECK (lease_until_ms >= 0)
-             );
-             CREATE TABLE IF NOT EXISTS durable_history_stats (
-                 task_id BLOB PRIMARY KEY,
-                 event_count INTEGER NOT NULL CHECK (event_count >= 0),
-                 payload_bytes INTEGER NOT NULL CHECK (payload_bytes >= 0)
-             );
-             CREATE TABLE IF NOT EXISTS durable_signal_inbox (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 task_id BLOB NOT NULL,
-                 signal_name TEXT NOT NULL,
-                 payload TEXT NOT NULL,
-                 sent_at_ms INTEGER NOT NULL CHECK (sent_at_ms >= 0)
-             );
-             CREATE TABLE IF NOT EXISTS durable_signal_waits (
-                 task_id BLOB PRIMARY KEY,
-                 sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                 signal_name TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS durable_programs (
-                 task_id BLOB PRIMARY KEY,
-                 program_kind TEXT NOT NULL DEFAULT 'script'
-                     CHECK (program_kind IN ('script', 'module')),
-                 source TEXT NOT NULL,
-                 source_sha256 BLOB NOT NULL CHECK (length(source_sha256) = 32),
-                 registered_at_ms INTEGER NOT NULL CHECK (registered_at_ms >= 0)
-             );",
-        )?;
-        migrate_schema_columns(&mut connection)?;
-        connection.execute_batch(
-            "DROP INDEX IF EXISTS durable_wakeups_due;
-             CREATE INDEX durable_wakeups_due
-                 ON durable_wakeups (wake_at_ms, lease_until_ms, task_id);
-             CREATE INDEX IF NOT EXISTS durable_signal_inbox_task
-                 ON durable_signal_inbox (task_id, signal_name, id);
-             INSERT OR REPLACE INTO durable_history_stats
-                 (task_id, event_count, payload_bytes)
-             SELECT task_id, COUNT(*), COALESCE(SUM(
-                 length(CAST(payload AS BLOB)) + length(CAST(event_key AS BLOB))
-             ), 0)
-             FROM durable_events GROUP BY task_id;",
-        )?;
+        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+        initialize_schema(&mut connection)?;
         Ok(Self { connection: Mutex::new(connection) })
+    }
+
+    /// Return the durable log contract version recorded in this store.
+    pub fn log_version(&self) -> Result<u32, DurableError> {
+        let connection = self.lock()?;
+        read_log_version(&connection)?.ok_or(DurableError::InvalidLogVersion)
     }
 
     /// Register immutable program text for a durable task. Repeating the same
@@ -1200,6 +1152,10 @@ pub enum DurableError {
     InvalidProgramKind(String),
     #[error("durable program digest is invalid")]
     InvalidProgramDigest,
+    #[error("durable log version metadata is missing or invalid")]
+    InvalidLogVersion,
+    #[error("durable log version {found} is newer than this runtime supports ({supported})")]
+    UnsupportedLogVersion { found: u32, supported: u32 },
 }
 
 fn validate_program_source(source: &str) -> Result<(), DurableError> {
@@ -1429,8 +1385,60 @@ fn register_signal_wait(
     Ok(())
 }
 
-fn migrate_schema_columns(connection: &mut Connection) -> Result<(), DurableError> {
+fn initialize_schema(connection: &mut Connection) -> Result<(), DurableError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(found) = read_log_version(&transaction)?
+        && found > DURABLE_LOG_VERSION
+    {
+        return Err(DurableError::UnsupportedLogVersion { found, supported: DURABLE_LOG_VERSION });
+    }
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS tysel_durable_metadata (
+             key TEXT PRIMARY KEY,
+             value INTEGER NOT NULL CHECK (value >= 0)
+         );
+         CREATE TABLE IF NOT EXISTS durable_events (
+             task_id BLOB NOT NULL,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             kind TEXT NOT NULL,
+             event_key TEXT NOT NULL,
+             payload TEXT NOT NULL,
+             recorded_at_ms INTEGER NOT NULL CHECK (recorded_at_ms >= 0),
+             PRIMARY KEY (task_id, sequence)
+         );
+         CREATE TABLE IF NOT EXISTS durable_wakeups (
+             task_id BLOB PRIMARY KEY,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             wake_at_ms INTEGER NOT NULL CHECK (wake_at_ms >= 0),
+             lease_owner TEXT,
+             lease_until_ms INTEGER CHECK (lease_until_ms >= 0)
+         );
+         CREATE TABLE IF NOT EXISTS durable_history_stats (
+             task_id BLOB PRIMARY KEY,
+             event_count INTEGER NOT NULL CHECK (event_count >= 0),
+             payload_bytes INTEGER NOT NULL CHECK (payload_bytes >= 0)
+         );
+         CREATE TABLE IF NOT EXISTS durable_signal_inbox (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             task_id BLOB NOT NULL,
+             signal_name TEXT NOT NULL,
+             payload TEXT NOT NULL,
+             sent_at_ms INTEGER NOT NULL CHECK (sent_at_ms >= 0)
+         );
+         CREATE TABLE IF NOT EXISTS durable_signal_waits (
+             task_id BLOB PRIMARY KEY,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             signal_name TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS durable_programs (
+             task_id BLOB PRIMARY KEY,
+             program_kind TEXT NOT NULL DEFAULT 'script'
+                 CHECK (program_kind IN ('script', 'module')),
+             source TEXT NOT NULL,
+             source_sha256 BLOB NOT NULL CHECK (length(source_sha256) = 32),
+             registered_at_ms INTEGER NOT NULL CHECK (registered_at_ms >= 0)
+         );",
+    )?;
     migrate_program_columns(&transaction)?;
     let sequence_added = migrate_wakeup_columns(&transaction)?;
     if sequence_added {
@@ -1443,8 +1451,50 @@ fn migrate_schema_columns(connection: &mut Connection) -> Result<(), DurableErro
              ), sequence);",
         )?;
     }
+    transaction.execute_batch(
+        "DROP INDEX IF EXISTS durable_wakeups_due;
+         CREATE INDEX durable_wakeups_due
+             ON durable_wakeups (wake_at_ms, lease_until_ms, task_id);
+         CREATE INDEX IF NOT EXISTS durable_signal_inbox_task
+             ON durable_signal_inbox (task_id, signal_name, id);
+         INSERT OR REPLACE INTO durable_history_stats
+             (task_id, event_count, payload_bytes)
+         SELECT task_id, COUNT(*), COALESCE(SUM(
+             length(CAST(payload AS BLOB)) + length(CAST(event_key AS BLOB))
+         ), 0)
+         FROM durable_events GROUP BY task_id;",
+    )?;
+    transaction.execute(
+        "INSERT INTO tysel_durable_metadata (key, value)
+         VALUES ('schema_version', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![i64::from(DURABLE_LOG_VERSION)],
+    )?;
     transaction.commit()?;
     Ok(())
+}
+
+fn read_log_version(connection: &Connection) -> Result<Option<u32>, DurableError> {
+    let metadata_exists = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'tysel_durable_metadata'
+         )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !metadata_exists {
+        return Ok(None);
+    }
+    let raw = connection
+        .query_row(
+            "SELECT value FROM tysel_durable_metadata WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .ok_or(DurableError::InvalidLogVersion)?;
+    u32::try_from(raw).map(Some).map_err(|_| DurableError::InvalidLogVersion)
 }
 
 fn migrate_wakeup_columns(connection: &Connection) -> Result<bool, DurableError> {
@@ -1698,10 +1748,55 @@ mod tests {
             handles.into_iter().map(|handle| handle.join().unwrap().unwrap()).collect();
         let store = stores.pop().unwrap();
         let program = store.program(task_id).unwrap().unwrap();
+        assert_eq!(store.log_version().unwrap(), DURABLE_LOG_VERSION);
         assert_eq!(program.kind, DurableProgramKind::Script);
         assert_eq!(program.source, source);
         drop(store);
         drop(stores);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn newer_durable_log_is_rejected_without_schema_changes() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-durable-future-version-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE tysel_durable_metadata (
+                         key TEXT PRIMARY KEY,
+                         value INTEGER NOT NULL
+                     );
+                     INSERT INTO tysel_durable_metadata VALUES ('schema_version', 2);",
+                )
+                .unwrap();
+        }
+
+        let error = match SqliteStore::open(&path) {
+            Ok(_) => panic!("future durable log must be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            DurableError::UnsupportedLogVersion { found: 2, supported: DURABLE_LOG_VERSION }
+        ));
+        let connection = Connection::open(&path).unwrap();
+        let events_table_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM sqlite_master
+                     WHERE type = 'table' AND name = 'durable_events'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!events_table_exists);
+        drop(connection);
         let _ = std::fs::remove_file(path);
     }
 
