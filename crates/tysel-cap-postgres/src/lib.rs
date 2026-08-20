@@ -3,6 +3,7 @@
 //! Trusted-path `tysel.postgres.exec` / `tysel.postgres.query` use a URL
 //! resolved by the host from `TYSEL_POSTGRES_<NAME>`. Unconfigured processes
 //! return `"postgres is not configured"`. Isolated workers never call this crate.
+//! A read-only grant rejects `exec` and runs each `query` inside `BEGIN READ ONLY`.
 
 use std::error::Error;
 use std::pin::pin;
@@ -70,6 +71,9 @@ pub async fn query(sql: &str, params_json: &str) -> Result<Value, String> {
     let params = parse_params(params_json)?;
     let mut checkout = checkout(false).await?;
     let refs = param_refs(&params);
+    if checkout.pool.read_only {
+        return query_read_only(&mut checkout, sql, refs).await;
+    }
     let result = collect_rows(checkout.client(), sql, refs).await;
     if result.is_err() {
         checkout.discard();
@@ -81,6 +85,7 @@ struct Checkout {
     client: Option<Client>,
     pool: Arc<Pool>,
     _permit: OwnedSemaphorePermit,
+    recycle: bool,
 }
 
 impl Checkout {
@@ -96,7 +101,7 @@ impl Checkout {
 impl Drop for Checkout {
     fn drop(&mut self) {
         if let Some(client) = self.client.take() {
-            if !client.is_closed() {
+            if self.recycle && !client.is_closed() {
                 self.pool.idle.lock().expect("postgres idle lock").push(client);
             }
         }
@@ -120,7 +125,38 @@ async fn checkout(write: bool) -> Result<Checkout, String> {
         Some(client) if !client.is_closed() => client,
         _ => open_client(&pool.url, pool.read_only).await?,
     };
-    Ok(Checkout { client: Some(client), pool, _permit: permit })
+    Ok(Checkout { client: Some(client), pool, _permit: permit, recycle: true })
+}
+
+/// Session GUCs survive `ROLLBACK`, so read-only cannot rely on a one-time
+/// `SET default_transaction_read_only`. Each query starts a `READ ONLY`
+/// transaction; `SET TRANSACTION READ WRITE` then fails because the
+/// transaction already began.
+async fn query_read_only(
+    checkout: &mut Checkout,
+    sql: &str,
+    refs: Vec<&(dyn ToSql + Sync)>,
+) -> Result<Value, String> {
+    if let Err(err) = checkout.client().batch_execute("BEGIN READ ONLY").await {
+        checkout.discard();
+        return Err(pg_err(err));
+    }
+    checkout.recycle = false;
+    let result = collect_rows(checkout.client(), sql, refs).await;
+    let close = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
+    match checkout.client().batch_execute(close).await {
+        Ok(()) => {
+            checkout.recycle = true;
+            result
+        }
+        Err(err) => {
+            checkout.discard();
+            match result {
+                Ok(_) => Err(pg_err(err)),
+                Err(query_err) => Err(query_err),
+            }
+        }
+    }
 }
 
 async fn open_client(url: &str, read_only: bool) -> Result<Client, String> {
