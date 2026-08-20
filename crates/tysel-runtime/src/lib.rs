@@ -9,6 +9,8 @@ mod http;
 mod service;
 mod task_ingress;
 mod task_rpc;
+#[cfg(unix)]
+mod task_service;
 
 pub use durable::{
     DispatchError, DurableDispatcher, DurableRun, DurableRunError, DurableRunStatus,
@@ -31,6 +33,8 @@ pub use task_rpc::{
     TaskRpcWorker, TaskRpcWorkerError, serve_task_rpc_unix,
 };
 pub use task_rpc::{TaskRpcBroker, TaskRpcBrokerError, TaskRpcSession};
+#[cfg(unix)]
+pub use task_service::{ModuleTaskService, ModuleTaskServiceError};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

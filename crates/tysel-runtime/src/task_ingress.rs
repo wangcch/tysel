@@ -8,6 +8,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 use tysel_engine_qjs::{ModuleTaskDefinition, ModuleTaskKind};
 use tysel_task::{Task, TaskId, TaskMeta, TaskTrigger};
+use tysel_task_rpc::TaskOutcome;
 
 use crate::{TaskRpcBroker, TaskRpcBrokerError};
 
@@ -256,6 +257,10 @@ impl TaskIngress {
 
     pub fn registry(&self) -> &TaskRegistry {
         &self.registry
+    }
+
+    pub async fn outcome(&self, id: TaskId) -> Option<TaskOutcome> {
+        self.broker.lock().await.outcome(id).cloned()
     }
 
     pub async fn enqueue_queue(

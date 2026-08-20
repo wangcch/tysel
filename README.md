@@ -144,8 +144,11 @@ identity, and requeues owned claims as queue capacity permits when the transport
 reports clean EOF or an error. On Unix, `serve_task_rpc_unix` serves concurrent
 local worker connections over a caller-owned Unix-domain listener, rejects
 duplicate online worker identities, and isolates malformed connections. TCP
-transport and CLI worker startup are not wired yet. `TaskRpcWorker` provides the
-matching Unix client for handshake, claim, renewal, release, and result commit.
+transport and external worker CLI startup are not wired yet. `TaskRpcWorker`
+provides the matching Unix client for handshake, claim, renewal, release, and
+result commit. A packaged service with registered tasks automatically starts a
+local broker, module worker, and Cron poller; their cooperative shutdown cleans
+up the service-owned Unix socket.
 `inspect_task_module` discovers bounded, deterministically ordered Cron, Queue,
 and MCP registrations from an application's default `tasks` export.
 `TaskModuleWorker` claims one task at a time, invokes the selected module handler

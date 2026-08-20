@@ -6,6 +6,8 @@ use tysel_engine::IsolateConfig;
 use tysel_package::Tap;
 
 use crate::http::{AppIsolate, HttpError, serve_with_websocket, spawn_app_isolate};
+#[cfg(unix)]
+use crate::{ModuleTaskService, ModuleTaskServiceError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StubError {
@@ -17,6 +19,9 @@ pub enum StubError {
     Engine(#[from] tysel_engine::EngineError),
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[cfg(unix)]
+    #[error(transparent)]
+    TaskService(#[from] ModuleTaskServiceError),
     #[error("invalid listen address '{0}'")]
     Listen(String),
 }
@@ -62,8 +67,33 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     let websocket = tap.manifest.websocket && !matches!(pool, AppIsolate::Isolated(_));
     let listener = TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
+    #[cfg(unix)]
+    let task_service = {
+        let definitions = tysel_engine_qjs::inspect_task_module(&bundle, config)?;
+        if definitions.is_empty() {
+            None
+        } else {
+            let socket_path =
+                std::env::temp_dir().join(format!("tysel-task-{}.sock", std::process::id()));
+            let service = ModuleTaskService::start(
+                &socket_path,
+                tap.manifest.application_id.clone(),
+                bundle.clone(),
+                config,
+            )
+            .await?;
+            println!("tysel task-rpc {}", socket_path.display());
+            Some(service)
+        }
+    };
     println!("tysel listen {bound}");
     io::stdout().flush()?;
-    serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await?;
+    let result =
+        serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await;
+    #[cfg(unix)]
+    if let Some(service) = task_service {
+        service.shutdown().await?;
+    }
+    result?;
     Ok(())
 }
