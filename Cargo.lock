@@ -2682,6 +2682,7 @@ dependencies = [
  "hyper-util",
  "native-tls",
  "rquickjs",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-native-tls",
@@ -2782,7 +2783,9 @@ dependencies = [
  "tysel-manifest",
  "tysel-observability",
  "tysel-package",
+ "tysel-scheduler",
  "tysel-task",
+ "tysel-task-rpc",
 ]
 
 [[package]]
@@ -2797,6 +2800,7 @@ dependencies = [
 name = "tysel-task"
 version = "0.0.1"
 dependencies = [
+ "serde_json",
  "thiserror",
 ]
 

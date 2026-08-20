@@ -25,7 +25,9 @@ tysel-engine-qjs.workspace = true
 tysel-package.workspace = true
 tysel-manifest.workspace = true
 tysel-observability.workspace = true
+tysel-scheduler = { path = "../tysel-scheduler" }
 tysel-task.workspace = true
+tysel-task-rpc.workspace = true
 tysel-capability.workspace = true
 tysel-isolate.workspace = true
 tracing.workspace = true

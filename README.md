@@ -128,12 +128,29 @@ from earlier builds are upgraded transactionally to version 1; databases written
 by a newer runtime are rejected before their schema is changed.
 `tysel-task-rpc` defines a separate TaskRPC v1 wire contract for scheduler/worker
 claim, generation-fenced leases, renewal, release, cancellation, and result
-commit. Its 64 KiB frames and semantic limits are validated before dispatch; it
-does not reuse the isolated-worker IPC message namespace.
+commit. Claimed leases include a bounded trigger descriptor and attempt/deadline
+metadata so a worker can select the correct handler. Its 64 KiB frames and
+semantic limits are validated before dispatch; it does not reuse the
+isolated-worker IPC message namespace.
 The in-memory scheduler implements the matching lease lifecycle: expired worker
 claims are requeued with a new generation, graceful release observes queue
 backpressure, cancellation and task deadlines fence the old generation, and
 late renewals or commits are rejected.
+`tysel-runtime::TaskRpcBroker` connects those messages to the scheduler, retains
+accepted terminal outcomes, requeues retryable failures, and returns explicit
+negative acknowledgements for stale leases and unknown cancellations.
+`TaskRpcSession` requires a worker handshake, binds lease messages to that
+identity, and requeues owned claims as queue capacity permits when the transport
+reports clean EOF or an error. On Unix, `serve_task_rpc_unix` serves concurrent
+local worker connections over a caller-owned Unix-domain listener, rejects
+duplicate online worker identities, and isolates malformed connections. TCP
+transport and CLI worker startup are not wired yet. `TaskRpcWorker` provides the
+matching Unix client for handshake, claim, renewal, release, and result commit.
+`inspect_task_module` discovers bounded, deterministically ordered Cron, Queue,
+and MCP registrations from an application's default `tasks` export.
+`TaskModuleWorker` claims one task at a time, invokes the selected module handler
+with its JSON input and request context under isolate budgets, and commits the
+generation-fenced result through TaskRPC.
 
 Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
 

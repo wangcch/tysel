@@ -15,6 +15,7 @@ mod isolate;
 mod pool;
 mod queue;
 mod secrets;
+mod task_module;
 mod trust;
 
 pub use durable::DurableSession;
@@ -27,6 +28,9 @@ pub use pool::{IncomingHttp, IsolatePool};
 pub use queue::{IoCompletion, IoRequest, IoWork, OpId, Reactor, STREAM_WINDOW, open_bridge};
 pub use secrets::{
     configure as configure_secrets, load_declared, parse_dotenv, resolve as resolve_secret,
+};
+pub use task_module::{
+    ModuleTaskDefinition, ModuleTaskKind, inspect_task_module, invoke_task_module,
 };
 pub use trust::configure as configure_policy;
 

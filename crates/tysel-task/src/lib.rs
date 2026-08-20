@@ -17,8 +17,8 @@ impl fmt::Display for TaskId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskTrigger {
     Http { method: String, path: String },
-    Cron { expression: String },
-    Queue { name: String, message_id: Option<String> },
+    Cron { name: String, expression: String },
+    Queue { name: String, handler: String, message_id: Option<String> },
     Mcp { tool: String },
     Agent { name: String },
 }
@@ -71,6 +71,7 @@ pub struct TaskMeta {
 pub struct Task {
     pub meta: TaskMeta,
     pub trigger: TaskTrigger,
+    pub input: serde_json::Value,
     pub state: TaskState,
     pub attempt: u32,
     /// Absolute scheduler clock value. The scheduler owns the clock's epoch.
@@ -79,7 +80,19 @@ pub struct Task {
 
 impl Task {
     pub fn new(meta: TaskMeta, trigger: TaskTrigger, deadline_ms: Option<u64>) -> Self {
-        Self { meta, trigger, state: TaskState::Created, attempt: 0, deadline_ms }
+        Self {
+            meta,
+            trigger,
+            input: serde_json::Value::Null,
+            state: TaskState::Created,
+            attempt: 0,
+            deadline_ms,
+        }
+    }
+
+    pub fn with_input(mut self, input: serde_json::Value) -> Self {
+        self.input = input;
+        self
     }
 
     pub fn transition(&mut self, next: TaskState) -> Result<(), TaskTransitionError> {
@@ -126,7 +139,11 @@ mod tests {
                 idempotency_key: Some("order-7".into()),
                 trace_id: Some("trace-9".into()),
             },
-            TaskTrigger::Queue { name: "orders".into(), message_id: Some("message-1".into()) },
+            TaskTrigger::Queue {
+                name: "orders".into(),
+                handler: "consume-order".into(),
+                message_id: Some("message-1".into()),
+            },
             Some(100),
         )
     }

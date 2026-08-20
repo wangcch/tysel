@@ -458,7 +458,7 @@ fn from_js(ctx: &Ctx<'_>, value: rquickjs::Value<'_>) -> Result<Value, EngineErr
     Err(EngineError::Isolate(format!("unsupported js type: {}", value.type_name())))
 }
 
-fn from_json(value: serde_json::Value) -> Value {
+pub(crate) fn from_json(value: serde_json::Value) -> Value {
     match value {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(value) => Value::Bool(value),

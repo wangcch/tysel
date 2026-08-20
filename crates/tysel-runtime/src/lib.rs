@@ -7,6 +7,7 @@ mod durable;
 mod durable_poll;
 mod http;
 mod service;
+mod task_rpc;
 
 pub use durable::{
     DispatchError, DurableDispatcher, DurableRun, DurableRunError, DurableRunStatus,
@@ -20,6 +21,12 @@ pub use http::{
     serve, serve_with_websocket, spawn_app_isolate,
 };
 pub use service::{StubError, run_stub, run_tap};
+#[cfg(unix)]
+pub use task_rpc::{
+    TaskModuleWorker, TaskModuleWorkerError, TaskRpcServerError, TaskRpcServerShutdown,
+    TaskRpcWorker, TaskRpcWorkerError, serve_task_rpc_unix,
+};
+pub use task_rpc::{TaskRpcBroker, TaskRpcBrokerError, TaskRpcSession};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

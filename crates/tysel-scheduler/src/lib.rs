@@ -61,16 +61,31 @@ impl Scheduler {
 
     /// Claim the first runnable task, expiring overdue queued tasks along the way.
     pub fn claim(&mut self, now_ms: u64) -> Result<Option<Task>, SchedulerError> {
-        while let Some(id) = self.queue.pop_front() {
-            let task = self.tasks.get_mut(&id).ok_or(SchedulerError::Unknown(id))?;
-            if task.deadline_reached(now_ms) {
-                task.transition(TaskState::TimedOut)?;
-                continue;
+        let Some(next) = self.peek_runnable(now_ms)? else {
+            return Ok(None);
+        };
+        let id = next.meta.id;
+        let queued = self.queue.pop_front().ok_or(SchedulerError::Unknown(id))?;
+        debug_assert_eq!(queued, id);
+        let task = self.tasks.get_mut(&id).ok_or(SchedulerError::Unknown(id))?;
+        task.begin_attempt()?;
+        Ok(Some(task.clone()))
+    }
+
+    /// Inspect the next runnable task without starting an attempt. Overdue
+    /// queued tasks are finalized while searching, matching [`Self::claim`].
+    pub fn peek_runnable(&mut self, now_ms: u64) -> Result<Option<Task>, SchedulerError> {
+        loop {
+            let Some(id) = self.queue.front().copied() else {
+                return Ok(None);
+            };
+            let task = self.tasks.get(&id).ok_or(SchedulerError::Unknown(id))?;
+            if !task.deadline_reached(now_ms) {
+                return Ok(Some(task.clone()));
             }
-            task.begin_attempt()?;
-            return Ok(Some(task.clone()));
+            self.queue.pop_front();
+            self.transition(id, TaskState::TimedOut)?;
         }
-        Ok(None)
     }
 
     /// Claim one runnable task with an owner- and generation-fenced lease.
@@ -181,8 +196,36 @@ impl Scheduler {
             .filter_map(|(id, claim)| (claim.lease_until_ms <= now_ms).then_some(*id))
             .collect();
         expired.sort_unstable();
+        self.requeue_claims(expired, now_ms, limit)
+    }
+
+    /// Immediately reclaim live claims owned by a disconnected worker. A new
+    /// claim receives a new generation, fencing work still running after a
+    /// network partition.
+    pub fn requeue_owner_claims(
+        &mut self,
+        lease_owner: &str,
+        now_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<TaskId>, SchedulerError> {
+        validate_lease_owner(lease_owner)?;
+        let mut owned: Vec<_> = self
+            .claims
+            .iter()
+            .filter_map(|(id, claim)| (claim.lease_owner == lease_owner).then_some(*id))
+            .collect();
+        owned.sort_unstable();
+        self.requeue_claims(owned, now_ms, limit)
+    }
+
+    fn requeue_claims(
+        &mut self,
+        claims: Vec<TaskId>,
+        now_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<TaskId>, SchedulerError> {
         let mut processed = Vec::new();
-        for id in expired.into_iter().take(limit) {
+        for id in claims.into_iter().take(limit) {
             let deadline_reached =
                 self.tasks.get(&id).ok_or(SchedulerError::Unknown(id))?.deadline_reached(now_ms);
             if deadline_reached {
@@ -289,6 +332,14 @@ pub enum SchedulerError {
 }
 
 fn validate_lease(lease_owner: &str, lease_ms: u64) -> Result<(), SchedulerError> {
+    validate_lease_owner(lease_owner)?;
+    if lease_ms == 0 || lease_ms > MAX_LEASE_MS {
+        return Err(SchedulerError::InvalidLeaseDuration);
+    }
+    Ok(())
+}
+
+fn validate_lease_owner(lease_owner: &str) -> Result<(), SchedulerError> {
     if lease_owner.is_empty()
         || lease_owner.len() > MAX_LEASE_OWNER_BYTES
         || !lease_owner.bytes().all(|byte| {
@@ -296,9 +347,6 @@ fn validate_lease(lease_owner: &str, lease_ms: u64) -> Result<(), SchedulerError
         })
     {
         return Err(SchedulerError::InvalidLeaseOwner);
-    }
-    if lease_ms == 0 || lease_ms > MAX_LEASE_MS {
-        return Err(SchedulerError::InvalidLeaseDuration);
     }
     Ok(())
 }
@@ -520,6 +568,27 @@ mod tests {
         ));
         assert_eq!(
             scheduler.finish_claim(&claim, 1, TaskState::Completed).unwrap().state,
+            TaskState::Completed
+        );
+    }
+
+    #[test]
+    fn disconnect_requeues_owned_claims_and_fences_the_old_generation() {
+        let mut scheduler = Scheduler::new(2).unwrap();
+        scheduler.enqueue(task(30, None)).unwrap();
+        scheduler.enqueue(task(31, None)).unwrap();
+        let stale = scheduler.claim_with_lease(0, "worker-a", 1_000).unwrap().unwrap();
+        let other = scheduler.claim_with_lease(0, "worker-b", 1_000).unwrap().unwrap();
+
+        assert_eq!(scheduler.requeue_owner_claims("worker-a", 1, 10).unwrap(), vec![TaskId(30)]);
+        let current = scheduler.claim_with_lease(1, "worker-c", 1_000).unwrap().unwrap();
+        assert_eq!(current.generation, stale.generation + 1);
+        assert!(matches!(
+            scheduler.finish_claim(&stale, 2, TaskState::Completed),
+            Err(SchedulerError::LeaseLost)
+        ));
+        assert_eq!(
+            scheduler.finish_claim(&other, 2, TaskState::Completed).unwrap().state,
             TaskState::Completed
         );
     }

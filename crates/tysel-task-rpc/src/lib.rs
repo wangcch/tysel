@@ -7,12 +7,14 @@
 use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
-use tysel_task::TaskId;
+use tysel_task::{Task, TaskId, TaskTrigger};
 
 pub const TASK_RPC_VERSION: u16 = 1;
 pub const MAX_TASK_RPC_FRAME: usize = 64 * 1024;
-pub const MAX_CLAIM_BATCH: u16 = 128;
+pub const MAX_CLAIM_BATCH: u16 = 64;
 pub const MAX_WORKER_ID_BYTES: usize = 128;
+pub const MAX_TASK_TRIGGER_BYTES: usize = 256;
+pub const MAX_TASK_INPUT_BYTES: usize = 32 * 1024;
 pub const MAX_ERROR_BYTES: usize = 4 * 1024;
 pub const MAX_RESULT_BYTES: usize = 32 * 1024;
 pub const MAX_LEASE_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -52,6 +54,7 @@ pub enum Message {
     Release { request_id: u64, lease: LeaseToken },
     Released { request_id: u64, released: bool },
     Cancel { request_id: u64, task_id: WireTaskId },
+    Canceled { request_id: u64, canceled: bool },
     Commit { request_id: u64, lease: LeaseToken, outcome: TaskOutcome },
     Committed { request_id: u64, accepted: bool },
     Error { request_id: Option<u64>, code: ErrorCode, message: String },
@@ -61,7 +64,10 @@ impl Message {
     fn validate(&self) -> Result<(), TaskRpcError> {
         match self {
             Self::Hello { worker_id } => validate_worker_id(worker_id),
-            Self::Ready {} | Self::Released { .. } | Self::Committed { .. } => Ok(()),
+            Self::Ready {}
+            | Self::Released { .. }
+            | Self::Canceled { .. }
+            | Self::Committed { .. } => Ok(()),
             Self::Claim { worker_id, lease_ms, limit, .. } => {
                 validate_worker_id(worker_id)?;
                 validate_lease_ms(*lease_ms)?;
@@ -149,16 +155,125 @@ impl LeaseToken {
 #[serde(deny_unknown_fields)]
 pub struct TaskLease {
     pub token: LeaseToken,
+    pub task: TaskDescriptor,
     pub lease_until_ms: u64,
 }
 
 impl TaskLease {
     fn validate(&self) -> Result<(), TaskRpcError> {
         self.token.validate()?;
+        self.task.validate()?;
         if self.lease_until_ms == 0 {
             return Err(TaskRpcError::InvalidLeaseDeadline);
         }
         Ok(())
+    }
+}
+
+/// Bounded task information required by a worker to select its handler. The
+/// task id and lease owner remain in [`LeaseToken`] so a commit cannot replace
+/// either value with descriptor data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDescriptor {
+    pub trigger: WireTaskTrigger,
+    pub input: serde_json::Value,
+    pub attempt: u32,
+    pub deadline_ms: Option<u64>,
+}
+
+impl TaskDescriptor {
+    pub fn from_task(task: &Task) -> Result<Self, TaskRpcError> {
+        let trigger = WireTaskTrigger::from_task_trigger(&task.trigger);
+        let descriptor = Self {
+            trigger,
+            input: task.input.clone(),
+            attempt: task.attempt,
+            deadline_ms: task.deadline_ms,
+        };
+        descriptor.validate()?;
+        Ok(descriptor)
+    }
+
+    fn validate(&self) -> Result<(), TaskRpcError> {
+        self.trigger.validate()?;
+        let input_bytes = serde_json::to_vec(&self.input)?;
+        if input_bytes.len() > MAX_TASK_INPUT_BYTES {
+            return Err(TaskRpcError::TaskInputTooLarge(input_bytes.len()));
+        }
+        if self.attempt == 0 {
+            return Err(TaskRpcError::InvalidTaskAttempt);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WireTaskTrigger {
+    Http { method: String, path: String },
+    Cron { name: String, expression: String },
+    Queue { name: String, handler: String, message_id: Option<String> },
+    Mcp { tool: String },
+    Agent { name: String },
+}
+
+impl WireTaskTrigger {
+    fn from_task_trigger(trigger: &TaskTrigger) -> Self {
+        match trigger {
+            TaskTrigger::Http { method, path } => {
+                Self::Http { method: method.clone(), path: path.clone() }
+            }
+            TaskTrigger::Cron { name, expression } => {
+                Self::Cron { name: name.clone(), expression: expression.clone() }
+            }
+            TaskTrigger::Queue { name, handler, message_id } => Self::Queue {
+                name: name.clone(),
+                handler: handler.clone(),
+                message_id: message_id.clone(),
+            },
+            TaskTrigger::Mcp { tool } => Self::Mcp { tool: tool.clone() },
+            TaskTrigger::Agent { name } => Self::Agent { name: name.clone() },
+        }
+    }
+
+    fn validate(&self) -> Result<(), TaskRpcError> {
+        let fields: &[&str] = match self {
+            Self::Http { method, path } => &[method, path],
+            Self::Cron { name, expression } => &[name, expression],
+            Self::Queue { name, handler, message_id } => {
+                if let Some(message_id) = message_id {
+                    &[name, handler, message_id]
+                } else {
+                    &[name, handler]
+                }
+            }
+            Self::Mcp { tool } => &[tool],
+            Self::Agent { name } => &[name],
+        };
+        let mut total = 0usize;
+        for field in fields {
+            if field.is_empty() {
+                return Err(TaskRpcError::InvalidTaskTrigger);
+            }
+            total = total.checked_add(field.len()).ok_or(TaskRpcError::TaskTriggerTooLarge)?;
+        }
+        if total > MAX_TASK_TRIGGER_BYTES {
+            return Err(TaskRpcError::TaskTriggerTooLarge);
+        }
+        Ok(())
+    }
+
+    /// Registered module handler selected by this trigger. HTTP tasks stay on
+    /// the fetch path and therefore have no module-task handler name.
+    pub fn handler_name(&self) -> Option<&str> {
+        match self {
+            Self::Http { .. } => None,
+            Self::Cron { name, .. } => Some(name),
+            Self::Queue { handler, .. } => Some(handler),
+            Self::Mcp { tool } => Some(tool),
+            Self::Agent { name } => Some(name),
+        }
     }
 }
 
@@ -222,6 +337,14 @@ pub enum TaskRpcError {
     InvalidLeaseDeadline,
     #[error("lease generation must be non-zero")]
     InvalidLeaseGeneration,
+    #[error("claimed task attempt must be non-zero")]
+    InvalidTaskAttempt,
+    #[error("task trigger fields must not be empty")]
+    InvalidTaskTrigger,
+    #[error("task trigger fields exceed {MAX_TASK_TRIGGER_BYTES} bytes in total")]
+    TaskTriggerTooLarge,
+    #[error("task input is {0} bytes; maximum is {MAX_TASK_INPUT_BYTES}")]
+    TaskInputTooLarge(usize),
     #[error("task id {0:?} is not canonical 32-character lowercase hex")]
     InvalidTaskId(String),
     #[error("task error must not exceed {MAX_ERROR_BYTES} bytes")]
@@ -257,29 +380,63 @@ fn validate_error(error: &str) -> Result<(), TaskRpcError> {
 }
 
 pub fn write_message(writer: &mut impl Write, envelope: &Envelope) -> Result<(), TaskRpcError> {
-    envelope.validate()?;
-    let bytes = serde_json::to_vec(envelope)?;
-    if bytes.len() > MAX_TASK_RPC_FRAME {
-        return Err(TaskRpcError::FrameTooLarge(bytes.len()));
-    }
+    let bytes = encode_message(envelope)?;
     writer.write_all(&(bytes.len() as u32).to_le_bytes())?;
     writer.write_all(&bytes)?;
     writer.flush()?;
     Ok(())
 }
 
+/// Validate and encode one message payload without its four-byte frame header.
+pub fn encode_message(envelope: &Envelope) -> Result<Vec<u8>, TaskRpcError> {
+    envelope.validate()?;
+    let bytes = serde_json::to_vec(envelope)?;
+    if bytes.len() > MAX_TASK_RPC_FRAME {
+        return Err(TaskRpcError::FrameTooLarge(bytes.len()));
+    }
+    Ok(bytes)
+}
+
+/// Decode and validate one message payload without its frame header.
+pub fn decode_message(bytes: &[u8]) -> Result<Envelope, TaskRpcError> {
+    if bytes.len() > MAX_TASK_RPC_FRAME {
+        return Err(TaskRpcError::FrameTooLarge(bytes.len()));
+    }
+    let envelope: Envelope = serde_json::from_slice(bytes)?;
+    envelope.validate()?;
+    Ok(envelope)
+}
+
 pub fn read_message(reader: &mut impl Read) -> Result<Envelope, TaskRpcError> {
+    read_message_opt(reader)?.ok_or_else(|| {
+        TaskRpcError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "TaskRPC stream ended before a frame",
+        ))
+    })
+}
+
+/// Read one validated message, returning `None` only when the stream ends
+/// cleanly before the next frame. EOF inside a frame remains an error.
+pub fn read_message_opt(reader: &mut impl Read) -> Result<Option<Envelope>, TaskRpcError> {
     let mut length = [0; 4];
-    reader.read_exact(&mut length)?;
+    let read = loop {
+        match reader.read(&mut length[..1]) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => break result?,
+        }
+    };
+    if read == 0 {
+        return Ok(None);
+    }
+    reader.read_exact(&mut length[1..])?;
     let length = u32::from_le_bytes(length) as usize;
     if length > MAX_TASK_RPC_FRAME {
         return Err(TaskRpcError::FrameTooLarge(length));
     }
     let mut bytes = vec![0; length];
     reader.read_exact(&mut bytes)?;
-    let envelope: Envelope = serde_json::from_slice(&bytes)?;
-    envelope.validate()?;
-    Ok(envelope)
+    Ok(Some(decode_message(&bytes)?))
 }
 
 pub fn crate_name() -> &'static str {
@@ -314,6 +471,13 @@ mod tests {
     }
 
     #[test]
+    fn payload_codec_roundtrips_without_frame_header() {
+        let expected = Envelope::new(Message::Hello { worker_id: "worker-a".into() });
+        let encoded = encode_message(&expected).unwrap();
+        assert_eq!(decode_message(&encoded).unwrap(), expected);
+    }
+
+    #[test]
     fn commit_roundtrips_with_generation_fence() {
         let expected = Envelope::new(Message::Commit {
             request_id: 10,
@@ -333,6 +497,15 @@ mod tests {
         assert!(matches!(
             read_message(&mut Cursor::new(bytes)),
             Err(TaskRpcError::FrameTooLarge(length)) if length == MAX_TASK_RPC_FRAME + 1
+        ));
+    }
+
+    #[test]
+    fn optional_reader_distinguishes_clean_and_truncated_eof() {
+        assert_eq!(read_message_opt(&mut Cursor::new(Vec::<u8>::new())).unwrap(), None);
+        assert!(matches!(
+            read_message_opt(&mut Cursor::new(vec![1, 0])),
+            Err(TaskRpcError::Io(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof
         ));
     }
 
@@ -397,6 +570,18 @@ mod tests {
                     generation: u64::from(generation) + 1,
                     lease_owner: "w".repeat(MAX_WORKER_ID_BYTES),
                 },
+                task: TaskDescriptor {
+                    trigger: WireTaskTrigger::Queue {
+                        name: "q".repeat(MAX_TASK_TRIGGER_BYTES / 3),
+                        handler: "h".repeat(MAX_TASK_TRIGGER_BYTES / 3),
+                        message_id: Some(
+                            "m".repeat(MAX_TASK_TRIGGER_BYTES - 2 * (MAX_TASK_TRIGGER_BYTES / 3)),
+                        ),
+                    },
+                    input: serde_json::Value::Null,
+                    attempt: u32::MAX,
+                    deadline_ms: Some(u64::MAX),
+                },
                 lease_until_ms: u64::MAX,
             })
             .collect();
@@ -404,5 +589,23 @@ mod tests {
         let mut bytes = Vec::new();
         write_message(&mut bytes, &envelope).unwrap();
         assert!(bytes.len() <= MAX_TASK_RPC_FRAME + 4);
+    }
+
+    #[test]
+    fn task_descriptor_rejects_unroutable_tasks() {
+        let mut task = Task::new(
+            tysel_task::TaskMeta {
+                id: TaskId(1),
+                application_id: "app".into(),
+                tenant_id: None,
+                idempotency_key: None,
+                trace_id: None,
+            },
+            TaskTrigger::Agent { name: String::new() },
+            None,
+        );
+        task.transition(tysel_task::TaskState::Queued).unwrap();
+        task.begin_attempt().unwrap();
+        assert!(matches!(TaskDescriptor::from_task(&task), Err(TaskRpcError::InvalidTaskTrigger)));
     }
 }
