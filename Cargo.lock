@@ -2660,14 +2660,17 @@ dependencies = [
  "anyhow",
  "clap",
  "notify",
+ "serde_json",
  "tokio",
  "tysel-build",
+ "tysel-cap-mcp",
  "tysel-engine",
  "tysel-engine-qjs",
  "tysel-manifest",
  "tysel-observability",
  "tysel-package",
  "tysel-runtime",
+ "tysel-task-rpc",
 ]
 
 [[package]]

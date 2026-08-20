@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -9,13 +9,32 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tysel_engine::IsolateConfig;
 use tysel_manifest::Manifest;
+#[cfg(unix)]
+use tysel_runtime::ModuleTaskService;
 use tysel_runtime::{AppIsolate, SharedPool, handle_stream, spawn_app_isolate};
+use tysel_task_rpc::TaskOutcome;
 
 const IGNORED_DIRS: &[&str] = &["node_modules", "target", "dist", ".git", "data"];
 
 struct Watch {
     rx: mpsc::UnboundedReceiver<notify::Result<Event>>,
     _watcher: RecommendedWatcher,
+}
+
+struct Loaded {
+    isolate: AppIsolate,
+    max_request_bytes: usize,
+    addr: std::net::SocketAddr,
+    websocket: bool,
+    task: Option<TaskSpec>,
+}
+
+#[derive(Clone)]
+struct TaskSpec {
+    application_id: String,
+    source: String,
+    config: IsolateConfig,
+    mcp_tools: usize,
 }
 
 pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
@@ -27,10 +46,105 @@ pub async fn run_once(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<
     serve(manifest_path, entry, false).await
 }
 
+pub async fn run_mcp(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
+    #[cfg(not(unix))]
+    {
+        let _ = (manifest_path, entry);
+        anyhow::bail!("MCP stdio currently requires a Unix host")
+    }
+    #[cfg(unix)]
+    {
+        let loaded = load(&manifest_path, entry.as_deref())?;
+        let spec = loaded.task.ok_or_else(|| anyhow!("application registers no module tasks"))?;
+        if spec.mcp_tools == 0 {
+            anyhow::bail!("application registers no MCP tools");
+        }
+        let service =
+            start_task_service(Some(spec), 1).await?.expect("task specification starts a service");
+        let endpoint = service.mcp_endpoint()?;
+        loop {
+            let message = tokio::task::spawn_blocking(|| {
+                let input = io::stdin();
+                tysel_cap_mcp::read_stdio_message(&mut input.lock())
+            })
+            .await??;
+            let Some(message) = message else {
+                break;
+            };
+            if let Some(response) = endpoint.handle_bytes(&message).await? {
+                let output = io::stdout();
+                tysel_cap_mcp::write_stdio_message(&mut output.lock(), &response)?;
+            }
+        }
+        service.shutdown().await?;
+        Ok(())
+    }
+}
+
+pub async fn run_queue(
+    manifest_path: PathBuf,
+    entry: Option<PathBuf>,
+    name: String,
+    message_id: Option<String>,
+    input: String,
+) -> Result<()> {
+    #[cfg(not(unix))]
+    {
+        let _ = (manifest_path, entry, name, message_id, input);
+        anyhow::bail!("Queue execution currently requires a Unix host")
+    }
+    #[cfg(unix)]
+    {
+        let input: serde_json::Value =
+            serde_json::from_str(&input).context("queue input must be JSON")?;
+        let loaded = load(&manifest_path, entry.as_deref())?;
+        let spec = loaded.task.ok_or_else(|| anyhow!("application registers no module tasks"))?;
+        let service =
+            start_task_service(Some(spec), 1).await?.expect("task specification starts a service");
+        let ingress = service.ingress();
+        let now_ms = u64::try_from(
+            SystemTime::now().duration_since(UNIX_EPOCH).context("system clock")?.as_millis(),
+        )
+        .context("system clock overflow")?;
+        let submitted = ingress.enqueue_queue(&name, message_id, input, now_ms).await;
+        let outcome = match submitted {
+            Ok(id) => tokio::time::timeout(
+                Duration::from_millis(ingress.request_timeout_ms().saturating_add(1_000)),
+                async {
+                    loop {
+                        if let Some(outcome) = ingress.outcome(id).await {
+                            break outcome;
+                        }
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                },
+            )
+            .await
+            .map_err(|_| anyhow!("queue task timed out")),
+            Err(error) => Err(error.into()),
+        };
+        service.shutdown().await?;
+        match outcome? {
+            TaskOutcome::Completed { result } => {
+                println!("{}", serde_json::to_string(&result)?);
+                Ok(())
+            }
+            TaskOutcome::Failed { error, .. } => anyhow::bail!("queue task failed: {error}"),
+            TaskOutcome::Canceled {} => anyhow::bail!("queue task was canceled"),
+            TaskOutcome::TimedOut {} => anyhow::bail!("queue task timed out"),
+            TaskOutcome::Suspended {} => anyhow::bail!("queue task suspended"),
+        }
+    }
+}
+
 async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> Result<()> {
-    let (isolate, max_request_bytes, addr, websocket) = load(&manifest_path, entry.as_deref())?;
-    let pool = SharedPool::with_websocket(isolate, max_request_bytes, websocket);
-    let listener = TcpListener::bind(addr).await.with_context(|| format!("bind {addr}"))?;
+    let loaded = load(&manifest_path, entry.as_deref())?;
+    let pool =
+        SharedPool::with_websocket(loaded.isolate, loaded.max_request_bytes, loaded.websocket);
+    let listener =
+        TcpListener::bind(loaded.addr).await.with_context(|| format!("bind {}", loaded.addr))?;
+    let mut task_generation = 1u64;
+    let mut task_service = start_task_service(loaded.task, task_generation).await?;
     let bound = listener.local_addr()?;
     println!("tysel listen {bound}");
     io::stdout().flush()?;
@@ -38,11 +152,23 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
         let mut changes = watch(manifest_path.parent().unwrap_or(Path::new(".")))?;
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => return Ok(()),
+                _ = tokio::signal::ctrl_c() => break,
                 _ = wait_change(&mut changes.rx) => match load(&manifest_path, entry.as_deref()) {
-                    Ok((next, max_bytes, _, websocket)) => {
-                        eprintln!("tysel reload");
-                        pool.replace_with(next, max_bytes, websocket);
+                    Ok(next) => {
+                        task_generation = task_generation.saturating_add(1);
+                        match start_task_service(next.task.clone(), task_generation).await {
+                            Ok(next_tasks) => {
+                                eprintln!("tysel reload");
+                                pool.replace_with(
+                                    next.isolate,
+                                    next.max_request_bytes,
+                                    next.websocket,
+                                );
+                                shutdown_task_service(task_service).await?;
+                                task_service = next_tasks;
+                            }
+                            Err(err) => eprintln!("error: {err:#}"),
+                        }
                     }
                     Err(err) => eprintln!("error: {err:#}"),
                 },
@@ -52,22 +178,23 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                 }
             }
         }
+        shutdown_task_service(task_service).await?;
+        return Ok(());
     }
     loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            _ = tokio::signal::ctrl_c() => break,
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("accept")?;
                 handle_stream(stream, pool.clone());
             }
         }
     }
+    shutdown_task_service(task_service).await?;
+    Ok(())
 }
 
-fn load(
-    manifest_path: &Path,
-    entry: Option<&Path>,
-) -> Result<(AppIsolate, usize, std::net::SocketAddr, bool)> {
+fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
     let manifest = Manifest::from_path(manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let root = manifest_path.parent().unwrap_or(Path::new("."));
@@ -119,7 +246,60 @@ fn load(
         .parse()
         .map_err(|_| anyhow!("invalid listen address '{}'", tap.manifest.listen))?;
     let websocket = tap.manifest.websocket && !matches!(pool, AppIsolate::Isolated(_));
-    Ok((pool, tap.manifest.max_request_bytes, addr, websocket))
+    let definitions = tysel_engine_qjs::inspect_task_module(&source, config)?;
+    let mcp_tools = definitions
+        .iter()
+        .filter(|definition| {
+            matches!(definition.kind, tysel_engine_qjs::ModuleTaskKind::Mcp { .. })
+        })
+        .count();
+    let task = (!definitions.is_empty()).then(|| TaskSpec {
+        application_id: tap.manifest.application_id.clone(),
+        source,
+        config,
+        mcp_tools,
+    });
+    Ok(Loaded {
+        isolate: pool,
+        max_request_bytes: tap.manifest.max_request_bytes,
+        addr,
+        websocket,
+        task,
+    })
+}
+
+#[cfg(unix)]
+async fn start_task_service(
+    spec: Option<TaskSpec>,
+    generation: u64,
+) -> Result<Option<ModuleTaskService>> {
+    let Some(spec) = spec else {
+        return Ok(None);
+    };
+    let socket = std::env::temp_dir()
+        .join(format!("tysel-dev-task-{}-{generation}.sock", std::process::id()));
+    Ok(Some(ModuleTaskService::start(socket, spec.application_id, spec.source, spec.config).await?))
+}
+
+#[cfg(not(unix))]
+async fn start_task_service(spec: Option<TaskSpec>, _generation: u64) -> Result<Option<()>> {
+    if spec.is_some() {
+        anyhow::bail!("module tasks currently require a Unix host")
+    }
+    Ok(None)
+}
+
+#[cfg(unix)]
+async fn shutdown_task_service(service: Option<ModuleTaskService>) -> Result<()> {
+    if let Some(service) = service {
+        service.shutdown().await?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn shutdown_task_service(_service: Option<()>) -> Result<()> {
+    Ok(())
 }
 
 fn watch(root: &Path) -> Result<Watch> {

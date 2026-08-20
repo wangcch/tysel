@@ -51,6 +51,23 @@ enum Commands {
         #[arg(long, default_value = "tysel.toml")]
         manifest: PathBuf,
     },
+    /// Serve registered MCP tools over newline-delimited stdio.
+    Mcp {
+        entry: Option<PathBuf>,
+        #[arg(long, default_value = "tysel.toml")]
+        manifest: PathBuf,
+    },
+    /// Submit one message to a registered Queue handler and print its result.
+    Queue {
+        name: String,
+        #[arg(long, default_value = "null")]
+        input: String,
+        #[arg(long)]
+        message_id: Option<String>,
+        entry: Option<PathBuf>,
+        #[arg(long, default_value = "tysel.toml")]
+        manifest: PathBuf,
+    },
     /// Run application tests.
     Test,
     /// Bundle the app and emit a single native executable.
@@ -111,6 +128,20 @@ fn run() -> Result<()> {
                 .context("tokio runtime")?;
             runtime.block_on(dev::run_once(manifest, entry))
         }
+        Commands::Mcp { entry, manifest } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("tokio runtime")?;
+            runtime.block_on(dev::run_mcp(manifest, entry))
+        }
+        Commands::Queue { name, input, message_id, entry, manifest } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("tokio runtime")?;
+            runtime.block_on(dev::run_queue(manifest, entry, name, message_id, input))
+        }
         Commands::Build { entry, stub, output, manifest, target, profile, release } => {
             build::run(manifest, entry, stub, output, target, profile, release)
         }
@@ -136,7 +167,9 @@ fn unimplemented_command(command: Commands) -> Result<()> {
         | Commands::Build { .. }
         | Commands::Check { .. }
         | Commands::Dev { .. }
-        | Commands::Run { .. } => unreachable!(),
+        | Commands::Run { .. }
+        | Commands::Mcp { .. }
+        | Commands::Queue { .. } => unreachable!(),
     };
     anyhow::bail!("`tysel {name}` is not implemented yet (see roadmap.md §21)")
 }

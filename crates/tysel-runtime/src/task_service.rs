@@ -175,7 +175,18 @@ impl McpTaskEndpoint {
     /// Handle one decoded MCP request. Notifications return `None`; a tool call
     /// is queued and its fenced terminal outcome becomes the MCP result.
     pub async fn handle(&self, request: serde_json::Value) -> Option<serde_json::Value> {
-        match self.server.handle(request) {
+        self.handle_dispatch(self.server.handle(request)).await
+    }
+
+    pub async fn handle_bytes(
+        &self,
+        request: &[u8],
+    ) -> Result<Option<serde_json::Value>, tysel_cap_mcp::McpError> {
+        Ok(self.handle_dispatch(self.server.handle_bytes(request)?).await)
+    }
+
+    async fn handle_dispatch(&self, dispatch: McpDispatch) -> Option<serde_json::Value> {
+        match dispatch {
             McpDispatch::Response(response) => Some(response),
             McpDispatch::Notification => None,
             McpDispatch::ToolCall(call) => {

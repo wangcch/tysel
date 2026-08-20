@@ -175,6 +175,13 @@ Responses URL, `TYSEL_LLM_MODEL` to its upstream model, and optionally
 `TYSEL_LLM_ALIAS` (default `default`) and `TYSEL_LLM_SECRET` (default
 `OPENAI_API_KEY`). The secret name must also be declared in
 `[permissions].secrets`; raw credentials never enter the TAP or QuickJS heap.
+`tysel dev` and `tysel run` start registered Cron/Queue/MCP workers alongside
+HTTP and replace the task plane on a successful source reload. `tysel mcp`
+serves registered tools over bounded newline-delimited stdio; it emits only MCP
+JSON on stdout and shuts the local TaskRPC service down at EOF.
+`tysel queue <name> --input '<json>' [--message-id <id>]` submits one message
+to a registered Queue handler, waits for its fenced terminal outcome, and
+prints the JSON result. Scheduler capacity remains the backpressure boundary.
 
 Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
 

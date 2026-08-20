@@ -6,6 +6,142 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(unix)]
+#[test]
+fn mcp_stdio_discovers_lists_and_executes_a_tool() {
+    let dir = temp_app("mcp-stdio");
+    write_js_app(
+        &dir,
+        r#"export default {
+  async fetch() { return new Response("ok"); },
+  tasks: {
+    analyze: {
+      kind: "mcp",
+      description: "Analyze a customer",
+      input: { customerId: "string" },
+      handler(input) { return { customer: input.customerId, risk: "low" }; },
+    },
+  },
+};
+"#,
+    );
+    let mut child = Command::new(cli_exe())
+        .args(["mcp", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn tysel mcp");
+    let meta = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}"#;
+    let requests = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{{{meta}}}}}\n\
+         {{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{{{meta}}}}}\n\
+         {{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{{\"name\":\"analyze\",\"arguments\":{{\"customerId\":\"customer-1\"}},{meta}}}}}\n"
+    );
+    child.stdin.take().unwrap().write_all(requests.as_bytes()).unwrap();
+    let output = child.wait_with_output().expect("wait for MCP server");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let responses: Vec<serde_json::Value> =
+        stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(responses.len(), 3, "{stdout}");
+    assert_eq!(responses[0]["result"]["supportedVersions"][0], "2026-07-28");
+    assert_eq!(responses[1]["result"]["tools"][0]["name"], "analyze");
+    assert_eq!(responses[2]["result"]["structuredContent"]["customer"], "customer-1");
+}
+
+#[cfg(unix)]
+#[test]
+fn run_starts_registered_cron_tasks() {
+    let dir = temp_app("run-cron");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("data")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "cron-service"
+entry = "src/index.js"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+
+[permissions]
+fs_write = ["./data"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        r#"export default {
+  async fetch() { return new Response("ok"); },
+  tasks: {
+    heartbeat: {
+      kind: "cron",
+      expression: "* * * * *",
+      async handler() { await tysel.fs.write("data/cron.txt", "ran"); },
+    },
+  },
+};
+"#,
+    )
+    .unwrap();
+    let mut child = Command::new(cli_exe())
+        .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn tysel run");
+    let stdout = child.stdout.take().expect("stdout");
+    let _ = wait_listen(stdout, Duration::from_secs(8));
+    let marker = dir.join("data/cron.txt");
+    let started = std::time::Instant::now();
+    while !marker.exists() && started.elapsed() < Duration::from_secs(3) {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_eq!(fs::read_to_string(marker).unwrap(), "ran");
+}
+
+#[cfg(unix)]
+#[test]
+fn queue_command_submits_json_and_prints_the_handler_result() {
+    let dir = temp_app("queue-command");
+    write_js_app(
+        &dir,
+        r#"export default {
+  async fetch() { return new Response("ok"); },
+  tasks: {
+    consume: {
+      kind: "queue",
+      name: "orders",
+      handler(input, ctx) { return { order: input.order, requestId: ctx.requestId }; },
+    },
+  },
+};
+"#,
+    );
+    let output = Command::new(cli_exe())
+        .args([
+            "queue",
+            "orders",
+            "--input",
+            r#"{"order":42}"#,
+            "--message-id",
+            "message-42",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+        ])
+        .output()
+        .expect("run tysel queue");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["order"].as_f64(), Some(42.0));
+    assert!(result["requestId"].as_str().is_some_and(|id| id.len() == 32));
+}
+
 #[test]
 fn check_reports_ok_for_a_javascript_service() {
     let dir = temp_app("check-ok");
