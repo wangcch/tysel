@@ -12,7 +12,7 @@ mod seccomp;
 mod supervisor;
 mod worker;
 
-pub use handler::IsolatedHttpPool;
+pub use handler::{IsolatedHttpPool, IsolatedTaskPool};
 pub use supervisor::{IsolateError, MAX_ISOLATED_HTTP_BODY, Supervisor, WorkerSpec, locate_worker};
 
 pub fn crate_name() -> &'static str {

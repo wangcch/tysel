@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 use tysel_engine::{HttpRequest, InterruptReason, IsolateConfig, Value};
 use tysel_engine_qjs::{
     IoCompletion, IoRequest, IsolateCancel, IsolatePool, OpId, eval_with_reactor_deadline,
-    open_bridge,
+    inspect_task_module, invoke_task_module, open_bridge,
 };
-use tysel_ipc::{Message, WireValue, read_message, write_message};
+use tysel_ipc::{Message, TaskErrorKind, WireValue, read_message, write_message};
 use tysel_policy::Policy;
 
 use crate::landlock;
@@ -36,6 +36,7 @@ pub fn run() -> Result<(), IsolateError> {
 
     let mut config = IsolateConfig::default();
     let mut handler: Option<IsolatePool> = None;
+    let mut task_source: Option<String> = None;
     loop {
         let message = stdin_rx.recv().map_err(|err| IsolateError::Worker(err.to_string()))?;
         match message {
@@ -86,6 +87,41 @@ pub fn run() -> Result<(), IsolateError> {
                 };
                 write_locked(&stdout, &reply)?;
             }
+            Message::TaskLoad { id, source, secret_names } => {
+                configure_isolated_capabilities(secret_names);
+                let reply = match inspect_task_module(&source, config) {
+                    Ok(definitions) => match serde_json::to_string(&definitions) {
+                        Ok(definitions_json) => {
+                            task_source = Some(source);
+                            Message::TaskLoaded { id, definitions_json }
+                        }
+                        Err(error) => {
+                            task_error_reply(id, error.to_string(), TaskErrorKind::Failed)
+                        }
+                    },
+                    Err(error) => task_engine_error_reply(id, error),
+                };
+                write_locked(&stdout, &reply)?;
+            }
+            Message::TaskInvoke { id, task_name, input_json, request_id, deadline_ms } => {
+                let reply = match task_source.as_deref() {
+                    Some(source) => match invoke_task_module(
+                        source,
+                        &task_name,
+                        &input_json,
+                        &request_id,
+                        deadline_ms,
+                        config,
+                    ) {
+                        Ok(value) => Message::TaskOk { id, value: WireValue::from(value) },
+                        Err(error) => task_engine_error_reply(id, error),
+                    },
+                    None => {
+                        task_error_reply(id, "task module not loaded".into(), TaskErrorKind::Failed)
+                    }
+                };
+                write_locked(&stdout, &reply)?;
+            }
             Message::Eval { id, source } => {
                 let reply = match eval_source(&source, config, &stdout, &stdin_rx) {
                     Ok(value) => Message::EvalOk { id, value: WireValue::from(value) },
@@ -117,6 +153,11 @@ fn load_handler(
     secret_names: Vec<String>,
     config: IsolateConfig,
 ) -> Result<IsolatePool, IsolateError> {
+    configure_isolated_capabilities(secret_names.clone());
+    IsolatePool::spawn(1, source, config).map_err(|err| IsolateError::Worker(err.to_string()))
+}
+
+fn configure_isolated_capabilities(secret_names: Vec<String>) {
     tysel_engine_qjs::configure_execution_profile("isolated");
     tysel_engine_qjs::configure_fetch_hosts(Vec::new());
     tysel_engine_qjs::configure_postgres(None, false);
@@ -126,7 +167,22 @@ fn load_handler(
         secrets.insert(name, String::new());
     }
     tysel_engine_qjs::configure_secrets(secrets);
-    IsolatePool::spawn(1, source, config).map_err(|err| IsolateError::Worker(err.to_string()))
+}
+
+fn task_engine_error_reply(id: u64, error: tysel_engine::EngineError) -> Message {
+    let kind = match error {
+        tysel_engine::EngineError::Interrupted(InterruptReason::Timeout) => TaskErrorKind::TimedOut,
+        tysel_engine::EngineError::Interrupted(InterruptReason::Cancelled) => {
+            TaskErrorKind::Canceled
+        }
+        tysel_engine::EngineError::Suspended => TaskErrorKind::Suspended,
+        _ => TaskErrorKind::Failed,
+    };
+    task_error_reply(id, error.to_string(), kind)
+}
+
+fn task_error_reply(id: u64, error: String, kind: TaskErrorKind) -> Message {
+    Message::TaskErr { id, error, kind }
 }
 
 fn eval_source(

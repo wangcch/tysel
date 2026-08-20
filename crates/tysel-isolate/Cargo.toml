@@ -11,6 +11,7 @@ description = "Process-isolated worker and Linux sandbox (M2)."
 workspace = true
 
 [dependencies]
+serde_json.workspace = true
 thiserror.workspace = true
 tysel-engine.workspace = true
 tysel-engine-qjs.workspace = true

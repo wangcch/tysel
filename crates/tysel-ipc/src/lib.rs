@@ -54,6 +54,31 @@ pub enum Message {
     LoadErr {
         error: String,
     },
+    TaskLoad {
+        id: u64,
+        source: String,
+        secret_names: Vec<String>,
+    },
+    TaskLoaded {
+        id: u64,
+        definitions_json: String,
+    },
+    TaskInvoke {
+        id: u64,
+        task_name: String,
+        input_json: String,
+        request_id: String,
+        deadline_ms: u64,
+    },
+    TaskOk {
+        id: u64,
+        value: WireValue,
+    },
+    TaskErr {
+        id: u64,
+        error: String,
+        kind: TaskErrorKind,
+    },
     Http {
         id: u64,
         method: String,
@@ -91,6 +116,15 @@ pub enum Message {
     Shutdown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskErrorKind {
+    Failed,
+    TimedOut,
+    Canceled,
+    Suspended,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum WireValue {
@@ -98,6 +132,9 @@ pub enum WireValue {
     Bool { v: bool },
     Number { v: f64 },
     String { v: String },
+    Bytes { v: Vec<u8> },
+    Array { v: Vec<WireValue> },
+    Record { v: Vec<(String, WireValue)> },
 }
 
 impl From<Value> for WireValue {
@@ -107,9 +144,11 @@ impl From<Value> for WireValue {
             Value::Bool(v) => Self::Bool { v },
             Value::Number(v) => Self::Number { v },
             Value::String(v) => Self::String { v },
-            Value::Bytes(_) | Value::Array(_) | Value::Record(_) => {
-                Self::String { v: format!("unsupported:{value:?}") }
-            }
+            Value::Bytes(v) => Self::Bytes { v },
+            Value::Array(v) => Self::Array { v: v.into_iter().map(Self::from).collect() },
+            Value::Record(v) => Self::Record {
+                v: v.into_iter().map(|(name, value)| (name, Self::from(value))).collect(),
+            },
         }
     }
 }
@@ -121,6 +160,11 @@ impl From<WireValue> for Value {
             WireValue::Bool { v } => Self::Bool(v),
             WireValue::Number { v } => Self::Number(v),
             WireValue::String { v } => Self::String(v),
+            WireValue::Bytes { v } => Self::Bytes(v),
+            WireValue::Array { v } => Self::Array(v.into_iter().map(Self::from).collect()),
+            WireValue::Record { v } => {
+                Self::Record(v.into_iter().map(|(name, value)| (name, Self::from(value))).collect())
+            }
         }
     }
 }
@@ -204,6 +248,24 @@ mod tests {
                 request_id: 9,
             }
         );
+    }
+
+    #[test]
+    fn roundtrip_task_message_and_structured_value() {
+        let message = Message::TaskOk {
+            id: 11,
+            value: WireValue::Record {
+                v: vec![(
+                    "items".into(),
+                    WireValue::Array {
+                        v: vec![WireValue::Number { v: 1.0 }, WireValue::Bool { v: true }],
+                    },
+                )],
+            },
+        };
+        let mut buf = Vec::new();
+        write_message(&mut buf, &message).unwrap();
+        assert_eq!(read_message(&mut Cursor::new(buf)).unwrap(), message);
     }
 
     #[test]

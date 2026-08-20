@@ -15,6 +15,8 @@ use tokio::{
 use tysel_engine::{EngineError, InterruptReason, IsolateConfig, Value};
 #[cfg(unix)]
 use tysel_engine_qjs::{inspect_task_module, invoke_task_module};
+#[cfg(unix)]
+use tysel_isolate::{IsolateError, IsolatedTaskPool};
 use tysel_scheduler::{Scheduler, SchedulerError, TaskClaim};
 use tysel_task::{Task, TaskId, TaskState};
 use tysel_task_rpc::{
@@ -479,9 +481,24 @@ pub enum TaskRpcWorkerError {
 #[cfg(unix)]
 pub struct TaskModuleWorker {
     rpc: TaskRpcWorker,
-    source: Arc<str>,
-    config: IsolateConfig,
+    executor: TaskModuleExecutor,
     lease_ms: u64,
+}
+
+#[cfg(unix)]
+#[derive(Clone)]
+enum TaskModuleExecutor {
+    Trusted { source: Arc<str>, config: IsolateConfig },
+    Isolated { pool: Arc<IsolatedTaskPool>, config: IsolateConfig },
+}
+
+#[cfg(unix)]
+impl TaskModuleExecutor {
+    fn config(&self) -> IsolateConfig {
+        match self {
+            Self::Trusted { config, .. } | Self::Isolated { config, .. } => *config,
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -519,7 +536,19 @@ impl TaskModuleWorker {
         tokio::task::spawn_blocking(move || inspect_task_module(&inspection_source, config))
             .await??;
         let rpc = TaskRpcWorker::connect(socket_path, worker_id).await?;
-        Ok(Self { rpc, source, config, lease_ms })
+        Ok(Self { rpc, executor: TaskModuleExecutor::Trusted { source, config }, lease_ms })
+    }
+
+    pub async fn connect_isolated(
+        socket_path: impl AsRef<Path>,
+        worker_id: impl Into<String>,
+        pool: Arc<IsolatedTaskPool>,
+        config: IsolateConfig,
+        lease_ms: u64,
+    ) -> Result<Self, TaskModuleWorkerError> {
+        validate_module_lease(config, lease_ms)?;
+        let rpc = TaskRpcWorker::connect(socket_path, worker_id).await?;
+        Ok(Self { rpc, executor: TaskModuleExecutor::Isolated { pool, config }, lease_ms })
     }
 
     pub fn worker_id(&self) -> &str {
@@ -532,7 +561,7 @@ impl TaskModuleWorker {
         let Some(lease) = self.rpc.claim(self.lease_ms, 1).await?.pop() else {
             return Ok(false);
         };
-        let outcome = execute_module_lease(Arc::clone(&self.source), self.config, &lease).await;
+        let outcome = execute_module_lease(self.executor.clone(), &lease).await;
         if !self.rpc.commit(lease.token, outcome).await? {
             return Err(TaskModuleWorkerError::LeaseLost);
         }
@@ -541,11 +570,7 @@ impl TaskModuleWorker {
 }
 
 #[cfg(unix)]
-async fn execute_module_lease(
-    source: Arc<str>,
-    config: IsolateConfig,
-    lease: &TaskLease,
-) -> TaskOutcome {
+async fn execute_module_lease(executor: TaskModuleExecutor, lease: &TaskLease) -> TaskOutcome {
     let Some(handler) = lease.task.trigger.handler_name().map(str::to_owned) else {
         return failed_outcome("HTTP tasks cannot run in a module task worker", false);
     };
@@ -554,12 +579,18 @@ async fn execute_module_lease(
         Err(error) => return failed_outcome(&error.to_string(), false),
     };
     let request_id = lease.token.task_id.as_str().to_owned();
+    let config = executor.config();
     let deadline_ms = lease
         .task
         .deadline_ms
         .unwrap_or_else(|| task_rpc_now_ms().saturating_add(config.request_timeout_ms.max(1)));
-    let result = tokio::task::spawn_blocking(move || {
-        invoke_task_module(&source, &handler, &input_json, &request_id, deadline_ms, config)
+    let result = tokio::task::spawn_blocking(move || match executor {
+        TaskModuleExecutor::Trusted { source, config } => {
+            invoke_task_module(&source, &handler, &input_json, &request_id, deadline_ms, config)
+        }
+        TaskModuleExecutor::Isolated { pool, .. } => pool
+            .invoke_sync(&handler, &input_json, &request_id, deadline_ms)
+            .map_err(isolated_engine_error),
     })
     .await;
     match result {
@@ -585,6 +616,28 @@ async fn execute_module_lease(
         Ok(Err(EngineError::Suspended)) => TaskOutcome::Suspended {},
         Ok(Err(error)) => failed_outcome(&error.to_string(), false),
         Err(error) => failed_outcome(&error.to_string(), true),
+    }
+}
+
+#[cfg(unix)]
+fn validate_module_lease(
+    config: IsolateConfig,
+    lease_ms: u64,
+) -> Result<(), TaskModuleWorkerError> {
+    let minimum_lease = config.request_timeout_ms.checked_add(1_000);
+    if minimum_lease.is_none_or(|minimum| lease_ms < minimum)
+        || lease_ms > tysel_task_rpc::MAX_LEASE_MS
+    {
+        return Err(TaskModuleWorkerError::LeaseTooShort);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn isolated_engine_error(error: IsolateError) -> EngineError {
+    match error {
+        IsolateError::Engine(error) => error,
+        error => EngineError::Isolate(error.to_string()),
     }
 }
 

@@ -3,13 +3,51 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use tysel_engine::{HttpRequest, Value};
-use tysel_isolate::{IsolatedHttpPool, Supervisor, WorkerSpec};
+use tysel_isolate::{IsolatedHttpPool, IsolatedTaskPool, Supervisor, WorkerSpec};
 
 #[test]
 fn eval_echo_runs_in_broker() {
     let mut supervisor = supervisor();
     let value = supervisor.eval(r#"(async () => tysel.echo("hello"))()"#).expect("eval");
     assert_eq!(value, Value::String("hello".into()));
+}
+
+#[test]
+fn isolated_task_module_runs_and_recovers_in_worker() {
+    let source = r#"
+export default {
+  tasks: {
+    echo: {
+      kind: "queue",
+      name: "events",
+      async handler(input) { return { value: await tysel.echo(input.value) }; }
+    }
+  }
+};
+"#;
+    let config = tysel_engine::IsolateConfig {
+        memory_limit_bytes: 16 * 1024 * 1024,
+        cpu_ms_per_turn: 2_000,
+        request_timeout_ms: 5_000,
+    };
+    let (pool, definitions) =
+        IsolatedTaskPool::spawn_from_config(worker_exe(), source, config, Vec::new())
+            .expect("spawn isolated task worker");
+    assert_eq!(definitions.len(), 1);
+    let deadline =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+            as u64
+            + 5_000;
+    let value = pool
+        .invoke_sync("echo", r#"{"value":"ready"}"#, "task-1", deadline)
+        .expect("invoke isolated task");
+    assert_eq!(value, Value::Record(vec![("value".into(), Value::String("ready".into()))]));
+
+    pool.kill_worker().expect("kill task worker");
+    let value = pool
+        .invoke_sync("echo", r#"{"value":"again"}"#, "task-2", deadline)
+        .expect("invoke after worker restart");
+    assert_eq!(value, Value::Record(vec![("value".into(), Value::String("again".into()))]));
 }
 
 #[test]

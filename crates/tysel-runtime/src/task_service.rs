@@ -5,11 +5,12 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use tokio::net::UnixListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 use tysel_cap_mcp::{McpDispatch, McpServer};
 use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::inspect_task_module;
+use tysel_isolate::{IsolatedTaskPool, locate_worker};
 use tysel_task_rpc::TaskOutcome;
 
 use crate::{
@@ -29,6 +30,7 @@ pub struct ModuleTaskService {
     shutdown: TaskRpcServerShutdown,
     tasks: Vec<JoinHandle<Result<(), ModuleTaskServiceError>>>,
     socket_path: PathBuf,
+    failure: watch::Receiver<Option<String>>,
 }
 
 impl ModuleTaskService {
@@ -37,12 +39,16 @@ impl ModuleTaskService {
         application_id: impl Into<String>,
         source: impl Into<String>,
         config: IsolateConfig,
+        execution_profile: impl Into<String>,
+        secret_names: Vec<String>,
     ) -> Result<Self, ModuleTaskServiceError> {
         Self::start_with_capacity(
             socket_path,
             application_id,
             source,
             config,
+            execution_profile,
+            secret_names,
             DEFAULT_QUEUE_CAPACITY,
         )
         .await
@@ -53,14 +59,34 @@ impl ModuleTaskService {
         application_id: impl Into<String>,
         source: impl Into<String>,
         config: IsolateConfig,
+        execution_profile: impl Into<String>,
+        secret_names: Vec<String>,
         queue_capacity: usize,
     ) -> Result<Self, ModuleTaskServiceError> {
         let socket_path = socket_path.as_ref().to_owned();
         let source = source.into();
-        let inspection_source = source.clone();
-        let definitions =
-            tokio::task::spawn_blocking(move || inspect_task_module(&inspection_source, config))
-                .await??;
+        let execution_profile = execution_profile.into();
+        let (definitions, isolated_pool) = if execution_profile.eq_ignore_ascii_case("isolated") {
+            let inspection_source = source.clone();
+            let (pool, definitions) = tokio::task::spawn_blocking(move || {
+                let worker = locate_worker()?;
+                IsolatedTaskPool::spawn_from_config(
+                    worker,
+                    &inspection_source,
+                    config,
+                    secret_names,
+                )
+            })
+            .await??;
+            (definitions, Some(Arc::new(pool)))
+        } else {
+            let inspection_source = source.clone();
+            let definitions = tokio::task::spawn_blocking(move || {
+                inspect_task_module(&inspection_source, config)
+            })
+            .await??;
+            (definitions, None)
+        };
         let registry = TaskRegistry::from_definitions(&definitions)?;
         let broker = Arc::new(Mutex::new(TaskRpcBroker::new(queue_capacity)?));
         let seed = task_id_seed()?;
@@ -76,10 +102,13 @@ impl ModuleTaskService {
             ModuleTaskServiceError::Socket { path: socket_path.clone(), source }
         })?;
         let shutdown = TaskRpcServerShutdown::new();
+        let (failure_tx, failure) = watch::channel(None);
         let server_shutdown = shutdown.clone();
+        let server_failure = failure_tx.clone();
         let server = tokio::spawn(async move {
             let result = serve_task_rpc_unix(listener, broker, server_shutdown.clone()).await;
-            if result.is_err() {
+            if let Err(error) = &result {
+                server_failure.send_replace(Some(error.to_string()));
                 server_shutdown.cancel();
             }
             result.map_err(ModuleTaskServiceError::Server)
@@ -90,15 +119,17 @@ impl ModuleTaskService {
             .max(1)
             .checked_add(5_000)
             .ok_or(ModuleTaskServiceError::LeaseOverflow)?;
-        let worker = match TaskModuleWorker::connect(
-            &socket_path,
-            format!("module-{}", std::process::id()),
-            source,
-            config,
-            lease_ms,
-        )
-        .await
-        {
+        let worker_id = format!("module-{}", std::process::id());
+        let worker = match isolated_pool {
+            Some(pool) => {
+                TaskModuleWorker::connect_isolated(&socket_path, worker_id, pool, config, lease_ms)
+                    .await
+            }
+            None => {
+                TaskModuleWorker::connect(&socket_path, worker_id, source, config, lease_ms).await
+            }
+        };
+        let worker = match worker {
             Ok(worker) => worker,
             Err(error) => {
                 shutdown.cancel();
@@ -109,9 +140,11 @@ impl ModuleTaskService {
         };
 
         let worker_shutdown = shutdown.clone();
+        let worker_failure = failure_tx;
         let worker_task = tokio::spawn(async move {
             let result = run_worker(worker, worker_shutdown.clone()).await;
-            if result.is_err() {
+            if let Err(error) = &result {
+                worker_failure.send_replace(Some(error.to_string()));
                 worker_shutdown.cancel();
             }
             result
@@ -123,7 +156,13 @@ impl ModuleTaskService {
             Ok(())
         });
 
-        Ok(Self { ingress, shutdown, tasks: vec![server, worker_task, cron_task], socket_path })
+        Ok(Self {
+            ingress,
+            shutdown,
+            tasks: vec![server, worker_task, cron_task],
+            socket_path,
+            failure,
+        })
     }
 
     pub fn ingress(&self) -> Arc<TaskIngress> {
@@ -136,6 +175,20 @@ impl ModuleTaskService {
 
     pub fn mcp_endpoint(&self) -> Result<McpTaskEndpoint, ModuleTaskServiceError> {
         McpTaskEndpoint::new(Arc::clone(&self.ingress))
+    }
+
+    /// Resolve when a TaskRPC or module-worker failure makes the task plane
+    /// unhealthy. Callers should terminate or restart the owning service.
+    pub async fn failed(&self) -> ModuleTaskServiceError {
+        let mut failure = self.failure.clone();
+        loop {
+            if let Some(error) = failure.borrow().clone() {
+                return ModuleTaskServiceError::TaskPlane(error);
+            }
+            if failure.changed().await.is_err() {
+                return ModuleTaskServiceError::TaskPlane("task plane stopped unexpectedly".into());
+            }
+        }
     }
 
     pub async fn shutdown(mut self) -> Result<(), ModuleTaskServiceError> {
@@ -324,6 +377,8 @@ fn remove_socket(path: &Path) -> Result<(), ModuleTaskServiceError> {
 pub enum ModuleTaskServiceError {
     #[error(transparent)]
     Engine(#[from] tysel_engine::EngineError),
+    #[error(transparent)]
+    Isolate(#[from] tysel_isolate::IsolateError),
     #[error("task module inspection panicked or was canceled: {0}")]
     Inspection(#[from] tokio::task::JoinError),
     #[error(transparent)]
@@ -338,6 +393,8 @@ pub enum ModuleTaskServiceError {
     Mcp(#[from] tysel_cap_mcp::McpError),
     #[error("task service background task panicked or was canceled: {0}")]
     Background(tokio::task::JoinError),
+    #[error("task plane failed: {0}")]
+    TaskPlane(String),
     #[error("failed to use task socket {path}: {source}")]
     Socket { path: PathBuf, source: std::io::Error },
     #[error("task lease duration overflow")]
@@ -387,6 +444,8 @@ export default {
                 cpu_ms_per_turn: 50,
                 request_timeout_ms: 1_000,
             },
+            "service",
+            Vec::new(),
             4,
         )
         .await

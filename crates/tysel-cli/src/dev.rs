@@ -34,7 +34,8 @@ struct TaskSpec {
     application_id: String,
     source: String,
     config: IsolateConfig,
-    mcp_tools: usize,
+    execution_profile: String,
+    secret_names: Vec<String>,
 }
 
 pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
@@ -56,11 +57,13 @@ pub async fn run_mcp(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<(
     {
         let loaded = load(&manifest_path, entry.as_deref())?;
         let spec = loaded.task.ok_or_else(|| anyhow!("application registers no module tasks"))?;
-        if spec.mcp_tools == 0 {
+        let service = start_task_service(Some(spec), 1)
+            .await?
+            .ok_or_else(|| anyhow!("application registers no module tasks"))?;
+        if service.ingress().registry().mcp_tools().next().is_none() {
+            service.shutdown().await?;
             anyhow::bail!("application registers no MCP tools");
         }
-        let service =
-            start_task_service(Some(spec), 1).await?.expect("task specification starts a service");
         let endpoint = service.mcp_endpoint()?;
         loop {
             let message = tokio::task::spawn_blocking(|| {
@@ -99,8 +102,9 @@ pub async fn run_queue(
             serde_json::from_str(&input).context("queue input must be JSON")?;
         let loaded = load(&manifest_path, entry.as_deref())?;
         let spec = loaded.task.ok_or_else(|| anyhow!("application registers no module tasks"))?;
-        let service =
-            start_task_service(Some(spec), 1).await?.expect("task specification starts a service");
+        let service = start_task_service(Some(spec), 1)
+            .await?
+            .ok_or_else(|| anyhow!("application registers no module tasks"))?;
         let ingress = service.ingress();
         let now_ms = u64::try_from(
             SystemTime::now().duration_since(UNIX_EPOCH).context("system clock")?.as_millis(),
@@ -153,6 +157,10 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => break,
+                error = task_service_failure(task_service.as_ref()) => {
+                    shutdown_task_service(task_service).await?;
+                    return Err(error);
+                }
                 _ = wait_change(&mut changes.rx) => match load(&manifest_path, entry.as_deref()) {
                     Ok(next) => {
                         task_generation = task_generation.saturating_add(1);
@@ -184,6 +192,10 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => break,
+            error = task_service_failure(task_service.as_ref()) => {
+                shutdown_task_service(task_service).await?;
+                return Err(error);
+            }
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("accept")?;
                 handle_stream(stream, pool.clone());
@@ -246,18 +258,17 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
         .parse()
         .map_err(|_| anyhow!("invalid listen address '{}'", tap.manifest.listen))?;
     let websocket = tap.manifest.websocket && !matches!(pool, AppIsolate::Isolated(_));
-    let definitions = tysel_engine_qjs::inspect_task_module(&source, config)?;
-    let mcp_tools = definitions
-        .iter()
-        .filter(|definition| {
-            matches!(definition.kind, tysel_engine_qjs::ModuleTaskKind::Mcp { .. })
-        })
-        .count();
-    let task = (!definitions.is_empty()).then(|| TaskSpec {
+    // Inspection of isolated modules must happen inside tysel-worker. Keep the
+    // candidate here; start_task_service will discard an empty registry after
+    // performing profile-correct inspection.
+    let has_tasks = tap.manifest.execution_profile.eq_ignore_ascii_case("isolated")
+        || !tysel_engine_qjs::inspect_task_module(&source, config)?.is_empty();
+    let task = has_tasks.then(|| TaskSpec {
         application_id: tap.manifest.application_id.clone(),
         source,
         config,
-        mcp_tools,
+        execution_profile: tap.manifest.execution_profile.clone(),
+        secret_names: tap.manifest.secret_names.clone(),
     });
     Ok(Loaded {
         isolate: pool,
@@ -278,7 +289,28 @@ async fn start_task_service(
     };
     let socket = std::env::temp_dir()
         .join(format!("tysel-dev-task-{}-{generation}.sock", std::process::id()));
-    Ok(Some(ModuleTaskService::start(socket, spec.application_id, spec.source, spec.config).await?))
+    let service = ModuleTaskService::start(
+        socket,
+        spec.application_id,
+        spec.source,
+        spec.config,
+        spec.execution_profile,
+        spec.secret_names,
+    )
+    .await?;
+    if service.ingress().registry().is_empty() {
+        service.shutdown().await?;
+        return Ok(None);
+    }
+    Ok(Some(service))
+}
+
+#[cfg(unix)]
+async fn task_service_failure(service: Option<&ModuleTaskService>) -> anyhow::Error {
+    match service {
+        Some(service) => anyhow!(service.failed().await),
+        None => std::future::pending().await,
+    }
 }
 
 #[cfg(not(unix))]

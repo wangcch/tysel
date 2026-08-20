@@ -3,8 +3,9 @@ use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use tysel_engine::{HttpHead, HttpRequest, IsolateConfig, Value};
-use tysel_ipc::{IpcError, Message, WireValue, read_message, write_message};
+use tysel_engine::{EngineError, HttpHead, HttpRequest, InterruptReason, IsolateConfig, Value};
+use tysel_engine_qjs::ModuleTaskDefinition;
+use tysel_ipc::{IpcError, Message, TaskErrorKind, WireValue, read_message, write_message};
 
 use crate::broker::Broker;
 
@@ -24,6 +25,8 @@ pub enum IsolateError {
     Broker(String),
     #[error("resource limit: {0}")]
     Limit(String),
+    #[error(transparent)]
+    Engine(#[from] EngineError),
     #[error(
         "worker binary not found; set TYSEL_WORKER or place tysel-worker next to the tysel binary"
     )]
@@ -95,6 +98,8 @@ pub struct Supervisor {
     child: Option<WorkerConn>,
     handler_source: Option<String>,
     handler_secret_names: Vec<String>,
+    task_source: Option<String>,
+    task_secret_names: Vec<String>,
 }
 
 struct WorkerConn {
@@ -122,6 +127,8 @@ impl Supervisor {
             child: None,
             handler_source: None,
             handler_secret_names: Vec::new(),
+            task_source: None,
+            task_secret_names: Vec::new(),
         };
         supervisor.ensure_worker()?;
         Ok(supervisor)
@@ -181,6 +188,92 @@ impl Supervisor {
                 .http_inner(request)
                 .map_err(|retry| IsolateError::Worker(format!("{err}; retry: {retry}"))),
             Err(err) => Err(err),
+        }
+    }
+
+    pub fn load_task_module(
+        &mut self,
+        source: &str,
+        secret_names: Vec<String>,
+    ) -> Result<Vec<ModuleTaskDefinition>, IsolateError> {
+        self.ensure_worker()?;
+        self.task_source = Some(source.to_owned());
+        self.task_secret_names = secret_names;
+        self.send_task_load()
+    }
+
+    pub fn invoke_task(
+        &mut self,
+        task_name: &str,
+        input_json: &str,
+        request_id: &str,
+        deadline_ms: u64,
+    ) -> Result<Value, IsolateError> {
+        match self.invoke_task_inner(task_name, input_json, request_id, deadline_ms) {
+            Ok(value) => Ok(value),
+            Err(error) if self.worker_exited() => {
+                self.ensure_worker()?;
+                self.invoke_task_inner(task_name, input_json, request_id, deadline_ms)
+                    .map_err(|retry| IsolateError::Worker(format!("{error}; retry: {retry}")))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn send_task_load(&mut self) -> Result<Vec<ModuleTaskDefinition>, IsolateError> {
+        let source = self
+            .task_source
+            .clone()
+            .ok_or_else(|| IsolateError::Worker("task source missing".into()))?;
+        let id = self.next_id;
+        self.next_id += 1;
+        let conn = self.child.as_mut().expect("worker");
+        write_message(
+            &mut conn.stdin,
+            &Message::TaskLoad { id, source, secret_names: self.task_secret_names.clone() },
+        )?;
+        match read_message(&mut conn.stdout)? {
+            Message::TaskLoaded { id: reply_id, definitions_json } if reply_id == id => {
+                serde_json::from_str(&definitions_json)
+                    .map_err(|error| IsolateError::Worker(error.to_string()))
+            }
+            Message::TaskErr { id: reply_id, error, kind } if reply_id == id => {
+                Err(task_error(error, kind))
+            }
+            other => Err(IsolateError::Worker(format!("expected task loaded, got {other:?}"))),
+        }
+    }
+
+    fn invoke_task_inner(
+        &mut self,
+        task_name: &str,
+        input_json: &str,
+        request_id: &str,
+        deadline_ms: u64,
+    ) -> Result<Value, IsolateError> {
+        self.ensure_worker()?;
+        if self.task_source.is_none() {
+            return Err(IsolateError::Worker("task module not loaded".into()));
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let conn = self.child.as_mut().expect("worker");
+        write_message(
+            &mut conn.stdin,
+            &Message::TaskInvoke {
+                id,
+                task_name: task_name.into(),
+                input_json: input_json.into(),
+                request_id: request_id.into(),
+                deadline_ms,
+            },
+        )?;
+        match read_message(&mut conn.stdout)? {
+            Message::TaskOk { id: reply_id, value } if reply_id == id => Ok(Value::from(value)),
+            Message::TaskErr { id: reply_id, error, kind } if reply_id == id => {
+                Err(task_error(error, kind))
+            }
+            other => Err(IsolateError::Worker(format!("unexpected task reply {other:?}"))),
         }
     }
 
@@ -339,6 +432,9 @@ impl Supervisor {
         if self.handler_source.is_some() {
             self.send_load()?;
         }
+        if self.task_source.is_some() {
+            self.send_task_load()?;
+        }
         Ok(())
     }
 
@@ -352,6 +448,16 @@ impl Supervisor {
             Err(_) => true,
         }
     }
+}
+
+fn task_error(error: String, kind: TaskErrorKind) -> IsolateError {
+    let engine = match kind {
+        TaskErrorKind::Failed => EngineError::Isolate(error),
+        TaskErrorKind::TimedOut => EngineError::Interrupted(InterruptReason::Timeout),
+        TaskErrorKind::Canceled => EngineError::Interrupted(InterruptReason::Cancelled),
+        TaskErrorKind::Suspended => EngineError::Suspended,
+    };
+    IsolateError::Engine(engine)
 }
 
 impl Drop for Supervisor {

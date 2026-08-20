@@ -79,32 +79,44 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     let bound = listener.local_addr()?;
     #[cfg(unix)]
     let task_service = {
-        let definitions = tysel_engine_qjs::inspect_task_module(&bundle, config)?;
-        if definitions.is_empty() {
+        let socket_path =
+            std::env::temp_dir().join(format!("tysel-task-{}.sock", std::process::id()));
+        let service = ModuleTaskService::start(
+            &socket_path,
+            tap.manifest.application_id.clone(),
+            bundle.clone(),
+            config,
+            tap.manifest.execution_profile.clone(),
+            tap.manifest.secret_names.clone(),
+        )
+        .await?;
+        if service.ingress().registry().is_empty() {
+            service.shutdown().await?;
             None
         } else {
-            let socket_path =
-                std::env::temp_dir().join(format!("tysel-task-{}.sock", std::process::id()));
-            let service = ModuleTaskService::start(
-                &socket_path,
-                tap.manifest.application_id.clone(),
-                bundle.clone(),
-                config,
-            )
-            .await?;
             println!("tysel task-rpc {}", socket_path.display());
             Some(service)
         }
     };
     println!("tysel listen {bound}");
     io::stdout().flush()?;
-    let result =
-        serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await;
     #[cfg(unix)]
     if let Some(service) = task_service {
-        service.shutdown().await?;
+        tokio::select! {
+            result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => {
+                service.shutdown().await?;
+                result?;
+            }
+            error = service.failed() => {
+                service.shutdown().await?;
+                return Err(error.into());
+            }
+        }
+    } else {
+        serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await?;
     }
-    result?;
+    #[cfg(not(unix))]
+    serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await?;
     Ok(())
 }
 
