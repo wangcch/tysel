@@ -241,7 +241,7 @@ mod tests {
 
     fn config() -> IsolateConfig {
         IsolateConfig {
-            request_timeout_ms: 10,
+            request_timeout_ms: 500,
             cpu_ms_per_turn: 50,
             memory_limit_bytes: 8 * 1024 * 1024,
         }

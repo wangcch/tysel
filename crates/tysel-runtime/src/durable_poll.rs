@@ -277,13 +277,17 @@ impl DurablePoller {
     }
 
     pub async fn poll_once(&self) -> Result<Vec<DurableRun>, PollerError> {
-        self.poll_batch(None).await
+        self.poll_batch(None, &mut || {}).await
     }
 
-    async fn poll_batch(
+    async fn poll_batch<F>(
         &self,
         shutdown: Option<&PollerShutdown>,
-    ) -> Result<Vec<DurableRun>, PollerError> {
+        on_dispatch: &mut F,
+    ) -> Result<Vec<DurableRun>, PollerError>
+    where
+        F: FnMut(),
+    {
         let dispatcher = self.dispatcher.clone();
         let execution = self.execution;
         let mut programs = self.programs.snapshot(execution).await?;
@@ -309,6 +313,7 @@ impl DurablePoller {
                     ProgramExecution::Script => dispatcher.dispatch_task(task_id, &script),
                     ProgramExecution::Module => dispatcher.dispatch_module_task(task_id, &script),
                 });
+                on_dispatch();
             }
 
             let Some(joined) = pending.join_next().await else {
@@ -327,11 +332,24 @@ impl DurablePoller {
     where
         F: FnMut(DurableRun) + Send,
     {
+        self.run_inner(shutdown, &mut on_run, &mut || {}).await
+    }
+
+    async fn run_inner<F, G>(
+        &self,
+        shutdown: PollerShutdown,
+        on_run: &mut F,
+        on_dispatch: &mut G,
+    ) -> Result<(), PollerError>
+    where
+        F: FnMut(DurableRun) + Send,
+        G: FnMut(),
+    {
         loop {
             if shutdown.is_cancelled() {
                 return Ok(());
             }
-            for run in self.poll_batch(Some(&shutdown)).await? {
+            for run in self.poll_batch(Some(&shutdown), on_dispatch).await? {
                 on_run(run);
             }
             tokio::select! {
@@ -420,11 +438,20 @@ pub enum PollerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tysel_durable::SqliteStore;
+    use tysel_durable::{EventKind, NewEvent, SqliteStore};
     use tysel_engine::{IsolateConfig, Value};
 
     const WAIT_SCRIPT: &str = r#"
         (async () => JSON.stringify(await tysel.durable.waitForSignal("approval")))()
+    "#;
+    /// Replay a seeded 1ms durable sleep, then hang until the isolate deadline.
+    /// Used so shutdown tests can keep a concurrency wave in flight without
+    /// eval'ing QuickJS just to create the wakeup rows.
+    const HOLD_AFTER_SLEEP: &str = r#"
+        (async () => {
+            await tysel.durable.sleep("1ms");
+            await new Promise(() => {});
+        })()
     "#;
     const WAIT_MODULE: &str = r#"
         export default async function task(ctx, input) {
@@ -457,6 +484,22 @@ mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
         )
         .unwrap()
+    }
+
+    fn seed_due_sleep(store: &SqliteStore, id: TaskId) {
+        let now = unix_time_ms();
+        store
+            .append_event_with_wakeup(
+                id,
+                NewEvent {
+                    kind: EventKind::Sleep,
+                    key: "sleep:1".into(),
+                    payload: serde_json::json!({ "durationMs": 1 }),
+                    recorded_at_ms: now,
+                },
+                now,
+            )
+            .unwrap();
     }
 
     #[test]
@@ -688,18 +731,11 @@ mod tests {
     #[tokio::test]
     async fn shutdown_stops_scheduling_after_the_bounded_in_flight_set() {
         let store = Arc::new(SqliteStore::in_memory().unwrap());
-        let setup = dispatcher(store.clone(), "setup");
         let programs = DurableProgramRegistry::default();
         for offset in 0..20 {
             let id = TaskId(400 + offset);
-            let started = setup.start(id, WAIT_SCRIPT);
-            assert!(
-                matches!(started.result, Ok(crate::DurableRunStatus::Suspended)),
-                "task {id} should suspend waiting for approval: {:?}",
-                started.result
-            );
-            store.send_signal(id, "approval", &serde_json::json!(true), unix_time_ms()).unwrap();
-            programs.register(id, "(async () => tysel.sleep(5000))()").unwrap();
+            seed_due_sleep(&store, id);
+            programs.register(id, HOLD_AFTER_SLEEP).unwrap();
         }
         let slow_dispatcher = Arc::new(
             DurableDispatcher::new(
@@ -707,8 +743,8 @@ mod tests {
                 "poller",
                 5_000,
                 IsolateConfig {
-                    // Keep the wave in flight long enough that cancel arrives
-                    // before the first completions refill the concurrency slots.
+                    // Hang until this deadline. The dispatch observer below
+                    // cancels only after the first concurrency wave is queued.
                     request_timeout_ms: 500,
                     cpu_ms_per_turn: 50,
                     memory_limit_bytes: 8 * 1024 * 1024,
@@ -722,14 +758,27 @@ mod tests {
         let stop = shutdown.clone();
         let completed = Arc::new(AtomicUsize::new(0));
         let completed_in_callback = completed.clone();
+        let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(async move {
             poller
-                .run(shutdown, move |_| {
-                    completed_in_callback.fetch_add(1, Ordering::Relaxed);
-                })
+                .run_inner(
+                    shutdown,
+                    &mut move |_| {
+                        completed_in_callback.fetch_add(1, Ordering::Relaxed);
+                    },
+                    &mut move || {
+                        started_tx.send(()).expect("dispatch observer remains connected");
+                    },
+                )
                 .await
         });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            for _ in 0..MAX_POLL_CONCURRENCY {
+                started_rx.recv().await.expect("poller remains alive while dispatching");
+            }
+        })
+        .await
+        .expect("first dispatch wave should start");
         stop.cancel();
         tokio::time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap().unwrap();
         assert_eq!(
