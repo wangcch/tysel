@@ -17,6 +17,7 @@ fn sample_manifest() -> PackageManifest {
         websocket: false,
         sqlite_path: String::new(),
         secret_names: Vec::new(),
+        fetch_hosts: Vec::new(),
         json_logs: true,
     }
 }

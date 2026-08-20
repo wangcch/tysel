@@ -8,12 +8,14 @@ use std::path::Path;
 
 mod cpu;
 mod fetch;
+mod fetch_policy;
 mod host;
 mod isolate;
 mod pool;
 mod queue;
 mod secrets;
 
+pub use fetch_policy::configure as configure_fetch_hosts;
 pub use isolate::{IsolateCancel, eval, eval_cancellable, eval_with_reactor};
 pub use pool::{IncomingHttp, IsolatePool};
 pub use queue::{IoCompletion, IoRequest, OpId, Reactor, STREAM_WINDOW, open_bridge};

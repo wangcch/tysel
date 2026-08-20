@@ -41,6 +41,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         &tap.manifest.secret_names,
         &std::collections::HashMap::new(),
     ));
+    tysel_engine_qjs::configure_fetch_hosts(tap.manifest.fetch_hosts.clone());
     tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);
     let pool = IsolatePool::spawn(1, &bundle, config)?;
     let listener = TcpListener::bind(addr).await?;

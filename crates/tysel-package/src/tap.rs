@@ -46,6 +46,8 @@ pub struct PackageManifest {
     pub sqlite_path: String,
     #[serde(default)]
     pub secret_names: Vec<String>,
+    #[serde(default)]
+    pub fetch_hosts: Vec<String>,
     #[serde(default = "default_json_logs")]
     pub json_logs: bool,
 }

@@ -439,6 +439,7 @@ async fn fetch_hop(
         _ => return Err("outbound fetch only supports http and https".into()),
     };
     let host = uri.host().ok_or("missing host")?.to_owned();
+    crate::fetch_policy::host_permitted(&host)?;
     let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
     let stream = tokio::select! {
         biased;

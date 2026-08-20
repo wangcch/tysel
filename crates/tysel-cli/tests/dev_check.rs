@@ -211,6 +211,63 @@ secrets = ["API_KEY"]
     let _ = child.wait();
 }
 
+#[test]
+fn dev_fetch_allowlist_denies_unlisted_hosts() {
+    let dir = temp_app("dev-fetch-deny");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+
+[limits]
+request_timeout_ms = 2000
+
+[permissions]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        r#"export default {
+  async fetch() {
+    try {
+      await fetch("http://192.0.2.1/");
+      return new Response("allowed");
+    } catch (err) {
+      return new Response(String(err), { status: 403 });
+    }
+  },
+};
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new(cli_exe())
+        .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel dev");
+    let stdout = child.stdout.take().expect("stdout");
+    let started = std::time::Instant::now();
+    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let body = http_get(&addr);
+    assert!(started.elapsed() < Duration::from_secs(2), "deny took {:?}", started.elapsed());
+    assert!(body.contains("403"), "{body}");
+    assert!(body.contains("192.0.2.1"), "{body}");
+    assert!(body.contains("not permitted"), "{body}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn http_get(addr: &str) -> String {
     let mut stream = TcpStream::connect(addr).expect("connect");
     stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();

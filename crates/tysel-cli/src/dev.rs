@@ -70,6 +70,7 @@ fn load(
         &tap.manifest.secret_names,
         &file_values,
     ));
+    tysel_engine_qjs::configure_fetch_hosts(tap.manifest.fetch_hosts.clone());
     tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);
     let source = tap.bundle_source()?.to_owned();
     let config = IsolateConfig {
