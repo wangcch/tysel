@@ -159,6 +159,12 @@ scheduled minute, bounds catch-up to one day, and atomically observes scheduler
 capacity for multi-handler cron batches. Queue submissions route registered
 queue names to module handlers while preserving bounded JSON input and message
 identity; scheduler capacity provides producer backpressure.
+`tysel-cap-mcp` implements the stateless MCP `2026-07-28` JSON-RPC core with
+`server/discover`, cacheable `tools/list`, schema-validated `tools/call`, and
+bounded newline-delimited stdio frames. `McpTaskEndpoint` maps valid calls into
+the same TaskRPC scheduler and converts the worker's fenced terminal outcome
+back into structured MCP content; tool failures remain visible to the model via
+`isError` results.
 
 Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
 

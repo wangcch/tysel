@@ -74,6 +74,7 @@ tysel-cap-postgres = { path = "crates/tysel-cap-postgres" }
 tysel-observability = { path = "crates/tysel-observability" }
 tysel-task = { path = "crates/tysel-task" }
 tysel-task-rpc = { path = "crates/tysel-task-rpc" }
+tysel-cap-mcp = { path = "crates/tysel-cap-mcp" }
 
 [workspace.lints.rust]
 unsafe_code = "warn"

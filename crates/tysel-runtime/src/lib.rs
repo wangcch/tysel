@@ -34,7 +34,7 @@ pub use task_rpc::{
 };
 pub use task_rpc::{TaskRpcBroker, TaskRpcBrokerError, TaskRpcSession};
 #[cfg(unix)]
-pub use task_service::{ModuleTaskService, ModuleTaskServiceError};
+pub use task_service::{McpTaskEndpoint, ModuleTaskService, ModuleTaskServiceError};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

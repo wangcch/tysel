@@ -7,8 +7,10 @@ use std::time::{Duration, SystemTime};
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tysel_cap_mcp::{McpDispatch, McpServer};
 use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::inspect_task_module;
+use tysel_task_rpc::TaskOutcome;
 
 use crate::{
     TaskIngress, TaskIngressError, TaskModuleWorker, TaskModuleWorkerError, TaskRegistry,
@@ -132,6 +134,10 @@ impl ModuleTaskService {
         &self.socket_path
     }
 
+    pub fn mcp_endpoint(&self) -> Result<McpTaskEndpoint, ModuleTaskServiceError> {
+        McpTaskEndpoint::new(Arc::clone(&self.ingress))
+    }
+
     pub async fn shutdown(mut self) -> Result<(), ModuleTaskServiceError> {
         self.shutdown.cancel();
         let mut first_error = None;
@@ -150,6 +156,75 @@ impl ModuleTaskService {
             return Err(error);
         }
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct McpTaskEndpoint {
+    server: McpServer,
+    ingress: Arc<TaskIngress>,
+}
+
+impl McpTaskEndpoint {
+    pub fn new(ingress: Arc<TaskIngress>) -> Result<Self, ModuleTaskServiceError> {
+        let tools = ingress.registry().mcp_tools().cloned().collect::<Vec<_>>();
+        let server = McpServer::new("tysel", env!("CARGO_PKG_VERSION"), tools)?;
+        Ok(Self { server, ingress })
+    }
+
+    /// Handle one decoded MCP request. Notifications return `None`; a tool call
+    /// is queued and its fenced terminal outcome becomes the MCP result.
+    pub async fn handle(&self, request: serde_json::Value) -> Option<serde_json::Value> {
+        match self.server.handle(request) {
+            McpDispatch::Response(response) => Some(response),
+            McpDispatch::Notification => None,
+            McpDispatch::ToolCall(call) => {
+                let now = match unix_ms() {
+                    Ok(now) => now,
+                    Err(error) => {
+                        return Some(self.server.fail_tool_call(call, &error.to_string()));
+                    }
+                };
+                let id =
+                    match self.ingress.enqueue_mcp(&call.name, call.arguments.clone(), now).await {
+                        Ok(id) => id,
+                        Err(error) => {
+                            return Some(self.server.fail_tool_call(call, &error.to_string()));
+                        }
+                    };
+                let outcome = tokio::time::timeout(
+                    Duration::from_millis(self.ingress.request_timeout_ms()),
+                    wait_for_outcome(&self.ingress, id),
+                )
+                .await;
+                match outcome {
+                    Ok(TaskOutcome::Completed { result }) => {
+                        Some(self.server.complete_tool_call(call, result))
+                    }
+                    Ok(TaskOutcome::Failed { error, .. }) => {
+                        Some(self.server.fail_tool_call(call, &error))
+                    }
+                    Ok(TaskOutcome::Canceled {}) => {
+                        Some(self.server.fail_tool_call(call, "tool call was canceled"))
+                    }
+                    Ok(TaskOutcome::TimedOut {}) | Err(_) => {
+                        Some(self.server.fail_tool_call(call, "tool call timed out"))
+                    }
+                    Ok(TaskOutcome::Suspended {}) => {
+                        Some(self.server.fail_tool_call(call, "tool call suspended"))
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn wait_for_outcome(ingress: &TaskIngress, id: tysel_task::TaskId) -> TaskOutcome {
+    loop {
+        if let Some(outcome) = ingress.outcome(id).await {
+            return outcome;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 
@@ -248,6 +323,8 @@ pub enum ModuleTaskServiceError {
     Worker(#[from] TaskModuleWorkerError),
     #[error(transparent)]
     Server(#[from] TaskRpcServerError),
+    #[error(transparent)]
+    Mcp(#[from] tysel_cap_mcp::McpError),
     #[error("task service background task panicked or was canceled: {0}")]
     Background(tokio::task::JoinError),
     #[error("failed to use task socket {path}: {source}")]
@@ -280,6 +357,12 @@ export default {
       kind: "queue",
       name: "orders",
       handler(input, ctx) { return { order: input.order, requestId: ctx.requestId }; }
+    },
+    analyze: {
+      kind: "mcp",
+      description: "Analyze a customer",
+      input: { customerId: "string" },
+      handler(input) { return { customer: input.customerId, risk: "low" }; }
     }
   }
 };
@@ -318,6 +401,25 @@ export default {
         })
         .await
         .expect("queue task should finish");
+
+        let endpoint = service.mcp_endpoint().unwrap();
+        let response = endpoint
+            .handle(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "call-1",
+                "method": "tools/call",
+                "params": {
+                    "name": "analyze",
+                    "arguments": { "customerId": "customer-9" },
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+        assert_eq!(response["result"]["structuredContent"]["customer"], "customer-9");
+        assert_eq!(response["result"]["isError"], false);
         assert!(path.exists());
         service.shutdown().await.unwrap();
         assert!(!path.exists());

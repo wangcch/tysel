@@ -2605,6 +2605,11 @@ version = "0.0.1"
 [[package]]
 name = "tysel-cap-mcp"
 version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "tysel-cap-postgres"
@@ -2775,6 +2780,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "tysel-cap-mcp",
  "tysel-capability",
  "tysel-durable",
  "tysel-engine",

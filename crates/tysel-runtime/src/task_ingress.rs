@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 use tokio::sync::Mutex;
+use tysel_cap_mcp::{McpTool, McpValueType};
 use tysel_engine_qjs::{ModuleTaskDefinition, ModuleTaskKind};
 use tysel_task::{Task, TaskId, TaskMeta, TaskTrigger};
 use tysel_task_rpc::TaskOutcome;
@@ -171,6 +172,7 @@ struct CronRegistration {
 pub struct TaskRegistry {
     cron: Vec<CronRegistration>,
     queues: BTreeMap<String, String>,
+    mcp_tools: BTreeMap<String, McpTool>,
 }
 
 impl TaskRegistry {
@@ -179,6 +181,7 @@ impl TaskRegistry {
     ) -> Result<Self, TaskIngressError> {
         let mut cron = Vec::new();
         let mut queues = BTreeMap::new();
+        let mut mcp_tools = BTreeMap::new();
         for definition in definitions {
             match &definition.kind {
                 ModuleTaskKind::Cron { expression } => cron.push(CronRegistration {
@@ -194,11 +197,24 @@ impl TaskRegistry {
                         });
                     }
                 }
-                ModuleTaskKind::Mcp { .. } => {}
+                ModuleTaskKind::Mcp { description, input } => {
+                    let input = input
+                        .iter()
+                        .map(|(name, kind)| Ok((name.clone(), McpValueType::parse(kind)?)))
+                        .collect::<Result<_, tysel_cap_mcp::McpError>>()?;
+                    mcp_tools.insert(
+                        definition.name.clone(),
+                        McpTool {
+                            name: definition.name.clone(),
+                            description: description.clone(),
+                            input,
+                        },
+                    );
+                }
             }
         }
         cron.sort_by(|left, right| left.name.cmp(&right.name));
-        Ok(Self { cron, queues })
+        Ok(Self { cron, queues, mcp_tools })
     }
 
     pub fn queue_handler(&self, queue: &str) -> Option<&str> {
@@ -207,6 +223,14 @@ impl TaskRegistry {
 
     pub fn cron_len(&self) -> usize {
         self.cron.len()
+    }
+
+    pub fn mcp_tools(&self) -> impl Iterator<Item = &McpTool> {
+        self.mcp_tools.values()
+    }
+
+    pub fn has_mcp_tool(&self, name: &str) -> bool {
+        self.mcp_tools.contains_key(name)
     }
 }
 
@@ -259,6 +283,10 @@ impl TaskIngress {
         &self.registry
     }
 
+    pub fn request_timeout_ms(&self) -> u64 {
+        self.request_timeout_ms
+    }
+
     pub async fn outcome(&self, id: TaskId) -> Option<TaskOutcome> {
         self.broker.lock().await.outcome(id).cloned()
     }
@@ -286,6 +314,34 @@ impl TaskIngress {
                 trace_id: None,
             },
             TaskTrigger::Queue { name: queue.into(), handler: handler.into(), message_id },
+            Some(deadline),
+        )
+        .with_input(input);
+        self.broker.lock().await.enqueue(task)?;
+        Ok(id)
+    }
+
+    pub async fn enqueue_mcp(
+        &self,
+        tool: &str,
+        input: Value,
+        now_ms: u64,
+    ) -> Result<TaskId, TaskIngressError> {
+        if !self.registry.has_mcp_tool(tool) {
+            return Err(TaskIngressError::UnknownMcpTool(tool.into()));
+        }
+        let id = TaskId(u128::from(self.reserve_task_ids(1)?));
+        let deadline =
+            now_ms.checked_add(self.request_timeout_ms).ok_or(TaskIngressError::Clock)?;
+        let task = Task::new(
+            TaskMeta {
+                id,
+                application_id: self.application_id.clone(),
+                tenant_id: None,
+                idempotency_key: None,
+                trace_id: None,
+            },
+            TaskTrigger::Mcp { tool: tool.into() },
             Some(deadline),
         )
         .with_input(input);
@@ -379,6 +435,8 @@ pub enum TaskIngressError {
     DuplicateQueueConsumer { queue: String, first: String, second: String },
     #[error("queue '{0}' is not registered")]
     UnknownQueue(String),
+    #[error("MCP tool '{0}' is not registered")]
+    UnknownMcpTool(String),
     #[error("task id seed must be non-zero")]
     InvalidTaskIdSeed,
     #[error("application id must be non-empty")]
@@ -393,6 +451,8 @@ pub enum TaskIngressError {
     InsufficientCronCapacity { required: usize, available: usize },
     #[error(transparent)]
     Broker(#[from] TaskRpcBrokerError),
+    #[error(transparent)]
+    Mcp(#[from] tysel_cap_mcp::McpError),
 }
 
 #[cfg(test)]
