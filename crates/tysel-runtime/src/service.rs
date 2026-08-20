@@ -1,4 +1,5 @@
-use std::io::{self, Write};
+use std::collections::BTreeSet;
+use std::io::{self, Read, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -8,6 +9,10 @@ use tysel_cap_llm::{
     SecretResolver, SecretValue,
 };
 use tysel_engine::IsolateConfig;
+use tysel_engine_wasm::{
+    AotComponentRef, ComponentEngineConfig, MAX_COMPONENT_EXECUTION_MS, MAX_COMPONENT_INPUT_BYTES,
+    MAX_COMPONENT_MEMORY_BYTES, WasmComponentEngine,
+};
 use tysel_package::Tap;
 
 use crate::http::{AppIsolate, HttpError, serve_with_websocket, spawn_app_isolate};
@@ -23,6 +28,8 @@ pub enum StubError {
     #[error(transparent)]
     Engine(#[from] tysel_engine::EngineError),
     #[error(transparent)]
+    Component(#[from] tysel_engine_wasm::ComponentError),
+    #[error(transparent)]
     Io(#[from] io::Error),
     #[cfg(unix)]
     #[error(transparent)]
@@ -33,6 +40,8 @@ pub enum StubError {
     Llm(String),
     #[error("invalid listen address '{0}'")]
     Listen(String),
+    #[error("invalid component package: {0}")]
+    ComponentPackage(&'static str),
 }
 
 pub async fn run_stub() -> Result<(), StubError> {
@@ -40,6 +49,24 @@ pub async fn run_stub() -> Result<(), StubError> {
 }
 
 pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
+    if !tap.components.is_empty() {
+        if !tap.bundle.is_empty() {
+            return Err(StubError::ComponentPackage(
+                "mixed JavaScript and Component entrypoints are not supported",
+            ));
+        }
+        let mut input = Vec::new();
+        io::stdin().lock().take((MAX_COMPONENT_INPUT_BYTES + 1) as u64).read_to_end(&mut input)?;
+        let input = std::str::from_utf8(&input).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "component input must be UTF-8 JSON")
+        })?;
+        let output = invoke_component_tap(&tap, input)?;
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(output.as_bytes())?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+        return Ok(());
+    }
     let addr: SocketAddr =
         tap.manifest.listen.parse().map_err(|_| StubError::Listen(tap.manifest.listen.clone()))?;
     let config = IsolateConfig {
@@ -118,6 +145,39 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     #[cfg(not(unix))]
     serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await?;
     Ok(())
+}
+
+/// Invoke the single packaged Component through the portable source fallback.
+/// AOT metadata is admitted now, but native deserialization remains disabled
+/// until M5 package signatures can make Wasmtime's unsafe trust requirement.
+pub fn invoke_component_tap(tap: &Tap, input: &str) -> Result<String, StubError> {
+    let [component] = tap.components.as_slice() else {
+        return Err(StubError::ComponentPackage("exactly one Component entrypoint is required"));
+    };
+    let engine = WasmComponentEngine::new(ComponentEngineConfig {
+        max_memory_bytes: tap.manifest.memory_limit_bytes.clamp(1, MAX_COMPONENT_MEMORY_BYTES),
+        max_execution_ms: tap.manifest.request_timeout_ms.clamp(1, MAX_COMPONENT_EXECUTION_MS),
+        ..ComponentEngineConfig::default()
+    })?;
+    if let Some(aot) = component.aot.first() {
+        let artifact = AotComponentRef {
+            format_version: 1,
+            component_abi_version: &component.abi_version,
+            wasmtime_version: &aot.wasmtime_version,
+            target: &aot.target,
+            engine_compatibility_hash: aot.engine_compatibility_hash,
+            source_sha256: aot.source_sha256,
+            bytes: &aot.bytes,
+        };
+        let _aot_is_compatible = engine.validate_aot_ref(artifact, &component.source).is_ok();
+    }
+    let compiled = engine.compile(&component.source)?;
+    compiled.authorize_imports(
+        &tysel_capability::CapabilityRegistry::default(),
+        tysel_capability::TrustMode::IsolatedTask,
+        &BTreeSet::new(),
+    )?;
+    engine.invoke_json(&compiled, input).map_err(Into::into)
 }
 
 struct EngineSecretResolver;

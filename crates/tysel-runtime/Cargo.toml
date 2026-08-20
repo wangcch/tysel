@@ -22,7 +22,9 @@ tokio.workspace = true
 tysel-durable = { path = "../tysel-durable" }
 tysel-engine.workspace = true
 tysel-engine-qjs.workspace = true
+tysel-engine-wasm.workspace = true
 tysel-package.workspace = true
+wat = "1"
 tysel-manifest.workspace = true
 tysel-observability.workspace = true
 tysel-scheduler = { path = "../tysel-scheduler" }

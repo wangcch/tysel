@@ -9,8 +9,9 @@ mod transpile;
 use std::fs;
 use std::path::Path;
 
+use tysel_engine_wasm::{ComponentEngineConfig, WasmComponentEngine};
 use tysel_manifest::Manifest;
-use tysel_package::{PackageManifest, Tap, identity_source_map};
+use tysel_package::{PackageManifest, PackagedAot, PackagedComponent, Tap, identity_source_map};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
@@ -22,7 +23,42 @@ pub fn tap_from_app(
     bundle: Vec<u8>,
     source_map: Vec<u8>,
 ) -> Tap {
-    let packaged = PackageManifest {
+    Tap::new(package_manifest(manifest, runtime_version), bundle, source_map)
+}
+
+/// Validate, AOT-compile, and package a portable Component. The source is
+/// always retained so another target can safely reject the AOT and recompile.
+pub fn tap_from_component(
+    manifest: &Manifest,
+    runtime_version: &str,
+    source: Vec<u8>,
+) -> anyhow::Result<Tap> {
+    let engine = WasmComponentEngine::new(ComponentEngineConfig::default())?;
+    let artifact = engine.precompile(&source)?;
+    let component = PackagedComponent {
+        name: manifest.app.name.clone(),
+        abi_version: artifact.component_abi_version,
+        source,
+        aot: vec![PackagedAot {
+            target: artifact.target,
+            wasmtime_version: artifact.wasmtime_version,
+            engine_compatibility_hash: artifact.engine_compatibility_hash,
+            source_sha256: artifact.source_sha256,
+            bytes: artifact.bytes,
+        }],
+    };
+    Ok(Tap::new(package_manifest(manifest, runtime_version), Vec::new(), Vec::new())
+        .with_components(vec![component]))
+}
+
+pub fn validate_component(source: &[u8]) -> anyhow::Result<()> {
+    let engine = WasmComponentEngine::new(ComponentEngineConfig::default())?;
+    engine.compile(source)?;
+    Ok(())
+}
+
+fn package_manifest(manifest: &Manifest, runtime_version: &str) -> PackageManifest {
+    PackageManifest {
         format_version: 0,
         runtime_version: runtime_version.to_owned(),
         application_id: manifest.app.name.clone(),
@@ -46,8 +82,7 @@ pub fn tap_from_app(
         fs_read: manifest.permissions.fs_read.clone(),
         fs_write: manifest.permissions.fs_write.clone(),
         json_logs: manifest.observability.logs.eq_ignore_ascii_case("json"),
-    };
-    Tap::new(packaged, bundle, source_map)
+    }
 }
 
 pub fn embed(stub: impl AsRef<Path>, output: impl AsRef<Path>, tap: &Tap) -> anyhow::Result<()> {
@@ -55,10 +90,10 @@ pub fn embed(stub: impl AsRef<Path>, output: impl AsRef<Path>, tap: &Tap) -> any
     let output = output.as_ref();
     let stub_bytes = fs::read(stub)?;
     let packaged = tap.embed_into(&stub_bytes)?;
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
     fs::write(output, packaged)?;
     set_executable(output)?;
@@ -145,6 +180,63 @@ listen = "127.0.0.1:0"
         assert!(extracted.manifest.secret_names.is_empty());
         assert!(extracted.manifest.fetch_hosts.is_empty());
         assert!(extracted.manifest.json_logs);
+    }
+
+    #[test]
+    fn packages_portable_component_with_validated_host_aot() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "echo-component"
+entry = "echo.wasm"
+profile = "component"
+"#,
+        )
+        .unwrap();
+        let source = wat::parse_str(
+            r#"
+(component
+  (core module $module
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 16))
+    (func (export "realloc")
+      (param i32 i32 i32) (param $new-len i32) (result i32)
+      (local $ptr i32)
+      global.get $heap
+      local.tee $ptr
+      local.get $new-len
+      i32.add
+      global.set $heap
+      local.get $ptr)
+    (func (export "run") (param $ptr i32) (param $len i32) (result i32)
+      i32.const 0
+      i32.const 0
+      i32.store
+      i32.const 4
+      local.get $ptr
+      i32.store
+      i32.const 8
+      local.get $len
+      i32.store
+      i32.const 0))
+  (core instance $instance (instantiate $module))
+  (alias core export $instance "memory" (core memory $memory))
+  (alias core export $instance "realloc" (core func $realloc))
+  (alias core export $instance "run" (core func $run-core))
+  (type $run-type
+    (func (param "input" string) (result (result string (error string)))))
+  (func $run (type $run-type)
+    (canon lift (core func $run-core) (memory $memory) (realloc $realloc)))
+  (export "run" (func $run)))
+"#,
+        )
+        .unwrap();
+        let tap = tap_from_component(&manifest, "0.4.0", source.clone()).unwrap();
+        assert!(tap.bundle.is_empty());
+        assert_eq!(tap.components.len(), 1);
+        assert_eq!(tap.components[0].source, source);
+        assert_eq!(tap.components[0].abi_version, "0.4.0");
+        assert_eq!(tap.components[0].aot.len(), 1);
     }
 
     #[test]

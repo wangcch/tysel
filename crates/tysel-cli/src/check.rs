@@ -12,13 +12,22 @@ pub fn run(manifest_path: &Path) -> Result<()> {
     if !entry.is_file() {
         return Err(anyhow!("entry not found: {}", entry.display()));
     }
-    let (bundle, _map) = tysel_build::read_bundle(&entry)
-        .with_context(|| format!("failed to bundle {}", entry.display()))?;
-    let types = typecheck(root);
+    let is_component = entry.extension().and_then(|extension| extension.to_str()) == Some("wasm");
+    let (artifact_kind, artifact_bytes, types) = if is_component {
+        let source =
+            std::fs::read(&entry).with_context(|| format!("failed to read {}", entry.display()))?;
+        tysel_build::validate_component(&source)
+            .with_context(|| format!("failed to validate Component {}", entry.display()))?;
+        ("component", source.len(), Typecheck::Skipped("Wasm Component"))
+    } else {
+        let (bundle, _map) = tysel_build::read_bundle(&entry)
+            .with_context(|| format!("failed to bundle {}", entry.display()))?;
+        ("bundle", bundle.len(), typecheck(root))
+    };
     print!("{}", manifest.inspect_report());
     println!("check");
     println!("  manifest  ok");
-    println!("  bundle    ok ({} bytes)", bundle.len());
+    println!("  {artifact_kind:<10}ok ({artifact_bytes} bytes)");
     match &types {
         Typecheck::Ok => println!("  types     ok"),
         Typecheck::Skipped(reason) => println!("  types     skipped ({reason})"),

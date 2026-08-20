@@ -14,7 +14,11 @@ workspace = true
 tysel-manifest.workspace = true
 tysel-package.workspace = true
 tysel-capability.workspace = true
+tysel-engine-wasm.workspace = true
 anyhow.workspace = true
 oxc.workspace = true
 oxc_resolver.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+wat = "1"

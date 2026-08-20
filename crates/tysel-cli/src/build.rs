@@ -17,47 +17,63 @@ pub fn run(
     let manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let host = host_target();
-    if let Some(requested) = target.as_deref() {
-        if !target_allowed(requested, host.aliases) {
-            return Err(anyhow!(
-                "cross-compilation is not implemented; this host is {} (omit --target)",
-                host.label
-            ));
-        }
+    if let Some(requested) = target.as_deref()
+        && !target_allowed(requested, host.aliases)
+    {
+        return Err(anyhow!(
+            "cross-compilation is not implemented; this host is {} (omit --target)",
+            host.label
+        ));
     }
-    if let Some(requested) = profile.as_deref() {
-        if requested != manifest.app.profile {
-            return Err(anyhow!(
-                "--profile {requested} does not match manifest profile {}",
-                manifest.app.profile
-            ));
-        }
+    if let Some(requested) = profile.as_deref()
+        && requested != manifest.app.profile
+    {
+        return Err(anyhow!(
+            "--profile {requested} does not match manifest profile {}",
+            manifest.app.profile
+        ));
     }
     let root = manifest_path.parent().unwrap_or(Path::new("."));
     let entry = entry.unwrap_or_else(|| root.join(&manifest.app.entry));
     if !entry.is_file() {
         return Err(anyhow!("entry not found: {}", entry.display()));
     }
-    let (bundle, source_map) = tysel_build::read_bundle(&entry)
-        .with_context(|| format!("failed to read {}", entry.display()))?;
-    let types = typecheck(root);
-    let type_line = match &types {
-        Typecheck::Ok => "passed".to_owned(),
-        Typecheck::Skipped(reason) => format!("skipped ({reason})"),
-        Typecheck::Failed(_) => "failed".to_owned(),
+    let is_component = entry.extension().and_then(|extension| extension.to_str()) == Some("wasm");
+    let (tap, type_line, payload_label, payload_bytes) = if is_component {
+        let source =
+            std::fs::read(&entry).with_context(|| format!("failed to read {}", entry.display()))?;
+        let source_len = source.len();
+        let tap = tysel_build::tap_from_component(&manifest, env!("CARGO_PKG_VERSION"), source)
+            .with_context(|| format!("failed to compile Component {}", entry.display()))?;
+        (tap, "not applicable (Wasm Component)".to_owned(), "Component", source_len)
+    } else {
+        let (bundle, source_map) = tysel_build::read_bundle(&entry)
+            .with_context(|| format!("failed to read {}", entry.display()))?;
+        let types = typecheck(root);
+        let type_line = match &types {
+            Typecheck::Ok => "passed".to_owned(),
+            Typecheck::Skipped(reason) => format!("skipped ({reason})"),
+            Typecheck::Failed(_) => "failed".to_owned(),
+        };
+        if let Typecheck::Failed(output) = types {
+            eprint!("{output}");
+            return Err(anyhow!("TypeScript check failed"));
+        }
+        let bundle_len = bundle.len();
+        (
+            tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), bundle, source_map),
+            type_line,
+            "Bundle",
+            bundle_len,
+        )
     };
-    if let Typecheck::Failed(output) = types {
-        eprint!("{output}");
-        return Err(anyhow!("TypeScript check failed"));
-    }
     let stub = resolve_stub(stub, release)?;
     let output = output.unwrap_or_else(|| PathBuf::from("dist").join(&manifest.app.name));
-    let tap = tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), bundle, source_map);
     tysel_build::embed(&stub, &output, &tap)
         .with_context(|| format!("failed to write {}", output.display()))?;
     let executable = std::fs::metadata(&output).map(|meta| meta.len()).unwrap_or(0);
     println!("Type check       {type_line}");
-    println!("Bundle           {}", format_bytes(tap.bundle.len() as u64));
+    println!("{payload_label:<16} {}", format_bytes(payload_bytes as u64));
     println!("Capabilities     {}", capability_summary(&manifest));
     println!("Runtime          {}", manifest.app.profile);
     println!("Executable       {}", format_bytes(executable));
@@ -175,10 +191,8 @@ fn stub_candidates(release: bool) -> Vec<PathBuf> {
     let sibling = std::env::current_exe()
         .ok()
         .map(|exe| with_exe(exe.parent().unwrap_or(Path::new(".")).join("tysel-service")));
-    if !release {
-        if let Some(path) = sibling.clone() {
-            out.push(path);
-        }
+    if !release && let Some(path) = sibling.clone() {
+        out.push(path);
     }
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
         push_cargo_stubs(&mut out, Path::new(&dir), release);
@@ -191,10 +205,8 @@ fn stub_candidates(release: bool) -> Vec<PathBuf> {
             }
         }
     }
-    if release {
-        if let Some(path) = sibling {
-            out.push(path);
-        }
+    if release && let Some(path) = sibling {
+        out.push(path);
     }
     if let Some(path) = find_on_path("tysel-service") {
         out.push(path);

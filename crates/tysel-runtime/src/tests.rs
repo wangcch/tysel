@@ -11,6 +11,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::IsolatePool;
+use tysel_package::{PackageManifest, PackagedComponent, Tap};
 
 use crate::http::{SharedPool, bind, bind_with, bind_with_request_limit, handle_stream};
 
@@ -44,6 +45,81 @@ fn config() -> IsolateConfig {
 #[test]
 fn crate_is_named() {
     assert!(!super::crate_name().is_empty());
+}
+
+#[test]
+fn packaged_component_runs_through_the_portable_runtime_path() {
+    let source = wat::parse_str(
+        r#"
+(component
+  (core module $module
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 16))
+    (func (export "realloc")
+      (param i32 i32 i32) (param $new-len i32) (result i32)
+      (local $ptr i32)
+      global.get $heap
+      local.tee $ptr
+      local.get $new-len
+      i32.add
+      global.set $heap
+      local.get $ptr)
+    (func (export "run") (param $ptr i32) (param $len i32) (result i32)
+      i32.const 0
+      i32.const 0
+      i32.store
+      i32.const 4
+      local.get $ptr
+      i32.store
+      i32.const 8
+      local.get $len
+      i32.store
+      i32.const 0))
+  (core instance $instance (instantiate $module))
+  (alias core export $instance "memory" (core memory $memory))
+  (alias core export $instance "realloc" (core func $realloc))
+  (alias core export $instance "run" (core func $run-core))
+  (type $run-type
+    (func (param "input" string) (result (result string (error string)))))
+  (func $run (type $run-type)
+    (canon lift (core func $run-core) (memory $memory) (realloc $realloc)))
+  (export "run" (func $run)))
+"#,
+    )
+    .unwrap();
+    let tap = Tap::new(component_manifest(), Vec::new(), Vec::new()).with_components(vec![
+        PackagedComponent {
+            name: "echo".into(),
+            abi_version: "0.4.0".into(),
+            source,
+            aot: Vec::new(),
+        },
+    ]);
+    assert_eq!(crate::invoke_component_tap(&tap, r#"{"value":42}"#).unwrap(), r#"{"value":42}"#);
+}
+
+fn component_manifest() -> PackageManifest {
+    PackageManifest {
+        format_version: 0,
+        runtime_version: "0.4.0".into(),
+        application_id: "echo".into(),
+        entrypoint: "echo.wasm".into(),
+        execution_profile: "component".into(),
+        listen: "127.0.0.1:0".into(),
+        memory_limit_bytes: 64 * 1024 * 1024,
+        cpu_ms_per_turn: 50,
+        request_timeout_ms: 2_000,
+        bundle_hash: String::new(),
+        max_request_bytes: 1024 * 1024,
+        websocket: false,
+        sqlite_path: String::new(),
+        secret_names: Vec::new(),
+        fetch_hosts: Vec::new(),
+        postgres: Vec::new(),
+        fs_read: Vec::new(),
+        fs_write: Vec::new(),
+        json_logs: false,
+    }
 }
 
 #[tokio::test]

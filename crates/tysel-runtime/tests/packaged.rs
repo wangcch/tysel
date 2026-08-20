@@ -8,10 +8,10 @@ use http_body_util::{BodyExt, Empty};
 use hyper::Request;
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::Command;
-use tysel_package::{PackageManifest, Tap, identity_source_map};
+use tysel_package::{PackageManifest, PackagedComponent, Tap, identity_source_map};
 
 const HANDLER: &str = r#"
 export default {
@@ -64,6 +64,28 @@ async fn packaged_stub_serves_embedded_bundle() {
     assert!(body.contains("Hello from Tysel"));
     assert!(body.contains("\"path\":\"/hello\""));
     assert!(body.contains("\"packaged\":true"));
+}
+
+#[tokio::test]
+async fn packaged_stub_invokes_embedded_component_over_stdio() {
+    let packaged = package_component_stub();
+    let mut child = Command::new(&packaged)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn packaged Component stub");
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(br#"{"value":42}"#).await.unwrap();
+    stdin.shutdown().await.unwrap();
+    drop(stdin);
+    let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
+        .await
+        .expect("Component execution timed out")
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "{\"value\":42}\n");
 }
 
 fn collect_stderr(mut stderr: tokio::process::ChildStderr) -> Arc<Mutex<Vec<u8>>> {
@@ -154,6 +176,91 @@ fn package_stub() -> PathBuf {
     let output = dir.join("hello-service");
     let bytes = tap.embed_into(&stub).expect("embed");
     std::fs::write(&output, bytes).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&output).unwrap().permissions();
+        permissions.set_mode(permissions.mode() | 0o755);
+        std::fs::set_permissions(&output, permissions).unwrap();
+    }
+    output
+}
+
+fn package_component_stub() -> PathBuf {
+    let stub = std::fs::read(stub_exe()).expect("read stub");
+    let source = wat::parse_str(
+        r#"
+(component
+  (core module $module
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 16))
+    (func (export "realloc")
+      (param i32 i32 i32) (param $new-len i32) (result i32)
+      (local $ptr i32)
+      global.get $heap
+      local.tee $ptr
+      local.get $new-len
+      i32.add
+      global.set $heap
+      local.get $ptr)
+    (func (export "run") (param $ptr i32) (param $len i32) (result i32)
+      i32.const 0
+      i32.const 0
+      i32.store
+      i32.const 4
+      local.get $ptr
+      i32.store
+      i32.const 8
+      local.get $len
+      i32.store
+      i32.const 0))
+  (core instance $instance (instantiate $module))
+  (alias core export $instance "memory" (core memory $memory))
+  (alias core export $instance "realloc" (core func $realloc))
+  (alias core export $instance "run" (core func $run-core))
+  (type $run-type
+    (func (param "input" string) (result (result string (error string)))))
+  (func $run (type $run-type)
+    (canon lift (core func $run-core) (memory $memory) (realloc $realloc)))
+  (export "run" (func $run)))
+"#,
+    )
+    .unwrap();
+    let tap = Tap::new(
+        PackageManifest {
+            format_version: 0,
+            runtime_version: "0.4.0".into(),
+            application_id: "echo-component".into(),
+            entrypoint: "echo.wasm".into(),
+            execution_profile: "component".into(),
+            listen: "127.0.0.1:0".into(),
+            memory_limit_bytes: 8 * 1024 * 1024,
+            cpu_ms_per_turn: 50,
+            request_timeout_ms: 2_000,
+            bundle_hash: String::new(),
+            max_request_bytes: 1024 * 1024,
+            websocket: false,
+            sqlite_path: String::new(),
+            secret_names: Vec::new(),
+            fetch_hosts: Vec::new(),
+            postgres: Vec::new(),
+            fs_read: Vec::new(),
+            fs_write: Vec::new(),
+            json_logs: false,
+        },
+        Vec::new(),
+        Vec::new(),
+    )
+    .with_components(vec![PackagedComponent {
+        name: "echo-component".into(),
+        abi_version: "0.4.0".into(),
+        source,
+        aot: Vec::new(),
+    }]);
+    let dir = std::env::temp_dir().join(format!("tysel-component-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let output = dir.join("echo-component");
+    std::fs::write(&output, tap.embed_into(&stub).unwrap()).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

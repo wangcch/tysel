@@ -60,6 +60,50 @@ listen = "127.0.0.1:0"
 }
 
 #[test]
+fn build_validates_precompiles_and_embeds_a_component() {
+    let dir = std::env::temp_dir().join(format!("tysel-cli-build-wasm-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "echo-component"
+entry = "echo.wasm"
+profile = "component"
+"#,
+    )
+    .unwrap();
+    fs::write(dir.join("echo.wasm"), echo_component()).unwrap();
+    let stub = dir.join("tysel-service");
+    fs::write(&stub, b"stub-runtime").unwrap();
+    let packaged = dir.join("dist/echo-component");
+
+    let result = Command::new(cli_exe())
+        .args([
+            "build",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            stub.to_str().unwrap(),
+            "--output",
+            packaged.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run tysel build");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("Type check       not applicable (Wasm Component)"), "{stdout}");
+    assert!(stdout.contains("Component       "), "{stdout}");
+
+    let tap = Tap::from_path(packaged).unwrap();
+    assert!(tap.bundle.is_empty());
+    assert_eq!(tap.components.len(), 1);
+    assert_eq!(tap.components[0].name, "echo-component");
+    assert_eq!(tap.components[0].abi_version, "0.4.0");
+    assert_eq!(tap.components[0].aot.len(), 1);
+}
+
+#[test]
 fn build_strips_typescript_and_embeds_original_source() {
     let dir = std::env::temp_dir().join(format!("tysel-cli-build-ts-{}", std::process::id()));
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -256,6 +300,47 @@ listen = "127.0.0.1:0"
     )
     .unwrap();
     dir
+}
+
+fn echo_component() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+(component
+  (core module $module
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 16))
+    (func (export "realloc")
+      (param i32 i32 i32) (param $new-len i32) (result i32)
+      (local $ptr i32)
+      global.get $heap
+      local.tee $ptr
+      local.get $new-len
+      i32.add
+      global.set $heap
+      local.get $ptr)
+    (func (export "run") (param $ptr i32) (param $len i32) (result i32)
+      i32.const 0
+      i32.const 0
+      i32.store
+      i32.const 4
+      local.get $ptr
+      i32.store
+      i32.const 8
+      local.get $len
+      i32.store
+      i32.const 0))
+  (core instance $instance (instantiate $module))
+  (alias core export $instance "memory" (core memory $memory))
+  (alias core export $instance "realloc" (core func $realloc))
+  (alias core export $instance "run" (core func $run-core))
+  (type $run-type
+    (func (param "input" string) (result (result string (error string)))))
+  (func $run (type $run-type)
+    (canon lift (core func $run-core) (memory $memory) (realloc $realloc)))
+  (export "run" (func $run)))
+"#,
+    )
+    .unwrap()
 }
 
 fn cli_exe() -> PathBuf {

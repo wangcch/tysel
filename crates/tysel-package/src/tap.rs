@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -7,10 +8,14 @@ use sha2::{Digest, Sha256};
 
 use crate::sourcemap::SourceMap;
 
-pub const TAP_VERSION: u32 = 1;
+pub const TAP_VERSION: u32 = 2;
+pub const MAX_TAP_PAYLOAD_BYTES: usize = 512 * 1024 * 1024;
+pub const MAX_PACKAGED_COMPONENTS: usize = 64;
+pub const MAX_AOT_ARTIFACTS_PER_COMPONENT: usize = 16;
 
 const TAP_MAGIC: &[u8; 8] = b"TYSELTAP";
 const END_MAGIC: &[u8; 8] = b"TYSELEND";
+const MAX_COMPONENT_INDEX_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PackageError {
@@ -71,31 +76,101 @@ pub struct Tap {
     pub manifest: PackageManifest,
     pub bundle: Vec<u8>,
     pub source_map: Vec<u8>,
+    pub components: Vec<PackagedComponent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackagedComponent {
+    pub name: String,
+    pub abi_version: String,
+    pub source: Vec<u8>,
+    pub aot: Vec<PackagedAot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackagedAot {
+    pub target: String,
+    pub wasmtime_version: String,
+    pub engine_compatibility_hash: u64,
+    pub source_sha256: [u8; 32],
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ComponentIndex {
+    components: Vec<ComponentIndexEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ComponentIndexEntry {
+    name: String,
+    abi_version: String,
+    source: BlobIndex,
+    aot: Vec<AotIndexEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AotIndexEntry {
+    target: String,
+    wasmtime_version: String,
+    engine_compatibility_hash: u64,
+    source_sha256: [u8; 32],
+    blob: BlobIndex,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BlobIndex {
+    offset: u64,
+    length: u64,
+    sha256: String,
 }
 
 impl Tap {
     pub fn new(mut manifest: PackageManifest, bundle: Vec<u8>, source_map: Vec<u8>) -> Self {
         manifest.format_version = TAP_VERSION;
         manifest.bundle_hash = bundle_hash(&bundle);
-        Self { manifest, bundle, source_map }
+        Self { manifest, bundle, source_map, components: Vec::new() }
+    }
+
+    pub fn with_components(mut self, components: Vec<PackagedComponent>) -> Self {
+        self.components = components;
+        self
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, PackageError> {
+        validate_components(&self.components)?;
         let manifest = serde_json::to_vec(&self.manifest)?;
-        let mut body =
-            Vec::with_capacity(32 + manifest.len() + self.bundle.len() + self.source_map.len());
+        let (component_index, component_data) = encode_components(&self.components)?;
+        let expected_len = 52usize
+            .checked_add(manifest.len())
+            .and_then(|len| len.checked_add(self.bundle.len()))
+            .and_then(|len| len.checked_add(self.source_map.len()))
+            .and_then(|len| len.checked_add(component_index.len()))
+            .and_then(|len| len.checked_add(component_data.len()))
+            .ok_or_else(|| PackageError::Invalid("tap payload length overflow".into()))?;
+        if expected_len > MAX_TAP_PAYLOAD_BYTES {
+            return Err(PackageError::Invalid("tap payload exceeds size limit".into()));
+        }
+        let mut body = Vec::with_capacity(expected_len);
         body.extend_from_slice(TAP_MAGIC);
         body.extend_from_slice(&TAP_VERSION.to_le_bytes());
         body.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
         body.extend_from_slice(&(self.bundle.len() as u64).to_le_bytes());
         body.extend_from_slice(&(self.source_map.len() as u64).to_le_bytes());
+        body.extend_from_slice(&(component_index.len() as u64).to_le_bytes());
+        body.extend_from_slice(&(component_data.len() as u64).to_le_bytes());
         body.extend_from_slice(&manifest);
         body.extend_from_slice(&self.bundle);
         body.extend_from_slice(&self.source_map);
+        body.extend_from_slice(&component_index);
+        body.extend_from_slice(&component_data);
         Ok(body)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, PackageError> {
+        if bytes.len() > MAX_TAP_PAYLOAD_BYTES {
+            return Err(PackageError::Invalid("tap payload exceeds size limit".into()));
+        }
         let mut rest = bytes;
         let magic = take(&mut rest, 8)?;
         if magic != TAP_MAGIC {
@@ -106,15 +181,22 @@ impl Tap {
                 .try_into()
                 .map_err(|_| PackageError::Invalid("truncated version".into()))?,
         );
-        if version != TAP_VERSION {
+        if !(1..=TAP_VERSION).contains(&version) {
             return Err(PackageError::Version(version));
         }
-        let manifest_len = read_u64(&mut rest)? as usize;
-        let bundle_len = read_u64(&mut rest)? as usize;
-        let source_map_len = read_u64(&mut rest)? as usize;
+        let manifest_len = read_usize(&mut rest)?;
+        let bundle_len = read_usize(&mut rest)?;
+        let source_map_len = read_usize(&mut rest)?;
+        let (component_index_len, component_data_len) =
+            if version >= 2 { (read_usize(&mut rest)?, read_usize(&mut rest)?) } else { (0, 0) };
+        if component_index_len > MAX_COMPONENT_INDEX_BYTES {
+            return Err(PackageError::Invalid("component index exceeds size limit".into()));
+        }
         let manifest_bytes = take(&mut rest, manifest_len)?;
         let bundle = take(&mut rest, bundle_len)?.to_vec();
         let source_map = take(&mut rest, source_map_len)?.to_vec();
+        let component_index = take(&mut rest, component_index_len)?;
+        let component_data = take(&mut rest, component_data_len)?;
         if !rest.is_empty() {
             return Err(PackageError::Invalid("trailing bytes inside tap payload".into()));
         }
@@ -123,7 +205,12 @@ impl Tap {
         if manifest.bundle_hash != actual {
             return Err(PackageError::Invalid("bundle hash mismatch".into()));
         }
-        Ok(Self { manifest, bundle, source_map })
+        let components = if version >= 2 {
+            decode_components(component_index, component_data)?
+        } else {
+            Vec::new()
+        };
+        Ok(Self { manifest, bundle, source_map, components })
     }
 
     pub fn embed_into(&self, stub: &[u8]) -> Result<Vec<u8>, PackageError> {
@@ -147,8 +234,13 @@ impl Tap {
         let payload_len = {
             let mut len_bytes = [0u8; 8];
             len_bytes.copy_from_slice(&bytes[footer..footer + 8]);
-            u64::from_le_bytes(len_bytes) as usize
+            usize::try_from(u64::from_le_bytes(len_bytes)).map_err(|_| {
+                PackageError::Invalid("payload length exceeds addressable memory".into())
+            })?
         };
+        if payload_len > MAX_TAP_PAYLOAD_BYTES {
+            return Err(PackageError::Invalid("tap payload exceeds size limit".into()));
+        }
         if payload_len > footer {
             return Err(PackageError::Invalid("payload length exceeds file".into()));
         }
@@ -173,6 +265,9 @@ impl Tap {
             len_bytes.copy_from_slice(&footer[..8]);
             u64::from_le_bytes(len_bytes)
         };
+        if payload_len > MAX_TAP_PAYLOAD_BYTES as u64 {
+            return Err(PackageError::Invalid("tap payload exceeds size limit".into()));
+        }
         let prefix_len = file_len - 16;
         if payload_len > prefix_len {
             return Err(PackageError::Invalid("payload length exceeds file".into()));
@@ -207,6 +302,134 @@ pub fn bundle_hash(bundle: &[u8]) -> String {
     hex_encode(&Sha256::digest(bundle))
 }
 
+fn validate_components(components: &[PackagedComponent]) -> Result<(), PackageError> {
+    if components.len() > MAX_PACKAGED_COMPONENTS {
+        return Err(PackageError::Invalid("too many packaged components".into()));
+    }
+    let mut names = BTreeSet::new();
+    for component in components {
+        if component.name.is_empty()
+            || component.name.len() > 128
+            || !component
+                .name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(PackageError::Invalid("invalid packaged component name".into()));
+        }
+        if !names.insert(&component.name) {
+            return Err(PackageError::Invalid("duplicate packaged component name".into()));
+        }
+        if component.abi_version.is_empty() || component.abi_version.len() > 64 {
+            return Err(PackageError::Invalid("invalid component ABI version".into()));
+        }
+        if component.aot.len() > MAX_AOT_ARTIFACTS_PER_COMPONENT {
+            return Err(PackageError::Invalid(
+                "too many AOT artifacts for packaged component".into(),
+            ));
+        }
+        for aot in &component.aot {
+            if aot.target.is_empty()
+                || aot.target.len() > 128
+                || aot.wasmtime_version.is_empty()
+                || aot.wasmtime_version.len() > 64
+            {
+                return Err(PackageError::Invalid("invalid component AOT metadata".into()));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn encode_components(components: &[PackagedComponent]) -> Result<(Vec<u8>, Vec<u8>), PackageError> {
+    let mut data = Vec::new();
+    let mut entries = Vec::with_capacity(components.len());
+    for component in components {
+        let source = append_blob(&mut data, &component.source)?;
+        let mut aot = Vec::with_capacity(component.aot.len());
+        for artifact in &component.aot {
+            aot.push(AotIndexEntry {
+                target: artifact.target.clone(),
+                wasmtime_version: artifact.wasmtime_version.clone(),
+                engine_compatibility_hash: artifact.engine_compatibility_hash,
+                source_sha256: artifact.source_sha256,
+                blob: append_blob(&mut data, &artifact.bytes)?,
+            });
+        }
+        entries.push(ComponentIndexEntry {
+            name: component.name.clone(),
+            abi_version: component.abi_version.clone(),
+            source,
+            aot,
+        });
+    }
+    let index = serde_json::to_vec(&ComponentIndex { components: entries })?;
+    if index.len() > MAX_COMPONENT_INDEX_BYTES {
+        return Err(PackageError::Invalid("component index exceeds size limit".into()));
+    }
+    Ok((index, data))
+}
+
+fn append_blob(data: &mut Vec<u8>, bytes: &[u8]) -> Result<BlobIndex, PackageError> {
+    let offset = u64::try_from(data.len())
+        .map_err(|_| PackageError::Invalid("component data offset overflow".into()))?;
+    let length = u64::try_from(bytes.len())
+        .map_err(|_| PackageError::Invalid("component data length overflow".into()))?;
+    data.extend_from_slice(bytes);
+    Ok(BlobIndex { offset, length, sha256: bundle_hash(bytes) })
+}
+
+fn decode_components(index: &[u8], data: &[u8]) -> Result<Vec<PackagedComponent>, PackageError> {
+    let index: ComponentIndex = serde_json::from_slice(index)?;
+    if index.components.len() > MAX_PACKAGED_COMPONENTS {
+        return Err(PackageError::Invalid("too many packaged components".into()));
+    }
+    let mut components = Vec::with_capacity(index.components.len());
+    for entry in index.components {
+        if entry.aot.len() > MAX_AOT_ARTIFACTS_PER_COMPONENT {
+            return Err(PackageError::Invalid(
+                "too many AOT artifacts for packaged component".into(),
+            ));
+        }
+        let source = read_blob(data, &entry.source)?;
+        let mut aot = Vec::with_capacity(entry.aot.len());
+        for artifact in entry.aot {
+            aot.push(PackagedAot {
+                target: artifact.target,
+                wasmtime_version: artifact.wasmtime_version,
+                engine_compatibility_hash: artifact.engine_compatibility_hash,
+                source_sha256: artifact.source_sha256,
+                bytes: read_blob(data, &artifact.blob)?,
+            });
+        }
+        components.push(PackagedComponent {
+            name: entry.name,
+            abi_version: entry.abi_version,
+            source,
+            aot,
+        });
+    }
+    validate_components(&components)?;
+    Ok(components)
+}
+
+fn read_blob(data: &[u8], blob: &BlobIndex) -> Result<Vec<u8>, PackageError> {
+    let offset = usize::try_from(blob.offset)
+        .map_err(|_| PackageError::Invalid("component data offset overflow".into()))?;
+    let length = usize::try_from(blob.length)
+        .map_err(|_| PackageError::Invalid("component data length overflow".into()))?;
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| PackageError::Invalid("component data range overflow".into()))?;
+    let bytes = data
+        .get(offset..end)
+        .ok_or_else(|| PackageError::Invalid("component data range is out of bounds".into()))?;
+    if bundle_hash(bytes) != blob.sha256 {
+        return Err(PackageError::Invalid("component blob hash mismatch".into()));
+    }
+    Ok(bytes.to_vec())
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -221,6 +444,11 @@ fn read_u64(rest: &mut &[u8]) -> Result<u64, PackageError> {
     let bytes: [u8; 8] =
         take(rest, 8)?.try_into().map_err(|_| PackageError::Invalid("truncated length".into()))?;
     Ok(u64::from_le_bytes(bytes))
+}
+
+fn read_usize(rest: &mut &[u8]) -> Result<usize, PackageError> {
+    usize::try_from(read_u64(rest)?)
+        .map_err(|_| PackageError::Invalid("length exceeds addressable memory".into()))
 }
 
 fn take<'a>(rest: &mut &'a [u8], n: usize) -> Result<&'a [u8], PackageError> {

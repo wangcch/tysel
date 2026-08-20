@@ -31,3 +31,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tysel-package.workspace = true
+wat = "1"

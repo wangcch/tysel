@@ -123,3 +123,59 @@ fn bundle_hash_mismatch_is_rejected() {
     let err = Tap::decode(&encoded).expect_err("hash");
     assert!(matches!(err, PackageError::Invalid(message) if message.contains("hash")));
 }
+
+#[test]
+fn tap_v2_roundtrips_portable_and_aot_components() {
+    let component = PackagedComponent {
+        name: "echo".into(),
+        abi_version: "0.4.0".into(),
+        source: b"portable-component".to_vec(),
+        aot: vec![PackagedAot {
+            target: "aarch64-macos".into(),
+            wasmtime_version: "32.0.1".into(),
+            engine_compatibility_hash: 42,
+            source_sha256: [7; 32],
+            bytes: b"native-aot".to_vec(),
+        }],
+    };
+    let tap = sample_tap().with_components(vec![component.clone()]);
+    let decoded = Tap::decode(&tap.encode().unwrap()).unwrap();
+    assert_eq!(decoded.manifest.format_version, TAP_VERSION);
+    assert_eq!(decoded.components, [component]);
+}
+
+#[test]
+fn component_blob_tampering_is_rejected() {
+    let component = PackagedComponent {
+        name: "echo".into(),
+        abi_version: "0.4.0".into(),
+        source: b"portable-component".to_vec(),
+        aot: Vec::new(),
+    };
+    let mut encoded = sample_tap().with_components(vec![component]).encode().unwrap();
+    *encoded.last_mut().unwrap() ^= 1;
+    let error = Tap::decode(&encoded).unwrap_err();
+    assert!(matches!(error, PackageError::Invalid(message) if message.contains("hash")));
+}
+
+#[test]
+fn tap_v1_payloads_remain_readable() {
+    let mut manifest = sample_manifest();
+    manifest.format_version = 1;
+    manifest.bundle_hash = bundle_hash(BUNDLE.as_bytes());
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let map = identity_source_map("src/index.ts", TYPESCRIPT).unwrap();
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(b"TYSELTAP");
+    encoded.extend_from_slice(&1u32.to_le_bytes());
+    encoded.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(BUNDLE.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(map.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&manifest);
+    encoded.extend_from_slice(BUNDLE.as_bytes());
+    encoded.extend_from_slice(&map);
+
+    let decoded = Tap::decode(&encoded).unwrap();
+    assert_eq!(decoded.manifest.format_version, 1);
+    assert!(decoded.components.is_empty());
+}
