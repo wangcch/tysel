@@ -72,7 +72,7 @@ cargo run -p tysel-cli -- build --manifest tysel.toml
 
 `tysel dev` serves the bundled app, prints `tysel listen <addr>`, and reloads isolates when `ts` / `js` / `json` / `toml` files change. It does not watch `node_modules`, `target`, `dist`, `.git`, or `data`. Reload keeps the same port; keep-alive connections pick up the new isolate on the next request.
 
-Trusted-path `fetch` supports HTTP and HTTPS GET/HEAD, follows redirects (max 20), and honors isolate timeout and cancel. Hosts must be listed in `[permissions] fetch`; an empty list denies every outbound request. `tysel.httpGet(url)` is a GET wrapper. Isolated workers cannot open outbound HTTP. Request bodies are not implemented yet.
+Trusted-path `fetch` supports HTTP and HTTPS GET/HEAD, follows redirects (max 20), and honors isolate timeout and cancel. Hosts must be listed in `[permissions] fetch`; an empty list denies every outbound request. Header values that are `secret:name` or `Bearer secret:name` are expanded in the host and never returned to JavaScript. Cross-origin redirects drop `Authorization` and other expanded secret headers. `tysel.httpGet(url)` is a GET wrapper. Isolated workers cannot open outbound HTTP. Request bodies are not implemented yet.
 
 `setTimeout` / `setInterval` run while the current request or eval is pending; leftover timers are dropped when the request ends. `TextEncoder` / `TextDecoder` are UTF-8 only. `crypto.getRandomValues` fills at most 65536 bytes. `crypto.subtle` is not implemented yet.
 

@@ -643,6 +643,47 @@ async fn fetch_follows_http_redirect() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn same_origin_redirect_keeps_authorization() {
+    let addr = serve_auth_redirect_same_origin();
+    let url = format!("http://{addr}/go");
+    let value = tokio::task::spawn_blocking(move || {
+        eval(
+            &format!(
+                r#"(async () => (await fetch("{url}", {{
+                    headers: {{ Authorization: "Bearer kept" }},
+                }})).text())()"#
+            ),
+            config(),
+        )
+    })
+    .await
+    .expect("join")
+    .expect("eval");
+    assert_eq!(value, Value::String("Bearer kept".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cross_origin_redirect_strips_authorization() {
+    let dest = serve_auth_echo();
+    let src = serve_redirect_to(format!("http://{dest}/"));
+    let url = format!("http://{src}/");
+    let value = tokio::task::spawn_blocking(move || {
+        eval(
+            &format!(
+                r#"(async () => (await fetch("{url}", {{
+                    headers: {{ Authorization: "Bearer leaked" }},
+                }})).text())()"#
+            ),
+            config(),
+        )
+    })
+    .await
+    .expect("join")
+    .expect("eval");
+    assert_eq!(value, Value::String("none".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn fetch_https_is_not_rejected_as_unsupported() {
     let err = tokio::task::spawn_blocking(|| {
         eval("(async () => (await fetch(\"https://127.0.0.1:1/\")).text())()", config())
@@ -746,6 +787,53 @@ fn serve_redirect() -> SocketAddr {
             } else {
                 Ok(Response::new(http_body_util::Full::new(Bytes::from_static(b"hello"))))
             }
+        }
+    })
+}
+
+fn serve_auth_echo() -> SocketAddr {
+    spawn_origin(|req| async move {
+        let auth = req
+            .headers()
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("none")
+            .to_owned();
+        Ok::<_, Infallible>(Response::new(http_body_util::Full::new(Bytes::from(auth))))
+    })
+}
+
+fn serve_auth_redirect_same_origin() -> SocketAddr {
+    spawn_origin(|req| async move {
+        if req.uri().path() == "/go" {
+            Ok(Response::builder()
+                .status(302)
+                .header("location", "/done")
+                .body(http_body_util::Full::new(Bytes::new()))
+                .unwrap())
+        } else {
+            let auth = req
+                .headers()
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("none")
+                .to_owned();
+            Ok(Response::new(http_body_util::Full::new(Bytes::from(auth))))
+        }
+    })
+}
+
+fn serve_redirect_to(location: String) -> SocketAddr {
+    spawn_origin(move |_| {
+        let location = location.clone();
+        async move {
+            Ok::<_, Infallible>(
+                Response::builder()
+                    .status(302)
+                    .header("location", location)
+                    .body(http_body_util::Full::new(Bytes::new()))
+                    .unwrap(),
+            )
         }
     })
 }

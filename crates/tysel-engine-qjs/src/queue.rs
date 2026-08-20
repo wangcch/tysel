@@ -3,7 +3,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Full};
 use hyper::Request;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
@@ -47,7 +47,7 @@ pub enum IoRequest {
     Echo { id: OpId, value: String },
     SecretRef { id: OpId, name: String },
     ReadBody { id: OpId },
-    HttpGet { id: OpId, url: String, method: String },
+    HttpGet { id: OpId, url: String, method: String, headers_json: String, body: String },
     HttpRead { id: OpId },
     WsRead { id: OpId },
     WsSend { id: OpId, data: String },
@@ -290,9 +290,18 @@ async fn execute(
         IoRequest::HttpRead { id } => {
             IoCompletion { id, result: read_chunk(&slots.outbound).await }
         }
-        IoRequest::HttpGet { id, url, method } => IoCompletion {
+        IoRequest::HttpGet { id, url, method, headers_json, body } => IoCompletion {
             id,
-            result: outbound_fetch(&method, &url, cancel, deadline, slots.outbound).await,
+            result: outbound_fetch(
+                &method,
+                &url,
+                &headers_json,
+                &body,
+                cancel,
+                deadline,
+                slots.outbound,
+            )
+            .await,
         },
         IoRequest::WsRead { id } => IoCompletion { id, result: read_chunk(&slots.ws_in).await },
         IoRequest::WsSend { id, data } => IoCompletion {
@@ -381,23 +390,25 @@ const MAX_REDIRECTS: u8 = 20;
 
 struct Hop {
     response: hyper::Response<Incoming>,
-    sender: hyper::client::conn::http1::SendRequest<Empty<Bytes>>,
+    sender: hyper::client::conn::http1::SendRequest<Full<Bytes>>,
 }
 
 async fn outbound_fetch(
     method: &str,
     url: &str,
+    headers_json: &str,
+    body: &str,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
     outbound: StreamSlot,
 ) -> Result<Value, String> {
-    let mut method = method.to_ascii_uppercase();
-    if method != "GET" && method != "HEAD" {
-        return Err("outbound fetch only supports GET and HEAD".into());
-    }
+    let mut method = normalize_method(method)?;
+    let mut headers = crate::fetch_policy::expand_headers_json(headers_json)?;
+    let mut body = request_body(&method, body)?;
     let mut url = url.to_owned();
     for _ in 0..=MAX_REDIRECTS {
-        let hop = fetch_hop(&method, &url, &cancel, deadline).await?;
+        let hop =
+            fetch_hop(&method, &url, &headers.headers, body.clone(), &cancel, deadline).await?;
         let status = hop.response.status();
         if status.is_redirection() {
             if let Some(location) = hop
@@ -406,9 +417,14 @@ async fn outbound_fetch(
                 .get(hyper::header::LOCATION)
                 .and_then(|value| value.to_str().ok())
             {
-                url = resolve_redirect(&url, location)?;
+                let next = resolve_redirect(&url, location)?;
+                if !crate::fetch_policy::same_origin(&url, &next)? {
+                    crate::fetch_policy::strip_credentials_for_cross_origin(&mut headers);
+                }
+                url = next;
                 if matches!(status.as_u16(), 301..=303) && method != "HEAD" {
                     method = "GET".into();
+                    body = Bytes::new();
                 }
                 continue;
             }
@@ -425,9 +441,23 @@ async fn outbound_fetch(
     Err("too many redirects".into())
 }
 
+fn normalize_method(method: &str) -> Result<String, String> {
+    let method = method.to_ascii_uppercase();
+    match method.as_str() {
+        "GET" | "HEAD" => Ok(method),
+        _ => Err("outbound fetch only supports GET and HEAD".into()),
+    }
+}
+
+fn request_body(_method: &str, _body: &str) -> Result<Bytes, String> {
+    Ok(Bytes::new())
+}
+
 async fn fetch_hop(
     method: &str,
     url: &str,
+    headers: &[(String, String)],
+    body: Bytes,
     cancel: &Arc<AtomicBool>,
     deadline: Instant,
 ) -> Result<Hop, String> {
@@ -454,11 +484,30 @@ async fn fetch_hop(
     };
     if https {
         let tls = tls_connect(&host, stream, cancel, deadline).await?;
-        handshake_and_send(TokioIo::new(tls), method, &path, &host_header, cancel, deadline).await
+        handshake_and_send(
+            TokioIo::new(tls),
+            OutboundHop { method, path: &path, host_header: &host_header, headers, body },
+            cancel,
+            deadline,
+        )
+        .await
     } else {
-        handshake_and_send(TokioIo::new(stream), method, &path, &host_header, cancel, deadline)
-            .await
+        handshake_and_send(
+            TokioIo::new(stream),
+            OutboundHop { method, path: &path, host_header: &host_header, headers, body },
+            cancel,
+            deadline,
+        )
+        .await
     }
+}
+
+struct OutboundHop<'a> {
+    method: &'a str,
+    path: &'a str,
+    host_header: &'a str,
+    headers: &'a [(String, String)],
+    body: Bytes,
 }
 
 async fn tls_connect(
@@ -479,9 +528,7 @@ async fn tls_connect(
 
 async fn handshake_and_send<I>(
     io: I,
-    method: &str,
-    path: &str,
-    host_header: &str,
+    hop: OutboundHop<'_>,
     cancel: &Arc<AtomicBool>,
     deadline: Instant,
 ) -> Result<Hop, String>
@@ -496,12 +543,14 @@ where
     io_handle().spawn(async move {
         let _ = conn.await;
     });
-    let request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header(hyper::header::HOST, host_header)
-        .body(Empty::<Bytes>::new())
-        .map_err(|err| err.to_string())?;
+    let mut builder = Request::builder()
+        .method(hop.method)
+        .uri(hop.path)
+        .header(hyper::header::HOST, hop.host_header);
+    for (name, value) in hop.headers {
+        builder = builder.header(name.as_str(), value.as_str());
+    }
+    let request = builder.body(Full::new(hop.body)).map_err(|err| err.to_string())?;
     let response = tokio::select! {
         biased;
         _ = cancelled(cancel, deadline) => return Err(interrupt_err(cancel, deadline)),

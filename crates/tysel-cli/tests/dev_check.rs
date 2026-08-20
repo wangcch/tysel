@@ -268,6 +268,89 @@ request_timeout_ms = 2000
     let _ = child.wait();
 }
 
+#[test]
+fn dev_fetch_expands_secret_handles_on_the_host() {
+    let (origin, seen) = spawn_header_echo();
+    let dir = temp_app("dev-fetch-secret");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+
+[permissions]
+fetch = ["127.0.0.1"]
+secrets = ["API_KEY"]
+"#,
+    )
+    .unwrap();
+    fs::write(dir.join(".env"), "API_KEY=sk-host-only\n").unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        format!(
+            r#"export default {{
+  async fetch() {{
+    const token = await tysel.secrets.ref("API_KEY");
+    const res = await fetch("http://{origin}/", {{
+      headers: {{ Authorization: "Bearer " + token }},
+    }});
+    return new Response(await res.text());
+  }},
+}};
+"#
+        ),
+    )
+    .unwrap();
+
+    let mut child = Command::new(cli_exe())
+        .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel dev");
+    let stdout = child.stdout.take().expect("stdout");
+    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let body = http_get(&addr);
+    assert!(body.contains("200"), "{body}");
+    assert!(body.contains("ok"), "{body}");
+    assert!(!body.contains("sk-host-only"), "{body}");
+    assert_eq!(seen.lock().expect("seen").as_str(), "Bearer sk-host-only");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn spawn_header_echo() -> (String, std::sync::Arc<std::sync::Mutex<String>>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind origin");
+    let addr = listener.local_addr().expect("local addr");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured = seen.clone();
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            if let Some(line) =
+                req.lines().find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+            {
+                *captured.lock().expect("seen") = line
+                    .split_once(':')
+                    .map(|(_, value)| value.trim().to_owned())
+                    .unwrap_or_default();
+            }
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+    });
+    (format!("127.0.0.1:{}", addr.port()), seen)
+}
+
 fn http_get(addr: &str) -> String {
     let mut stream = TcpStream::connect(addr).expect("connect");
     stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();

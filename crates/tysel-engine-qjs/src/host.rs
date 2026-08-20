@@ -48,9 +48,18 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     )?;
     tysel.set(
         "_httpStart",
-        Function::new(ctx.clone(), move |ctx, url: String, method: String| {
-            submit(ctx, &io_http_start, |id| IoRequest::HttpGet { id, url, method })
-        })?,
+        Function::new(
+            ctx.clone(),
+            move |ctx, url: String, method: String, headers_json: String, body: String| {
+                submit(ctx, &io_http_start, |id| IoRequest::HttpGet {
+                    id,
+                    url,
+                    method,
+                    headers_json,
+                    body,
+                })
+            },
+        )?,
     )?;
     tysel.set(
         "_httpRead",
@@ -134,7 +143,13 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
           init = init || {};
           const url = typeof input === "string" ? input : input.url;
           const method = String(init.method || (input && input.method) || "GET").toUpperCase();
-          const status = await tysel._httpStart(String(url), method);
+          const headers = new Headers(init.headers || (input && input.headers));
+          const pairs = [];
+          headers.forEach((value, key) => pairs.push([key, value]));
+          let body = "";
+          if (init.body != null) body = String(init.body);
+          else if (input && typeof input !== "string" && input.body != null) body = String(input.body);
+          const status = await tysel._httpStart(String(url), method, JSON.stringify(pairs), body);
           const response = new Response(null, { status: status });
           response._stream = true;
           return response;
