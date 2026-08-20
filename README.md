@@ -8,18 +8,15 @@ Tysel runs TypeScript services, workers, and agents as a single native executabl
 
 The public API prefers Web standards (`Request`, `Response`, `fetch`, streams, `crypto`). Platform capabilities are granted explicitly, not through ambient Node modules.
 
-This repository has completed the **M2** capability and isolation foundation and
-has started **M3**. The first M3 slice defines the unified task lifecycle and a
-bounded scheduler with deadlines, cancellation, retry requeueing, and FIFO
-worker claims. Durable foundations now include an ordered SQLite event log,
-deterministic replay validation, persisted wakeups, and atomic sleep-event/timer
-writes. Wakeup claims are leased and generation-scoped, and task histories are
-bounded to 10,000 events or 16 MiB. An explicit QuickJS durable session exposes
-`step`, `effect`, `sleep`, `waitForSignal`, `retry`, `now`, and `random` with
-replay and stale-writer protection; CLI task dispatch is not wired yet. `tysel
-check` validates a project; `tysel dev` serves with file-watch reload; `tysel
-run` serves without watching files; `tysel build` emits a single native
-executable. The full plan is in [roadmap.md](./roadmap.md).
+This repository has completed the **M3 Task and Agent v0.3** scope. Cron, Queue,
+MCP tools, and LLM calls enter the same bounded scheduler and TaskRPC lease
+lifecycle, with retry, timeout, cancellation, generation fencing, crash
+recovery, and late-result rejection. Durable execution uses a versioned SQLite
+event log for deterministic replay, signals, persisted wakeups, and explicit
+suspend/resume. `tysel dev` reloads HTTP and task workers, `tysel run` serves
+without watching, `tysel queue` submits one Queue message, `tysel mcp` serves
+MCP tools over stdio, and `tysel build` emits a single native executable. The
+full plan is in [roadmap.md](./roadmap.md).
 
 ## Layout
 
