@@ -1,9 +1,10 @@
 //! Process-wide trust policy for in-process isolates.
 //!
 //! Unconfigured processes (unit tests) use the trusted service policy. After
-//! `configure`, isolated profiles deny fetch, SQLite, and WebSocket even when
-//! `[permissions]` lists them. Do not call `configure` from engine-qjs unit
-//! tests: they share a process with open-mode tests.
+//! `configure`, isolated profiles deny fetch, SQLite, WebSocket, Postgres, and
+//! filesystem access even when `[permissions]` lists them. Do not call
+//! `configure` from engine-qjs unit tests: they share a process with open-mode
+//! tests.
 
 use std::sync::RwLock;
 

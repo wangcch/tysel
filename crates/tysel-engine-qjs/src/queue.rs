@@ -55,6 +55,10 @@ pub enum IoRequest {
     WsClose { id: OpId },
     SqliteExec { id: OpId, sql: String, params_json: String },
     SqliteQuery { id: OpId, sql: String, params_json: String },
+    PostgresExec { id: OpId, sql: String, params_json: String },
+    PostgresQuery { id: OpId, sql: String, params_json: String },
+    FsRead { id: OpId, path: String },
+    FsWrite { id: OpId, path: String, data: String },
 }
 
 impl IoRequest {
@@ -70,7 +74,11 @@ impl IoRequest {
             | Self::WsSend { id, .. }
             | Self::WsClose { id }
             | Self::SqliteExec { id, .. }
-            | Self::SqliteQuery { id, .. } => *id,
+            | Self::SqliteQuery { id, .. }
+            | Self::PostgresExec { id, .. }
+            | Self::PostgresQuery { id, .. }
+            | Self::FsRead { id, .. }
+            | Self::FsWrite { id, .. } => *id,
         }
     }
 
@@ -83,6 +91,8 @@ impl IoRequest {
             Self::HttpGet { .. } | Self::HttpRead { .. } => Cap::Fetch,
             Self::WsRead { .. } | Self::WsSend { .. } | Self::WsClose { .. } => Cap::WebSocket,
             Self::SqliteExec { .. } | Self::SqliteQuery { .. } => Cap::Sqlite,
+            Self::PostgresExec { .. } | Self::PostgresQuery { .. } => Cap::Postgres,
+            Self::FsRead { .. } | Self::FsWrite { .. } => Cap::Fs,
         }
     }
 }
@@ -334,6 +344,27 @@ async fn execute(
         IoRequest::SqliteQuery { id, sql, params_json } => {
             IoCompletion { id, result: sqlite_op(sql, params_json, true, cancel, deadline).await }
         }
+        IoRequest::PostgresExec { id, sql, params_json } => IoCompletion {
+            id,
+            result: postgres_op(sql, params_json, false, cancel, deadline).await,
+        },
+        IoRequest::PostgresQuery { id, sql, params_json } => {
+            IoCompletion { id, result: postgres_op(sql, params_json, true, cancel, deadline).await }
+        }
+        IoRequest::FsRead { id, path } => IoCompletion {
+            id,
+            result: run_blocking(cancel, deadline, move || {
+                tysel_cap_fs::read(&path).map(Value::String)
+            })
+            .await,
+        },
+        IoRequest::FsWrite { id, path, data } => IoCompletion {
+            id,
+            result: run_blocking(cancel, deadline, move || {
+                tysel_cap_fs::write(&path, &data).map(|()| Value::Null)
+            })
+            .await,
+        },
     }
 }
 
@@ -353,6 +384,59 @@ async fn sqlite_op(
         }
     })
     .await
+}
+
+async fn postgres_op(
+    sql: String,
+    params_json: String,
+    query: bool,
+    cancel: Arc<AtomicBool>,
+    deadline: Instant,
+) -> Result<Value, String> {
+    tokio::select! {
+        biased;
+        result = async {
+            if query {
+                tysel_cap_postgres::query(&sql, &params_json).await
+            } else {
+                tysel_cap_postgres::exec(&sql, &params_json).await.map(Value::Number)
+            }
+        } => result,
+        _ = cancelled(&cancel, deadline) => Err(interrupt_err(&cancel, deadline)),
+    }
+}
+
+async fn run_blocking<T, F>(
+    cancel: Arc<AtomicBool>,
+    deadline: Instant,
+    work: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    if cancel.load(Ordering::SeqCst) {
+        return Err(io_err(InterruptReason::Cancelled));
+    }
+    if Instant::now() >= deadline {
+        return Err(io_err(InterruptReason::Timeout));
+    }
+    let cancel_flag = cancel.clone();
+    let task = tokio::task::spawn_blocking(move || {
+        if cancel_flag.load(Ordering::SeqCst) {
+            return Err(io_err(InterruptReason::Cancelled));
+        }
+        if Instant::now() >= deadline {
+            return Err(io_err(InterruptReason::Timeout));
+        }
+        work()
+    });
+    tokio::pin!(task);
+    tokio::select! {
+        biased;
+        result = &mut task => result.map_err(|err| err.to_string())?,
+        _ = cancelled(&cancel, deadline) => Err(interrupt_err(&cancel, deadline)),
+    }
 }
 
 async fn wait_or_interrupt<T, F>(

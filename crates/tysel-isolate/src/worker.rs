@@ -114,6 +114,8 @@ fn load_handler(
 ) -> Result<IsolatePool, IsolateError> {
     tysel_engine_qjs::configure_execution_profile("isolated");
     tysel_engine_qjs::configure_fetch_hosts(Vec::new());
+    tysel_engine_qjs::configure_postgres(None);
+    tysel_engine_qjs::configure_fs(Vec::new(), Vec::new(), None);
     let mut secrets = HashMap::new();
     for name in secret_names {
         secrets.insert(name, String::new());

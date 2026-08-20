@@ -72,6 +72,54 @@ fn sqlite_query_roundtrips_bound_params() {
 }
 
 #[test]
+fn postgres_is_denied_until_configured() {
+    let value = eval(
+        r#"
+        (async () => {
+            try {
+                await tysel.postgres.query("SELECT 1");
+                return "allowed";
+            } catch (err) {
+                return String(err);
+            }
+        })()
+        "#,
+        config(),
+    )
+    .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(message.contains("not configured"), "unexpected error: {message}");
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
+fn filesystem_is_denied_until_configured() {
+    let value = eval(
+        r#"
+        (async () => {
+            try {
+                await tysel.fs.read("hello.txt");
+                return "allowed";
+            } catch (err) {
+                return String(err);
+            }
+        })()
+        "#,
+        config(),
+    )
+    .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(message.contains("not configured"), "unexpected error: {message}");
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
 fn sqlite_timeout_keeps_the_connection_usable() {
     let started = Instant::now();
     let result = eval(

@@ -18,6 +18,9 @@ fn sample_manifest() -> PackageManifest {
         sqlite_path: String::new(),
         secret_names: Vec::new(),
         fetch_hosts: Vec::new(),
+        postgres: Vec::new(),
+        fs_read: Vec::new(),
+        fs_write: Vec::new(),
         json_logs: true,
     }
 }

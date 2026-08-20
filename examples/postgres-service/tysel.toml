@@ -1,0 +1,10 @@
+[app]
+name = "postgres-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+
+[permissions]
+postgres = ["main:read-write"]

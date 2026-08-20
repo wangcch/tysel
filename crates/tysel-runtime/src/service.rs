@@ -35,6 +35,15 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     };
     let bundle = tap.bundle_source()?.to_owned();
     tysel_engine_qjs::configure_sqlite_path(&tap.manifest.sqlite_path, None);
+    tysel_engine_qjs::configure_fs(
+        tap.manifest.fs_read.clone(),
+        tap.manifest.fs_write.clone(),
+        None,
+    );
+    tysel_engine_qjs::configure_postgres(tysel_manifest::resolve_postgres_url(
+        &tap.manifest.postgres,
+        &std::collections::HashMap::new(),
+    ));
     tysel_engine_qjs::configure_secrets(tysel_engine_qjs::load_declared(
         &tap.manifest.secret_names,
         &std::collections::HashMap::new(),

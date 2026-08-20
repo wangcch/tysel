@@ -14,6 +14,8 @@ pub enum ManifestError {
     Io(#[from] std::io::Error),
     #[error("invalid toml: {0}")]
     Toml(#[from] toml::de::Error),
+    #[error("{0}")]
+    Invalid(String),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,6 +81,8 @@ pub struct Permissions {
     pub postgres: Vec<String>,
     #[serde(default)]
     pub fs_read: Vec<String>,
+    #[serde(default)]
+    pub fs_write: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -177,7 +181,9 @@ impl Manifest {
     }
 
     pub fn parse(raw: &str) -> Result<Self, ManifestError> {
-        Ok(toml::from_str(raw)?)
+        let manifest: Self = toml::from_str(raw)?;
+        manifest.validate()?;
+        Ok(manifest)
     }
 
     pub fn inspect_report(&self) -> String {
@@ -210,10 +216,19 @@ impl Manifest {
             out.push_str("  SQLite\n");
             out.push_str(&format!("    {}\n", self.durable.path));
         }
-        if !self.permissions.fs_read.is_empty() {
-            out.push_str("\nFilesystem\n  Read\n");
-            for path in &self.permissions.fs_read {
-                out.push_str(&format!("    {path}\n"));
+        if !self.permissions.fs_read.is_empty() || !self.permissions.fs_write.is_empty() {
+            out.push_str("\nFilesystem\n");
+            if !self.permissions.fs_read.is_empty() {
+                out.push_str("  Read\n");
+                for path in &self.permissions.fs_read {
+                    out.push_str(&format!("    {path}\n"));
+                }
+            }
+            if !self.permissions.fs_write.is_empty() {
+                out.push_str("  Write\n");
+                for path in &self.permissions.fs_write {
+                    out.push_str(&format!("    {path}\n"));
+                }
             }
         }
         out.push_str(
@@ -221,6 +236,82 @@ impl Manifest {
         );
         out
     }
+
+    fn validate(&self) -> Result<(), ManifestError> {
+        for item in &self.permissions.postgres {
+            parse_postgres_grant(item).map_err(ManifestError::Invalid)?;
+        }
+        Ok(())
+    }
+}
+
+/// A named Postgres connection from `[permissions] postgres`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresGrant {
+    pub name: String,
+    pub mode: Option<String>,
+}
+
+/// Parse `main` or `main:read-write`. URLs are rejected so credentials cannot
+/// enter the manifest or TAP trailer.
+pub fn parse_postgres_grant(raw: &str) -> Result<PostgresGrant, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("postgres permission must not be empty".into());
+    }
+    if raw.contains("://") || raw.contains('/') || raw.contains('@') {
+        return Err(format!(
+            "postgres permission {raw:?} must be a connection name (e.g. main:read-write), not a URL"
+        ));
+    }
+    let (name, mode) = match raw.split_once(':') {
+        Some((name, mode)) => (name, Some(mode)),
+        None => (raw, None),
+    };
+    if !is_postgres_alias(name) {
+        return Err(format!(
+            "postgres permission {raw:?} must be a connection name (e.g. main:read-write)"
+        ));
+    }
+    if let Some(mode) = mode {
+        if mode != "read-write" && mode != "read-only" {
+            return Err(format!(
+                "postgres permission {raw:?} mode must be read-write or read-only"
+            ));
+        }
+    }
+    Ok(PostgresGrant { name: name.to_owned(), mode: mode.map(str::to_owned) })
+}
+
+pub fn postgres_url_env_key(name: &str) -> String {
+    format!("TYSEL_POSTGRES_{}", name.replace('-', "_").to_ascii_uppercase())
+}
+
+/// Resolve the first declared connection's URL from `TYSEL_POSTGRES_<NAME>`.
+/// Invalid grants (including URLs) are ignored so they are never used as
+/// connection strings.
+pub fn resolve_postgres_url(
+    grants: &[String],
+    file_values: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let raw = grants.iter().map(|item| item.trim()).find(|item| !item.is_empty())?;
+    let grant = parse_postgres_grant(raw).ok()?;
+    let key = postgres_url_env_key(&grant.name);
+    if let Ok(value) = std::env::var(&key) {
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+    file_values.get(&key).filter(|value| !value.is_empty()).cloned()
+}
+
+fn is_postgres_alias(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_lowercase()
+        && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
 }
 
 #[cfg(test)]
@@ -247,5 +338,41 @@ listen = "127.0.0.1:3000"
         assert!(manifest.inspect_report().contains("Logs: json"));
         assert!(manifest.inspect_report().contains("SQLite"));
         assert!(manifest.inspect_report().contains("./data/tysel.db"));
+    }
+
+    #[test]
+    fn postgres_grant_parses_named_connection() {
+        let grant = parse_postgres_grant("main:read-write").unwrap();
+        assert_eq!(grant.name, "main");
+        assert_eq!(grant.mode.as_deref(), Some("read-write"));
+        assert_eq!(postgres_url_env_key("main"), "TYSEL_POSTGRES_MAIN");
+    }
+
+    #[test]
+    fn postgres_url_is_rejected() {
+        let err = parse_postgres_grant("postgres://user:pass@localhost/db").unwrap_err();
+        assert!(err.contains("not a URL"), "{err}");
+        let err = Manifest::parse(
+            r#"
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+postgres = ["postgres://user:pass@localhost/db"]
+"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not a URL"), "{err}");
+    }
+
+    #[test]
+    fn resolve_postgres_url_ignores_embedded_urls() {
+        let url = resolve_postgres_url(
+            &["postgres://user:pass@localhost/db".into()],
+            &std::collections::HashMap::new(),
+        );
+        assert_eq!(url, None);
     }
 }

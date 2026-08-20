@@ -22,6 +22,10 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
     let io_ws_close = io.clone();
     let io_sqlite_exec = io.clone();
     let io_sqlite_query = io.clone();
+    let io_pg_exec = io.clone();
+    let io_pg_query = io.clone();
+    let io_fs_read = io.clone();
+    let io_fs_write = io.clone();
     tysel.set(
         "sleep",
         Function::new(ctx.clone(), move |ctx, millis: f64| {
@@ -136,6 +140,30 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
             submit(ctx, &io_sqlite_query, |id| IoRequest::SqliteQuery { id, sql, params_json })
         })?,
     )?;
+    tysel.set(
+        "_pgExec",
+        Function::new(ctx.clone(), move |ctx, sql: String, params_json: String| {
+            submit(ctx, &io_pg_exec, |id| IoRequest::PostgresExec { id, sql, params_json })
+        })?,
+    )?;
+    tysel.set(
+        "_pgQuery",
+        Function::new(ctx.clone(), move |ctx, sql: String, params_json: String| {
+            submit(ctx, &io_pg_query, |id| IoRequest::PostgresQuery { id, sql, params_json })
+        })?,
+    )?;
+    tysel.set(
+        "_fsRead",
+        Function::new(ctx.clone(), move |ctx, path: String| {
+            submit(ctx, &io_fs_read, |id| IoRequest::FsRead { id, path })
+        })?,
+    )?;
+    tysel.set(
+        "_fsWrite",
+        Function::new(ctx.clone(), move |ctx, path: String, data: String| {
+            submit(ctx, &io_fs_write, |id| IoRequest::FsWrite { id, path, data })
+        })?,
+    )?;
     ctx.globals().set("tysel", tysel)?;
     ctx.eval::<(), _>(
         r#"
@@ -199,6 +227,22 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
           },
           query(sql, params) {
             return tysel._sqliteQuery(String(sql), JSON.stringify(params == null ? [] : params));
+          },
+        };
+        globalThis.tysel.postgres = {
+          exec(sql, params) {
+            return tysel._pgExec(String(sql), JSON.stringify(params == null ? [] : params));
+          },
+          query(sql, params) {
+            return tysel._pgQuery(String(sql), JSON.stringify(params == null ? [] : params));
+          },
+        };
+        globalThis.tysel.fs = {
+          read(path) {
+            return tysel._fsRead(String(path));
+          },
+          write(path, data) {
+            return tysel._fsWrite(String(path), data == null ? "" : String(data));
           },
         };
         globalThis.tysel.secrets = {

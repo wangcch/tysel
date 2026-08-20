@@ -44,6 +44,37 @@ profile = "service"
 }
 
 #[test]
+fn check_rejects_a_postgres_url() {
+    let dir = temp_app("check-pg-url");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "service"
+
+[permissions]
+postgres = ["postgres://user:pass@localhost/db"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        "export default { async fetch() { return new Response(\"ok\"); } };\n",
+    )
+    .unwrap();
+    let output = Command::new(cli_exe())
+        .args(["check", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .output()
+        .expect("run tysel check");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not a URL"), "{stderr}");
+}
+
+#[test]
 fn check_fails_on_invalid_typescript() {
     let dir = temp_app("check-syntax");
     write_js_app(&dir, "export default {\n");
@@ -433,6 +464,70 @@ secrets = ["API_KEY"]
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+fn dev_fs_read_and_write_stay_inside_allowlist() {
+    let dir = temp_app("dev-fs");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("data")).unwrap();
+    fs::write(dir.join("data/hello.txt"), "hi").unwrap();
+    fs::write(dir.join("secret.txt"), "no").unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+
+[permissions]
+fs_read = ["./data"]
+fs_write = ["./data"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        r#"export default {
+  async fetch() {
+    try {
+      await tysel.fs.write("data/out.txt", "ok");
+      const hello = await tysel.fs.read("data/hello.txt");
+      try {
+        await tysel.fs.read("secret.txt");
+        return new Response("escaped", { status: 500 });
+      } catch (err) {
+        return Response.json({ hello, denied: String(err) });
+      }
+    } catch (err) {
+      return new Response(String(err), { status: 500 });
+    }
+  },
+};
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new(cli_exe())
+        .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn tysel dev");
+    let stdout = child.stdout.take().expect("stdout");
+    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let body = http_get(&addr);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(body.contains("200"), "{body}");
+    assert!(body.contains("\"hello\":\"hi\"") || body.contains("\"hello\": \"hi\""), "{body}");
+    assert!(body.contains("not permitted"), "{body}");
+    assert_eq!(fs::read_to_string(dir.join("data/out.txt")).unwrap(), "ok");
+    assert_eq!(fs::read_to_string(dir.join("secret.txt")).unwrap(), "no");
 }
 
 fn spawn_header_echo() -> (String, std::sync::Arc<std::sync::Mutex<String>>) {

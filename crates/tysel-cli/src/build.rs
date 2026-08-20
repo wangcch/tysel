@@ -126,7 +126,7 @@ fn capability_summary(manifest: &Manifest) -> String {
     if !manifest.permissions.postgres.is_empty() {
         caps.push("postgres");
     }
-    if !manifest.permissions.fs_read.is_empty() {
+    if !manifest.permissions.fs_read.is_empty() || !manifest.permissions.fs_write.is_empty() {
         caps.push("fs");
     }
     if caps.is_empty() { "none".into() } else { caps.join(", ") }

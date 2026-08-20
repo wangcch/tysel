@@ -48,6 +48,12 @@ pub struct PackageManifest {
     pub secret_names: Vec<String>,
     #[serde(default)]
     pub fetch_hosts: Vec<String>,
+    #[serde(default, alias = "postgres_urls")]
+    pub postgres: Vec<String>,
+    #[serde(default)]
+    pub fs_read: Vec<String>,
+    #[serde(default)]
+    pub fs_write: Vec<String>,
     #[serde(default = "default_json_logs")]
     pub json_logs: bool,
 }

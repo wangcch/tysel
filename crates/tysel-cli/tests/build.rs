@@ -115,6 +115,58 @@ export default {
 }
 
 #[test]
+fn build_does_not_embed_postgres_urls() {
+    let dir = std::env::temp_dir().join(format!("tysel-cli-build-pg-{}", std::process::id()));
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "service"
+
+[permissions]
+postgres = ["main:read-write"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        "export default { async fetch() { return new Response(\"ok\"); } };\n",
+    )
+    .unwrap();
+    let stub = dir.join("tysel-service");
+    fs::write(&stub, b"stub-runtime").unwrap();
+    let output = dir.join("dist").join("hello-service");
+
+    let result = Command::new(cli_exe())
+        .env("TYSEL_POSTGRES_MAIN", "postgres://tysel:s3cret-not-for-tap@127.0.0.1:5432/tysel")
+        .args([
+            "build",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            stub.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run tysel build");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("postgres"), "{stdout}");
+
+    let tap = Tap::from_path(&output).expect("extract tap");
+    assert_eq!(tap.manifest.postgres, ["main:read-write"]);
+    let bytes = fs::read(&output).unwrap();
+    let haystack = String::from_utf8_lossy(&bytes);
+    assert!(haystack.contains("main:read-write"), "alias missing from binary");
+    assert!(!haystack.contains("postgres://"), "URL leaked into binary");
+    assert!(!haystack.contains("s3cret-not-for-tap"), "password leaked into binary");
+}
+
+#[test]
 fn build_rejects_a_cross_compile_target() {
     let dir = temp_js_app("build-target");
     let stub = dir.join("tysel-service");

@@ -42,6 +42,9 @@ pub fn tap_from_app(
         },
         secret_names: manifest.permissions.secrets.clone(),
         fetch_hosts: manifest.permissions.fetch.clone(),
+        postgres: manifest.permissions.postgres.clone(),
+        fs_read: manifest.permissions.fs_read.clone(),
+        fs_write: manifest.permissions.fs_write.clone(),
         json_logs: manifest.observability.logs.eq_ignore_ascii_case("json"),
     };
     Tap::new(packaged, bundle, source_map)
@@ -188,6 +191,33 @@ fetch = ["api.openai.com"]
             identity_source_map("src/index.ts", "export default {}\n").unwrap(),
         );
         assert_eq!(tap.manifest.fetch_hosts, ["api.openai.com"]);
+    }
+
+    #[test]
+    fn tap_copies_postgres_and_fs_permissions() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+postgres = ["main:read-write"]
+fs_read = ["./data"]
+fs_write = ["./data"]
+"#,
+        )
+        .unwrap();
+        let tap = tap_from_app(
+            &manifest,
+            "0.0.1",
+            b"export default {};".to_vec(),
+            identity_source_map("src/index.ts", "export default {}\n").unwrap(),
+        );
+        assert_eq!(tap.manifest.postgres, ["main:read-write"]);
+        assert_eq!(tap.manifest.fs_read, ["./data"]);
+        assert_eq!(tap.manifest.fs_write, ["./data"]);
     }
 
     #[test]

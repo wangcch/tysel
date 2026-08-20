@@ -10,8 +10,7 @@ pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
 
-/// Host operations the engine can request. Unimplemented capabilities stay in
-/// the enum so the build layer can deny them before any adapter exists.
+/// Host operations the engine can request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Cap {
     Sleep,
@@ -81,14 +80,16 @@ impl Policy {
                         | Cap::Fetch
                         | Cap::Sqlite
                         | Cap::WebSocket
+                        | Cap::Postgres
+                        | Cap::Fs
                 )
             }
         }
     }
 }
 
-fn build_allows(cap: Cap) -> bool {
-    !matches!(cap, Cap::Postgres | Cap::Fs)
+fn build_allows(_cap: Cap) -> bool {
+    true
 }
 
 fn deployment_allows(_cap: Cap) -> bool {
@@ -136,9 +137,9 @@ mod tests {
         assert!(policy.allows(Cap::Fetch));
         assert!(policy.allows(Cap::Sqlite));
         assert!(policy.allows(Cap::WebSocket));
-        assert!(!policy.allows(Cap::Postgres));
-        assert!(!policy.allows(Cap::Fs));
-        assert_eq!(policy.require(Cap::Postgres).unwrap_err(), "capability is not available");
+        assert!(policy.allows(Cap::Postgres));
+        assert!(policy.allows(Cap::Fs));
+        policy.require(Cap::Fetch).unwrap();
     }
 
     #[test]

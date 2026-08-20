@@ -25,8 +25,9 @@ pub use secrets::{
 };
 pub use trust::configure as configure_policy;
 
-/// Apply the TAP execution profile. `isolated` denies fetch, SQLite, and
-/// WebSocket; every other profile is the trusted service path.
+/// Apply the TAP execution profile. `isolated` denies fetch, SQLite,
+/// WebSocket, Postgres, and filesystem access; every other profile is the
+/// trusted service path.
 pub fn configure_execution_profile(profile: &str) {
     trust::configure(tysel_policy::Policy::from_profile(profile));
 }
@@ -49,6 +50,18 @@ pub fn configure_sqlite_path(path: &str, root: Option<&Path>) {
         None => path.to_owned(),
     };
     tysel_cap_sqlite::configure_path(resolved);
+}
+
+/// Pin trusted-path filesystem roots. Relative paths are resolved against
+/// `root` when provided. Unconfigured processes deny every path.
+pub fn configure_fs(read: Vec<String>, write: Vec<String>, root: Option<&Path>) {
+    tysel_cap_fs::configure(read, write, root);
+}
+
+/// Pin the trusted-path Postgres URL resolved from `TYSEL_POSTGRES_<NAME>`.
+/// `None` leaves Postgres unconfigured.
+pub fn configure_postgres(url: Option<String>) {
+    tysel_cap_postgres::configure(url);
 }
 
 #[cfg(test)]

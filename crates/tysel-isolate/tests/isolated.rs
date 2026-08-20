@@ -97,6 +97,58 @@ fn sqlite_is_denied_in_isolated_worker() {
 }
 
 #[test]
+fn postgres_is_denied_in_isolated_worker() {
+    let mut supervisor = supervisor();
+    let value = supervisor
+        .eval(
+            r#"(async () => {
+                try {
+                    await tysel.postgres.query("SELECT 1");
+                    return "allowed";
+                } catch (err) {
+                    return String(err);
+                }
+            })()"#,
+        )
+        .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(
+                message.contains("capability is not available in the isolated worker"),
+                "unexpected error: {message}"
+            );
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
+fn filesystem_is_denied_in_isolated_worker() {
+    let mut supervisor = supervisor();
+    let value = supervisor
+        .eval(
+            r#"(async () => {
+                try {
+                    await tysel.fs.read("hello.txt");
+                    return "allowed";
+                } catch (err) {
+                    return String(err);
+                }
+            })()"#,
+        )
+        .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(
+                message.contains("capability is not available in the isolated worker"),
+                "unexpected error: {message}"
+            );
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
 fn fetch_is_denied_in_isolated_worker() {
     let mut supervisor = supervisor();
     let value = supervisor

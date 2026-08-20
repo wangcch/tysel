@@ -60,10 +60,19 @@ fn load(
         .with_context(|| format!("failed to bundle {}", entry.display()))?;
     let tap = tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), bundle, source_map);
     tysel_engine_qjs::configure_sqlite_path(&tap.manifest.sqlite_path, Some(root));
+    tysel_engine_qjs::configure_fs(
+        tap.manifest.fs_read.clone(),
+        tap.manifest.fs_write.clone(),
+        Some(root),
+    );
     let file_values = fs::read_to_string(root.join(".env"))
         .ok()
         .map(|text| tysel_engine_qjs::parse_dotenv(&text))
         .unwrap_or_default();
+    tysel_engine_qjs::configure_postgres(tysel_manifest::resolve_postgres_url(
+        &tap.manifest.postgres,
+        &file_values,
+    ));
     tysel_engine_qjs::configure_secrets(tysel_engine_qjs::load_declared(
         &tap.manifest.secret_names,
         &file_values,

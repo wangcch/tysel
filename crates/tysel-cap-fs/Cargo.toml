@@ -10,4 +10,5 @@ description = "Official filesystem capability."
 [lints]
 workspace = true
 
-[dependencies]
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
