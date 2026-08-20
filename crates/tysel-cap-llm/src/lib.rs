@@ -437,18 +437,18 @@ impl LlmGateway {
         cancel: &LlmCancel,
     ) -> Result<LlmResponse, LlmError> {
         let started = Instant::now();
+        let input_bytes = match validate_request(&request, self.config.max_input_bytes) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.audit_rejected(&request, "<invalid>", 0, started);
+                return Err(error);
+            }
+        };
         let route = match self.routes.get(&request.model) {
             Some(route) => route.clone(),
             None => {
                 self.audit_rejected(&request, "<denied>", 0, started);
                 return Err(LlmError::ModelDenied);
-            }
-        };
-        let input_bytes = match validate_request(&request, self.config.max_input_bytes) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                self.audit_rejected(&request, &route.provider_name, 0, started);
-                return Err(error);
             }
         };
         if cancel.is_cancelled() {
@@ -567,8 +567,8 @@ impl LlmGateway {
         outcome: LlmAuditOutcome,
     ) {
         self.audit.record(LlmAuditEvent {
-            request_id: request.request_id.clone(),
-            model: request.model.clone(),
+            request_id: bounded_audit_field(&request.request_id, MAX_LLM_REQUEST_ID_BYTES),
+            model: bounded_audit_field(&request.model, MAX_LLM_MODEL_BYTES),
             provider: route.provider_name.clone(),
             input_bytes,
             output_bytes,
@@ -585,8 +585,8 @@ impl LlmGateway {
         started: Instant,
     ) {
         self.audit.record(LlmAuditEvent {
-            request_id: request.request_id.clone(),
-            model: request.model.clone(),
+            request_id: bounded_audit_field(&request.request_id, MAX_LLM_REQUEST_ID_BYTES),
+            model: bounded_audit_field(&request.model, MAX_LLM_MODEL_BYTES),
             provider: provider.into(),
             input_bytes,
             output_bytes: None,
@@ -594,6 +594,17 @@ impl LlmGateway {
             outcome: LlmAuditOutcome::Rejected,
         });
     }
+}
+
+fn bounded_audit_field(value: &str, maximum: usize) -> String {
+    if value.len() <= maximum {
+        return value.to_owned();
+    }
+    let mut end = maximum;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 fn validate_config(config: LlmGatewayConfig) -> Result<(), LlmError> {
@@ -829,6 +840,21 @@ mod tests {
         let events = audit.0.lock().unwrap();
         assert_eq!(events.len(), 2);
         assert!(events.iter().all(|event| event.outcome == LlmAuditOutcome::Rejected));
+    }
+
+    #[tokio::test]
+    async fn validates_and_bounds_unknown_model_before_policy_audit() {
+        let (gateway, audit, _) = test_gateway(Duration::ZERO, 1_000);
+        let mut invalid = request();
+        invalid.model = "界".repeat(MAX_LLM_MODEL_BYTES);
+        assert!(matches!(
+            gateway.generate(invalid, &LlmCancel::new()).await,
+            Err(LlmError::InvalidRequest(_))
+        ));
+        let events = audit.0.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].provider, "<invalid>");
+        assert!(events[0].model.len() <= MAX_LLM_MODEL_BYTES);
     }
 
     #[test]
