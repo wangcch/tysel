@@ -41,7 +41,10 @@ impl Field {
             return Err(TaskIngressError::InvalidCron("empty cron field".into()));
         }
         let mut allowed = vec![false; usize::from(maximum) + 1];
-        let wildcard = source == "*";
+        // Traditional Cron treats a field beginning with `*` as unrestricted
+        // for the day-of-month/day-of-week intersection rule, even when the
+        // wildcard carries a step such as `*/2`.
+        let wildcard = source.starts_with('*');
         for component in source.split(',') {
             let (range, step) = match component.split_once('/') {
                 Some((range, step)) => {
@@ -229,6 +232,10 @@ impl TaskRegistry {
         self.mcp_tools.values()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.cron.is_empty() && self.queues.is_empty() && self.mcp_tools.is_empty()
+    }
+
     pub fn has_mcp_tool(&self, name: &str) -> bool {
         self.mcp_tools.contains_key(name)
     }
@@ -247,8 +254,14 @@ pub struct TaskIngress {
     registry: TaskRegistry,
     application_id: String,
     next_id: AtomicU64,
-    last_cron_minute: Mutex<Option<u64>>,
+    next_cron_position: Mutex<Option<CronPosition>>,
     request_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CronPosition {
+    minute: u64,
+    registration: usize,
 }
 
 impl TaskIngress {
@@ -274,7 +287,7 @@ impl TaskIngress {
             registry,
             application_id,
             next_id: AtomicU64::new(first_task_id),
-            last_cron_minute: Mutex::new(None),
+            next_cron_position: Mutex::new(None),
             request_timeout_ms,
         })
     }
@@ -349,68 +362,63 @@ impl TaskIngress {
         Ok(id)
     }
 
-    /// Enqueue all due registrations since the previous call. Catch-up is
-    /// bounded to one day so a stale process cannot monopolize the scheduler.
+    /// Enqueue due registrations since the previous call. Catch-up is bounded
+    /// to one day and admitted incrementally so a batch larger than the queue
+    /// can still make progress as workers release capacity.
     pub async fn enqueue_due_cron(
         &self,
         now_ms: u64,
     ) -> Result<Vec<TriggeredTask>, TaskIngressError> {
         let current_minute = now_ms / MINUTE_MS;
-        let mut last = self.last_cron_minute.lock().await;
-        let start = match *last {
-            Some(previous) if previous >= current_minute => return Ok(Vec::new()),
-            Some(previous) => previous
-                .saturating_add(1)
-                .max(current_minute.saturating_sub(MAX_CRON_CATCH_UP_MINUTES - 1)),
-            None => current_minute,
+        let oldest_minute = current_minute.saturating_sub(MAX_CRON_CATCH_UP_MINUTES - 1);
+        let mut cursor = self.next_cron_position.lock().await;
+        let mut position = match *cursor {
+            Some(position) if position.minute > current_minute => return Ok(Vec::new()),
+            Some(position) if position.minute >= oldest_minute => position,
+            Some(_) => CronPosition { minute: oldest_minute, registration: 0 },
+            None => CronPosition { minute: current_minute, registration: 0 },
         };
-        let mut pending = Vec::new();
-        for minute in start..=current_minute {
+        let mut broker = self.broker.lock().await;
+        let mut triggered = Vec::with_capacity(broker.remaining_capacity());
+        while position.minute <= current_minute {
+            let minute = position.minute;
             let scheduled_at_ms = minute.checked_mul(MINUTE_MS).ok_or(TaskIngressError::Clock)?;
-            for registration in &self.registry.cron {
+            while position.registration < self.registry.cron.len() {
+                let registration = &self.registry.cron[position.registration];
                 if !registration.schedule.matches_unix_ms(scheduled_at_ms) {
+                    position.registration += 1;
                     continue;
                 }
-                pending.push((
-                    minute,
-                    registration.name.clone(),
-                    registration.schedule.source().to_owned(),
-                    scheduled_at_ms,
-                ));
+                if broker.remaining_capacity() == 0 {
+                    *cursor = Some(position);
+                    return Ok(triggered);
+                }
+                let handler = registration.name.clone();
+                let id = TaskId(u128::from(self.reserve_task_ids(1)?));
+                let deadline =
+                    now_ms.checked_add(self.request_timeout_ms).ok_or(TaskIngressError::Clock)?;
+                let task = Task::new(
+                    TaskMeta {
+                        id,
+                        application_id: self.application_id.clone(),
+                        tenant_id: None,
+                        idempotency_key: Some(format!("cron:{handler}:{minute}")),
+                        trace_id: None,
+                    },
+                    TaskTrigger::Cron {
+                        name: handler.clone(),
+                        expression: registration.schedule.source().to_owned(),
+                    },
+                    Some(deadline),
+                )
+                .with_input(Value::Null);
+                broker.enqueue(task)?;
+                triggered.push(TriggeredTask { id, handler, scheduled_at_ms });
+                position.registration += 1;
             }
+            position = CronPosition { minute: minute.saturating_add(1), registration: 0 };
         }
-        let mut broker = self.broker.lock().await;
-        let available = broker.remaining_capacity();
-        if available < pending.len() {
-            return Err(TaskIngressError::InsufficientCronCapacity {
-                required: pending.len(),
-                available,
-            });
-        }
-        let first_id = self.reserve_task_ids(pending.len())?;
-        let deadline =
-            now_ms.checked_add(self.request_timeout_ms).ok_or(TaskIngressError::Clock)?;
-        let mut triggered = Vec::with_capacity(pending.len());
-        for (offset, (minute, handler, expression, scheduled_at_ms)) in
-            pending.into_iter().enumerate()
-        {
-            let id = TaskId(u128::from(first_id + offset as u64));
-            let task = Task::new(
-                TaskMeta {
-                    id,
-                    application_id: self.application_id.clone(),
-                    tenant_id: None,
-                    idempotency_key: Some(format!("cron:{handler}:{minute}")),
-                    trace_id: None,
-                },
-                TaskTrigger::Cron { name: handler.clone(), expression },
-                Some(deadline),
-            )
-            .with_input(Value::Null);
-            broker.enqueue(task)?;
-            triggered.push(TriggeredTask { id, handler, scheduled_at_ms });
-        }
-        *last = Some(current_minute);
+        *cursor = Some(position);
         Ok(triggered)
     }
 
@@ -447,8 +455,6 @@ pub enum TaskIngressError {
     TaskIdExhausted,
     #[error("task clock overflow")]
     Clock,
-    #[error("cron batch requires {required} queue slots but only {available} are available")]
-    InsufficientCronCapacity { required: usize, available: usize },
     #[error(transparent)]
     Broker(#[from] TaskRpcBrokerError),
     #[error(transparent)]
@@ -560,7 +566,7 @@ mod tests {
     async fn cron_does_not_advance_cursor_when_enqueue_hits_backpressure() {
         let (_, ingress) = ingress(1);
         ingress.enqueue_queue("orders.created", None, Value::Null, 1).await.unwrap();
-        assert!(ingress.enqueue_due_cron(3_600_000).await.is_err());
+        assert!(ingress.enqueue_due_cron(3_600_000).await.unwrap().is_empty());
         // The same due minute is retried after the original task is claimed.
         let mut worker = ingress.broker.lock().await;
         let claimed = worker.handle(
@@ -578,7 +584,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cron_batch_is_atomic_when_multiple_handlers_exceed_capacity() {
+    async fn cron_batch_larger_than_capacity_is_admitted_incrementally() {
         let broker = Arc::new(Mutex::new(TaskRpcBroker::new(1).unwrap()));
         let definitions = vec![
             ModuleTaskDefinition {
@@ -594,10 +600,35 @@ mod tests {
         let ingress =
             TaskIngress::new(Arc::clone(&broker), registry, "test-app", 1, 1_000).unwrap();
 
-        assert!(matches!(
-            ingress.enqueue_due_cron(3_600_000).await,
-            Err(TaskIngressError::InsufficientCronCapacity { required: 2, available: 1 })
-        ));
-        assert_eq!(broker.lock().await.remaining_capacity(), 1);
+        let first = ingress.enqueue_due_cron(3_600_000).await.unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].handler, "first");
+
+        let mut worker = broker.lock().await;
+        let claimed = worker.handle(
+            3_600_000,
+            tysel_task_rpc::Envelope::new(tysel_task_rpc::Message::Claim {
+                request_id: 1,
+                worker_id: "worker".into(),
+                lease_ms: 1_000,
+                limit: 1,
+            }),
+        );
+        assert!(matches!(claimed.message, tysel_task_rpc::Message::Claimed { .. }));
+        drop(worker);
+
+        let second = ingress.enqueue_due_cron(3_600_000).await.unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].handler, "second");
+        assert!(ingress.enqueue_due_cron(3_600_000).await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn stepped_day_wildcard_uses_intersection_semantics() {
+        let expression = CronExpression::parse("0 0 */2 * 1").unwrap();
+        // 1970-01-01 is Thursday. The stepped day field matches day 1, but
+        // the weekday field does not, so a wildcard-derived day field must
+        // not activate the restricted-field OR rule.
+        assert!(!expression.matches_unix_ms(0));
     }
 }
