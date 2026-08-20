@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use http_body_util::BodyExt;
 use hyper::body::Frame;
 use hyper::{Request as HyperRequest, Response};
 use hyper_util::rt::TokioIo;
@@ -699,12 +700,34 @@ async fn fetch_https_is_not_rejected_as_unsupported() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn fetch_rejects_post() {
+async fn fetch_posts_a_body() {
+    let addr = serve_echo();
+    let url = format!("http://{addr}/");
+    let value = tokio::task::spawn_blocking(move || {
+        eval(
+            &format!(
+                r#"(async () => (await fetch("{url}", {{
+                    method: "POST",
+                    headers: {{ "content-type": "text/plain" }},
+                    body: "hello",
+                }})).text())()"#
+            ),
+            config(),
+        )
+    })
+    .await
+    .expect("join")
+    .expect("eval");
+    assert_eq!(value, Value::String("POST:hello".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_rejects_unsupported_method() {
     let value = tokio::task::spawn_blocking(|| {
         eval(
             r#"(async () => {
                 try {
-                    await fetch("http://127.0.0.1:1/", { method: "POST" });
+                    await fetch("http://127.0.0.1:1/", { method: "TRACE" });
                     return "accepted";
                 } catch (err) {
                     return String(err);
@@ -718,7 +741,10 @@ async fn fetch_rejects_post() {
     .expect("eval");
     match value {
         Value::String(message) => {
-            assert!(message.contains("GET and HEAD"), "unexpected error: {message}");
+            assert!(
+                message.contains("GET, HEAD, POST, PUT, PATCH, and DELETE"),
+                "unexpected error: {message}"
+            );
         }
         other => panic!("expected error string, got {other:?}"),
     }
@@ -764,6 +790,16 @@ fn serve_bytes(body: Bytes) -> SocketAddr {
     spawn_origin(move |_| {
         let body = body.clone();
         async move { Ok::<_, Infallible>(Response::new(http_body_util::Full::new(body))) }
+    })
+}
+
+fn serve_echo() -> SocketAddr {
+    spawn_origin(|req| async move {
+        let method = req.method().as_str().to_owned();
+        let collected = req.collect().await.expect("body");
+        let payload = collected.to_bytes();
+        let body = format!("{method}:{}", String::from_utf8_lossy(&payload));
+        Ok::<_, Infallible>(Response::new(http_body_util::Full::new(Bytes::from(body))))
     })
 }
 

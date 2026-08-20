@@ -387,6 +387,7 @@ async fn read_chunk(slot: &StreamSlot) -> Result<Value, String> {
 }
 
 const MAX_REDIRECTS: u8 = 20;
+const MAX_OUTBOUND_BODY: usize = 16 * 1024 * 1024;
 
 struct Hop {
     response: hyper::Response<Incoming>,
@@ -444,13 +445,19 @@ async fn outbound_fetch(
 fn normalize_method(method: &str) -> Result<String, String> {
     let method = method.to_ascii_uppercase();
     match method.as_str() {
-        "GET" | "HEAD" => Ok(method),
-        _ => Err("outbound fetch only supports GET and HEAD".into()),
+        "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" => Ok(method),
+        _ => Err("outbound fetch only supports GET, HEAD, POST, PUT, PATCH, and DELETE".into()),
     }
 }
 
-fn request_body(_method: &str, _body: &str) -> Result<Bytes, String> {
-    Ok(Bytes::new())
+fn request_body(method: &str, body: &str) -> Result<Bytes, String> {
+    if method == "GET" || method == "HEAD" {
+        return Ok(Bytes::new());
+    }
+    if body.len() > MAX_OUTBOUND_BODY {
+        return Err(format!("request body exceeds {MAX_OUTBOUND_BODY} bytes"));
+    }
+    Ok(Bytes::from(body.to_owned()))
 }
 
 async fn fetch_hop(
