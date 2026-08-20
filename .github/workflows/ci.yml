@@ -38,13 +38,10 @@ jobs:
       - run: cargo test --workspace --all-targets
 
   # Landlock, seccomp allowlist, and isolate workers are Linux-only.
-  # macOS tests treat those layers as no-ops.
+  # x86_64 coverage already comes from the rust job; re-run the sandbox
+  # crates on arm64 because seccomp syscall tables differ by architecture.
   sandbox:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
