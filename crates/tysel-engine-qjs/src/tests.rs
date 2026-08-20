@@ -308,6 +308,136 @@ fn durable_signal_wait_cannot_be_started_and_ignored() {
 }
 
 #[test]
+fn durable_retry_suspends_for_backoff_and_resumes_at_the_next_attempt() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(112);
+    let script = r#"
+        (async () => tysel.durable.retry(
+            { maxAttempts: 3, delay: "30ms", factor: 2 },
+            async (attempt) => {
+                await tysel.durable.step("attempt-" + attempt, () => attempt);
+                if (attempt < 2) throw new TypeError("transient");
+                return attempt;
+            },
+        ))()
+    "#;
+    let error = eval_durable(script, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect_err("first retry attempt suspends for backoff");
+    assert!(matches!(error, EngineError::Suspended));
+    let history = store.load_history(id).unwrap();
+    assert_eq!(
+        history.events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+        vec![EventKind::Retry, EventKind::Step, EventKind::Retry, EventKind::Sleep]
+    );
+
+    let wakeup = store.wakeup(id).unwrap().unwrap();
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    thread::sleep(Duration::from_millis(wakeup.wake_at_ms.saturating_sub(now_ms) + 1));
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let claim = store.claim_due_wakeups(now_ms, 1, "retry-runner", 5_000).unwrap().pop().unwrap();
+    let resumed =
+        eval_durable(script, config(), DurableSession::from_claim(store.clone(), claim).unwrap())
+            .expect("retry resumes at its second attempt");
+    assert_eq!(resumed, Value::Number(2.0));
+    let history = store.load_history(id).unwrap();
+    assert_eq!(history.events.iter().filter(|event| event.key == "attempt-1").count(), 1);
+    assert!(history.events.last().unwrap().key.ends_with(":outcome:2"));
+    assert_eq!(store.wakeup(id).unwrap(), None);
+}
+
+#[test]
+fn durable_retry_replays_a_success_without_rerunning_its_callback() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(115);
+    let first = r#"
+        (async () => {
+            const value = await tysel.durable.retry(
+                { maxAttempts: 1 },
+                () => "recorded-success",
+            );
+            await tysel.durable.sleep("30ms");
+            return value;
+        })()
+    "#;
+    let changed = r#"
+        (async () => {
+            const value = await tysel.durable.retry(
+                { maxAttempts: 1 },
+                () => { throw new Error("must not rerun"); },
+            );
+            await tysel.durable.sleep("30ms");
+            return value;
+        })()
+    "#;
+    let error = eval_durable(first, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect_err("later sleep suspends the task");
+    assert!(matches!(error, EngineError::Suspended));
+
+    let wakeup = store.wakeup(id).unwrap().unwrap();
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    thread::sleep(Duration::from_millis(wakeup.wake_at_ms.saturating_sub(now_ms) + 1));
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let claim = store.claim_due_wakeups(now_ms, 1, "retry-success", 5_000).unwrap().pop().unwrap();
+    let replayed =
+        eval_durable(changed, config(), DurableSession::from_claim(store.clone(), claim).unwrap())
+            .expect("recorded success skips the changed callback");
+    assert_eq!(replayed, Value::String("recorded-success".into()));
+    assert_eq!(store.load_history(id).unwrap().events.len(), 3);
+}
+
+#[test]
+fn durable_retry_replays_recorded_failures_when_the_callback_changes() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(113);
+    let failing = r#"
+        (async () => {
+            try {
+                return await tysel.durable.retry(
+                    { maxAttempts: 2 },
+                    (attempt) => { throw new TypeError("nope-" + attempt); },
+                );
+            } catch (error) {
+                return error.name + ":" + error.message;
+            }
+        })()
+    "#;
+    let changed = r#"
+        (async () => {
+            try {
+                return await tysel.durable.retry(
+                    { maxAttempts: 2 },
+                    () => "unexpected-success",
+                );
+            } catch (error) {
+                return error.name + ":" + error.message;
+            }
+        })()
+    "#;
+    let first = eval_durable(failing, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect("retry failure is caught");
+    let replayed = eval_durable(changed, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect("recorded failures override changed callback outcomes");
+    assert_eq!(first, Value::String("TypeError:nope-2".into()));
+    assert_eq!(replayed, first);
+    assert_eq!(store.load_history(id).unwrap().events.len(), 4);
+}
+
+#[test]
+fn durable_retry_rejects_invalid_policy_without_writing_history() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(114);
+    let error = eval_durable(
+        r#"(async () => tysel.durable.retry({ maxAttempts: 0 }, () => "never"))()"#,
+        config(),
+        DurableSession::new(store.clone(), id).unwrap(),
+    )
+    .expect_err("invalid retry policy");
+    assert!(matches!(error, EngineError::Isolate(_)));
+    assert!(store.load_history(id).unwrap().events.is_empty());
+    assert_eq!(store.wakeup(id).unwrap(), None);
+}
+
+#[test]
 fn secret_ref_returns_opaque_handle() {
     let value = eval(r#"(async () => tysel.secrets.ref("db"))()"#, config()).expect("eval");
     assert_eq!(value, Value::String("secret:db".into()));

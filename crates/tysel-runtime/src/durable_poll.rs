@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::watch;
 use tokio::task::JoinSet;
+use tysel_durable::{
+    DurableError, MAX_DURABLE_PROGRAM_BYTES, MAX_DURABLE_PROGRAM_TOTAL_BYTES, MAX_DURABLE_PROGRAMS,
+    SqliteStore,
+};
 use tysel_task::TaskId;
 
 use crate::{DispatchError, DurableDispatcher, DurableRun};
 
-const MAX_PROGRAM_BYTES: usize = 1_048_576;
-const MAX_TOTAL_PROGRAM_BYTES: usize = 64 * 1_048_576;
-const MAX_REGISTERED_PROGRAMS: usize = 10_000;
 const MAX_POLL_BATCH: usize = 10_000;
 const MAX_POLL_CONCURRENCY: usize = 16;
 
@@ -33,12 +34,11 @@ impl DurableProgramRegistry {
         script: impl Into<String>,
     ) -> Result<Option<Arc<str>>, ProgramRegistryError> {
         let script = script.into();
-        if script.is_empty() || script.len() > MAX_PROGRAM_BYTES {
+        if script.is_empty() || script.len() > MAX_DURABLE_PROGRAM_BYTES {
             return Err(ProgramRegistryError::InvalidProgram);
         }
         let mut state = self.state.write().map_err(|_| ProgramRegistryError::Poisoned)?;
-        if !state.programs.contains_key(&task_id) && state.programs.len() >= MAX_REGISTERED_PROGRAMS
-        {
+        if !state.programs.contains_key(&task_id) && state.programs.len() >= MAX_DURABLE_PROGRAMS {
             return Err(ProgramRegistryError::Full);
         }
         let replaced_bytes = state.programs.get(&task_id).map_or(0, |program| program.len());
@@ -89,15 +89,81 @@ fn next_total_bytes(
         .checked_sub(replaced)
         .and_then(|remaining| remaining.checked_add(incoming))
         .ok_or(ProgramRegistryError::TotalBytesExceeded)?;
-    if total > MAX_TOTAL_PROGRAM_BYTES {
+    if total > MAX_DURABLE_PROGRAM_TOTAL_BYTES {
         return Err(ProgramRegistryError::TotalBytesExceeded);
     }
     Ok(total)
 }
 
+#[derive(Clone)]
+pub struct DurableProgramCatalog {
+    store: Arc<SqliteStore>,
+}
+
+impl DurableProgramCatalog {
+    pub fn new(store: Arc<SqliteStore>) -> Self {
+        Self { store }
+    }
+
+    pub fn register(
+        &self,
+        task_id: TaskId,
+        script: impl Into<String>,
+    ) -> Result<Option<Arc<str>>, ProgramRegistryError> {
+        let script = script.into();
+        let previous = self.store.put_program(task_id, &script, unix_time_ms()?)?;
+        Ok(previous.map(|program| Arc::from(program.source)))
+    }
+
+    pub fn resolve(&self, task_id: TaskId) -> Result<Option<Arc<str>>, ProgramRegistryError> {
+        Ok(self.store.program(task_id)?.map(|program| Arc::from(program.source)))
+    }
+
+    pub fn unregister(&self, task_id: TaskId) -> Result<Option<Arc<str>>, ProgramRegistryError> {
+        Ok(self.store.remove_program(task_id)?.map(|program| Arc::from(program.source)))
+    }
+
+    pub fn len(&self) -> Result<usize, ProgramRegistryError> {
+        Ok(self.store.program_count()?)
+    }
+
+    pub fn is_empty(&self) -> Result<bool, ProgramRegistryError> {
+        Ok(self.len()? == 0)
+    }
+
+    fn due_snapshot(&self, now_ms: u64) -> Result<Vec<(TaskId, Arc<str>)>, ProgramRegistryError> {
+        self.store
+            .load_due_programs(now_ms)?
+            .into_iter()
+            .map(|program| Ok((program.task_id, Arc::from(program.source))))
+            .collect()
+    }
+}
+
+#[derive(Clone)]
+enum ProgramSource {
+    Memory(DurableProgramRegistry),
+    Persistent(DurableProgramCatalog),
+}
+
+impl ProgramSource {
+    async fn snapshot(&self) -> Result<Vec<(TaskId, Arc<str>)>, PollerError> {
+        match self {
+            Self::Memory(registry) => Ok(registry.snapshot()?),
+            Self::Persistent(catalog) => {
+                let catalog = catalog.clone();
+                tokio::task::spawn_blocking(move || catalog.due_snapshot(unix_time_ms()?))
+                    .await
+                    .map_err(PollerError::Join)?
+                    .map_err(PollerError::Registry)
+            }
+        }
+    }
+}
+
 pub struct DurablePoller {
     dispatcher: Arc<DurableDispatcher>,
-    programs: DurableProgramRegistry,
+    programs: ProgramSource,
     interval: Duration,
     batch_size: usize,
     cursor: AtomicUsize,
@@ -107,6 +173,27 @@ impl DurablePoller {
     pub fn new(
         dispatcher: Arc<DurableDispatcher>,
         programs: DurableProgramRegistry,
+        interval: Duration,
+        batch_size: usize,
+    ) -> Result<Self, PollerError> {
+        Self::with_programs(dispatcher, ProgramSource::Memory(programs), interval, batch_size)
+    }
+
+    /// Build a poller backed by the dispatcher's SQLite program catalog. The
+    /// catalog is reopened with the durable store, so no in-memory repopulation
+    /// is required after a process restart.
+    pub fn new_persistent(
+        dispatcher: Arc<DurableDispatcher>,
+        interval: Duration,
+        batch_size: usize,
+    ) -> Result<Self, PollerError> {
+        let catalog = DurableProgramCatalog::new(dispatcher.store());
+        Self::with_programs(dispatcher, ProgramSource::Persistent(catalog), interval, batch_size)
+    }
+
+    fn with_programs(
+        dispatcher: Arc<DurableDispatcher>,
+        programs: ProgramSource,
         interval: Duration,
         batch_size: usize,
     ) -> Result<Self, PollerError> {
@@ -128,7 +215,7 @@ impl DurablePoller {
         shutdown: Option<&PollerShutdown>,
     ) -> Result<Vec<DurableRun>, PollerError> {
         let dispatcher = self.dispatcher.clone();
-        let mut programs = self.programs.snapshot()?;
+        let mut programs = self.programs.snapshot().await?;
         let batch_size = self.batch_size;
         if !programs.is_empty() {
             let start = self.cursor.fetch_add(batch_size, Ordering::Relaxed) % programs.len();
@@ -218,14 +305,28 @@ impl PollerShutdown {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProgramRegistryError {
-    #[error("durable program must be 1..={MAX_PROGRAM_BYTES} bytes")]
+    #[error("durable program must be 1..={MAX_DURABLE_PROGRAM_BYTES} bytes")]
     InvalidProgram,
-    #[error("durable program registry exceeds {MAX_REGISTERED_PROGRAMS} tasks")]
+    #[error("durable program registry exceeds {MAX_DURABLE_PROGRAMS} tasks")]
     Full,
-    #[error("durable program registry exceeds {MAX_TOTAL_PROGRAM_BYTES} total bytes")]
+    #[error("durable program registry exceeds {MAX_DURABLE_PROGRAM_TOTAL_BYTES} total bytes")]
     TotalBytesExceeded,
     #[error("durable program registry lock is poisoned")]
     Poisoned,
+    #[error(transparent)]
+    Store(#[from] DurableError),
+    #[error("system clock is before the Unix epoch")]
+    SystemClock,
+    #[error("system time is too large")]
+    TimeRange,
+}
+
+fn unix_time_ms() -> Result<u64, ProgramRegistryError> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ProgramRegistryError::SystemClock)?
+        .as_millis();
+    u64::try_from(millis).map_err(|_| ProgramRegistryError::TimeRange)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -293,7 +394,7 @@ mod tests {
     fn registry_tracks_replacements_and_enforces_the_aggregate_budget() {
         assert_eq!(next_total_bytes(10, 4, 7).unwrap(), 13);
         assert!(matches!(
-            next_total_bytes(MAX_TOTAL_PROGRAM_BYTES, 0, 1),
+            next_total_bytes(MAX_DURABLE_PROGRAM_TOTAL_BYTES, 0, 1),
             Err(ProgramRegistryError::TotalBytesExceeded)
         ));
 
@@ -343,6 +444,47 @@ mod tests {
         );
         let probe = store.claim_wakeup(unknown, unix_time_ms(), "probe", 100).unwrap().unwrap();
         assert!(store.release_wakeup_claim(&probe).unwrap());
+    }
+
+    #[tokio::test]
+    async fn persistent_catalog_resumes_work_after_store_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-runtime-programs-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let id = TaskId(309);
+        {
+            let store = Arc::new(SqliteStore::open(&path).unwrap());
+            let setup = dispatcher(store.clone(), "setup");
+            let catalog = DurableProgramCatalog::new(store.clone());
+            assert_eq!(catalog.register(id, WAIT_SCRIPT).unwrap(), None);
+            assert!(matches!(
+                setup.start(id, WAIT_SCRIPT).result,
+                Ok(crate::DurableRunStatus::Suspended)
+            ));
+            store
+                .send_signal(id, "approval", &serde_json::json!("restarted"), unix_time_ms())
+                .unwrap();
+        }
+
+        let reopened = Arc::new(SqliteStore::open(&path).unwrap());
+        let poller = DurablePoller::new_persistent(
+            dispatcher(reopened.clone(), "restarted-poller"),
+            Duration::from_millis(10),
+            8,
+        )
+        .unwrap();
+        let runs = poller.poll_once().await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].task_id, id);
+        assert_eq!(
+            runs[0].result.as_ref().unwrap(),
+            &crate::DurableRunStatus::Completed(Value::String(r#""restarted""#.into()))
+        );
+        drop(poller);
+        drop(reopened);
+        let _ = std::fs::remove_file(path);
     }
 
     #[tokio::test]

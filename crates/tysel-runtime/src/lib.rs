@@ -12,7 +12,8 @@ pub use durable::{
     DispatchError, DurableDispatcher, DurableRun, DurableRunError, DurableRunStatus,
 };
 pub use durable_poll::{
-    DurablePoller, DurableProgramRegistry, PollerError, PollerShutdown, ProgramRegistryError,
+    DurablePoller, DurableProgramCatalog, DurableProgramRegistry, PollerError, PollerShutdown,
+    ProgramRegistryError,
 };
 pub use http::{
     AppIsolate, HttpError, SharedPool, bind, bind_with, bind_with_request_limit, handle_stream,

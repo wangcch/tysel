@@ -186,6 +186,7 @@ fn install_inner(
     let durable_enabled = durable.is_some();
     if let Some(durable) = durable {
         let lookup = durable.clone();
+        let retry_outcome = durable.clone();
         let record = durable.clone();
         let record_sleep = durable.clone();
         let poll_signal = durable.clone();
@@ -193,6 +194,14 @@ fn install_inner(
             "_durableLookup",
             Function::new(ctx.clone(), move |ctx, kind: String, key: String| {
                 lookup.lookup_json(&kind, &key).map_err(|err| Exception::throw_type(&ctx, &err))
+            })?,
+        )?;
+        tysel.set(
+            "_durableFindRetryOutcome",
+            Function::new(ctx.clone(), move |ctx, key: String| {
+                retry_outcome
+                    .find_retry_outcome_json(&key)
+                    .map_err(|err| Exception::throw_type(&ctx, &err))
             })?,
         )?;
         tysel.set(
@@ -343,6 +352,7 @@ fn install_inner(
 const DURABLE_API: &str = r#"
 (() => {
   let active = false;
+  let retryIndex = 0;
 
   function lookup(kind, key) {
     return JSON.parse(tysel._durableLookup(kind, key));
@@ -374,6 +384,82 @@ const DURABLE_API: &str = r#"
     const millis = Number(match[1]) * scales[match[2]];
     if (!Number.isSafeInteger(Math.floor(millis))) throw new TypeError("durable duration is too large");
     return Math.floor(millis);
+  }
+
+  function retryPolicy(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new TypeError("durable retry policy must be an object");
+    }
+    const maxAttempts = value.maxAttempts === undefined ? 3 : Number(value.maxAttempts);
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100) {
+      throw new TypeError("durable retry maxAttempts must be an integer from 1 to 100");
+    }
+    const delayMs = value.delay === undefined ? 0 : durationMs(value.delay);
+    const factor = value.factor === undefined ? 2 : Number(value.factor);
+    if (!Number.isFinite(factor) || factor < 1 || factor > 100) {
+      throw new TypeError("durable retry factor must be from 1 to 100");
+    }
+    const maxDelayMs = value.maxDelay === undefined ? null : durationMs(value.maxDelay);
+    return { maxAttempts, delayMs, factor, maxDelayMs };
+  }
+
+  function retryDelayMs(policy, attempt) {
+    const scaled = Math.floor(policy.delayMs * Math.pow(policy.factor, attempt - 1));
+    const millis = policy.maxDelayMs === null ? scaled : Math.min(scaled, policy.maxDelayMs);
+    if (!Number.isSafeInteger(millis)) {
+      throw new TypeError("durable retry delay is too large");
+    }
+    return millis;
+  }
+
+  function retryFailure(error) {
+    let name = "Error";
+    let message = "retry callback failed";
+    try {
+      if (error && typeof error.name === "string") name = error.name;
+      message = error && typeof error.message === "string" ? error.message : String(error);
+    } catch (_) {}
+    return { name: name.slice(0, 256), message: message.slice(0, 4096) };
+  }
+
+  function throwRetryFailure(failure) {
+    if (!failure || typeof failure.name !== "string" || typeof failure.message !== "string") {
+      throw new Error("invalid durable retry history");
+    }
+    const error = new Error(failure.message);
+    error.name = failure.name;
+    throw error;
+  }
+
+  function retryLookupOrRecord(key, payload) {
+    enter();
+    try {
+      const replay = lookup("retry", key);
+      if (replay.found) return replay.payload;
+      if (payload !== undefined) {
+        tysel._durableRecord("retry", key, encode(payload), Date.now());
+      }
+      return undefined;
+    } finally {
+      active = false;
+    }
+  }
+
+  function findRetryOutcome(key) {
+    enter();
+    try {
+      return JSON.parse(tysel._durableFindRetryOutcome(key));
+    } finally {
+      active = false;
+    }
+  }
+
+  function applyRetryOutcome(outcome) {
+    if (!outcome || typeof outcome.ok !== "boolean") {
+      throw new Error("invalid durable retry outcome");
+    }
+    if (outcome.ok) return outcome.value;
+    throwRetryFailure(outcome.failure);
   }
 
   async function boundary(kind, name, fn) {
@@ -454,6 +540,48 @@ const DURABLE_API: &str = r#"
       } finally {
         active = false;
       }
+    },
+    async retry(policyValue, fn) {
+      if (typeof fn !== "function") throw new TypeError("durable retry requires a function");
+      const policy = retryPolicy(policyValue);
+      const retryId = retryIndex++;
+      const scope = [
+        "retry",
+        retryId,
+        policy.maxAttempts,
+        policy.delayMs,
+        policy.factor,
+        policy.maxDelayMs === null ? "none" : policy.maxDelayMs,
+      ].join(":");
+      for (let attempt = 1; attempt <= policy.maxAttempts; attempt++) {
+        retryLookupOrRecord(scope + ":start:" + attempt, { attempt });
+        const outcomeKey = scope + ":outcome:" + attempt;
+        const replayedOutcome = findRetryOutcome(outcomeKey);
+        if (replayedOutcome.found) {
+          const outcome = replayedOutcome.payload;
+          if (outcome && outcome.ok === true) return applyRetryOutcome(outcome);
+          if (attempt === policy.maxAttempts) return applyRetryOutcome(outcome);
+          const delayMs = retryDelayMs(policy, attempt);
+          if (delayMs > 0) await durable.sleep(delayMs);
+          continue;
+        }
+        let failed = false;
+        let failure;
+        let value;
+        try {
+          value = await fn(attempt);
+        } catch (error) {
+          failed = true;
+          failure = retryFailure(error);
+        }
+        const outcome = failed ? { ok: false, failure } : { ok: true, value };
+        retryLookupOrRecord(outcomeKey, outcome);
+        if (!failed) return applyRetryOutcome(outcome);
+        if (attempt === policy.maxAttempts) throwRetryFailure(failure);
+        const delayMs = retryDelayMs(policy, attempt);
+        if (delayMs > 0) await durable.sleep(delayMs);
+      }
+      throw new Error("durable retry exhausted unexpectedly");
     },
   };
   globalThis.tysel.durable = durable;

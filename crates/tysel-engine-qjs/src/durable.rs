@@ -121,6 +121,20 @@ impl DurableSession {
         })
     }
 
+    pub(crate) fn find_retry_outcome_json(&self, key: &str) -> Result<String, String> {
+        let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        let event = inner.replay.consume_through(EventKind::Retry, key).cloned();
+        Ok(match event {
+            Some(event) => format!(
+                r#"{{"found":true,"payload":{},"sequence":{},"recordedAtMs":{}}}"#,
+                event.payload_json(),
+                event.sequence,
+                event.recorded_at_ms,
+            ),
+            None => r#"{"found":false}"#.into(),
+        })
+    }
+
     pub(crate) fn record(
         &self,
         kind: &str,
@@ -246,6 +260,7 @@ fn parse_kind(raw: &str) -> Result<EventKind, String> {
         "effect" => Ok(EventKind::Effect),
         "sleep" => Ok(EventKind::Sleep),
         "signal" => Ok(EventKind::Signal),
+        "retry" => Ok(EventKind::Retry),
         "now" => Ok(EventKind::Now),
         "random" => Ok(EventKind::Random),
         _ => Err(format!("unknown durable event kind {raw:?}")),

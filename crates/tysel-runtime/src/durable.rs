@@ -35,6 +35,10 @@ impl DurableDispatcher {
         Ok(Self { store, owner, lease_duration_ms, isolate })
     }
 
+    pub(crate) fn store(&self) -> Arc<SqliteStore> {
+        self.store.clone()
+    }
+
     pub fn start(&self, task_id: TaskId, script: &str) -> DurableRun {
         let result = DurableSession::new(self.store.clone(), task_id)
             .map_err(DurableRunError::Session)
@@ -237,6 +241,33 @@ mod tests {
         assert_eq!(
             runs[0].result.as_ref().unwrap(),
             &DurableRunStatus::Completed(Value::String("awake".into()))
+        );
+        assert_eq!(store.wakeup(id).unwrap(), None);
+    }
+
+    #[test]
+    fn resumes_a_retry_after_its_durable_backoff() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let dispatcher = dispatcher(store.clone(), "runner-a");
+        let id = TaskId(208);
+        let script = r#"
+            (async () => tysel.durable.retry(
+                { maxAttempts: 2, delay: "30ms" },
+                (attempt) => {
+                    if (attempt === 1) throw new Error("retry me");
+                    return attempt;
+                },
+            ))()
+        "#;
+        assert!(matches!(dispatcher.start(id, script).result, Ok(DurableRunStatus::Suspended)));
+        let wakeup = store.wakeup(id).unwrap().unwrap();
+        let remaining = wakeup.wake_at_ms.saturating_sub(unix_time_ms().unwrap());
+        std::thread::sleep(Duration::from_millis(remaining + 1));
+
+        let runs = dispatcher.dispatch_due(1, |_| Some(script)).unwrap();
+        assert_eq!(
+            runs[0].result.as_ref().unwrap(),
+            &DurableRunStatus::Completed(Value::Number(2.0))
         );
         assert_eq!(store.wakeup(id).unwrap(), None);
     }

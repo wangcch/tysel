@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tysel_task::TaskId;
 
 const MAX_WAKEUP_BATCH: usize = 10_000;
@@ -15,6 +16,9 @@ const MAX_HISTORY_EVENTS: usize = 10_000;
 const MAX_HISTORY_BYTES: usize = 16 * 1_048_576;
 const MAX_PENDING_SIGNALS: usize = 1_000;
 const MAX_LEASE_OWNER_BYTES: usize = 128;
+pub const MAX_DURABLE_PROGRAM_BYTES: usize = 1_048_576;
+pub const MAX_DURABLE_PROGRAM_TOTAL_BYTES: usize = 64 * 1_048_576;
+pub const MAX_DURABLE_PROGRAMS: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
@@ -22,6 +26,7 @@ pub enum EventKind {
     Effect,
     Sleep,
     Signal,
+    Retry,
     Now,
     Random,
 }
@@ -33,6 +38,7 @@ impl EventKind {
             Self::Effect => "effect",
             Self::Sleep => "sleep",
             Self::Signal => "signal",
+            Self::Retry => "retry",
             Self::Now => "now",
             Self::Random => "random",
         }
@@ -44,6 +50,7 @@ impl EventKind {
             "effect" => Ok(Self::Effect),
             "sleep" => Ok(Self::Sleep),
             "signal" => Ok(Self::Signal),
+            "retry" => Ok(Self::Retry),
             "now" => Ok(Self::Now),
             "random" => Ok(Self::Random),
             _ => Err(DurableError::InvalidEventKind(raw.into())),
@@ -122,6 +129,17 @@ impl ReplayCursor {
         Ok(Some(event))
     }
 
+    /// Consume through a matching future event. Composite durable operations
+    /// use this to replay a recorded outcome without rerunning already
+    /// completed nested boundaries. `None` leaves the cursor unchanged.
+    pub fn consume_through(&mut self, kind: EventKind, key: &str) -> Option<&TaskEvent> {
+        let offset = self.events[self.position..]
+            .iter()
+            .position(|event| event.kind == kind && event.key == key)?;
+        self.position += offset + 1;
+        self.events.get(self.position - 1)
+    }
+
     pub fn ensure_consumed(&self) -> Result<(), ReplayError> {
         if let Some(event) = self.events.get(self.position) {
             return Err(ReplayError::HistoryRemaining {
@@ -175,6 +193,14 @@ pub struct SignalWait {
     pub task_id: TaskId,
     pub sequence: u64,
     pub signal_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DurableProgram {
+    pub task_id: TaskId,
+    pub source: String,
+    pub source_sha256: [u8; 32],
+    pub registered_at_ms: u64,
 }
 
 pub struct SqliteStore {
@@ -232,6 +258,12 @@ impl SqliteStore {
                  task_id BLOB PRIMARY KEY,
                  sequence INTEGER NOT NULL CHECK (sequence >= 0),
                  signal_name TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS durable_programs (
+                 task_id BLOB PRIMARY KEY,
+                 source TEXT NOT NULL,
+                 source_sha256 BLOB NOT NULL CHECK (length(source_sha256) = 32),
+                 registered_at_ms INTEGER NOT NULL CHECK (registered_at_ms >= 0)
              );",
         )?;
         let sequence_added = migrate_wakeup_columns(&connection)?;
@@ -259,6 +291,136 @@ impl SqliteStore {
              FROM durable_events GROUP BY task_id;",
         )?;
         Ok(Self { connection: Mutex::new(connection) })
+    }
+
+    /// Register immutable program text for a durable task. Repeating the same
+    /// registration is idempotent; changing source for an existing task is a
+    /// conflict because its history may already replay against the old code.
+    pub fn put_program(
+        &self,
+        task_id: TaskId,
+        source: &str,
+        registered_at_ms: u64,
+    ) -> Result<Option<DurableProgram>, DurableError> {
+        validate_program_source(source)?;
+        let registered_at_ms = to_sql_integer(registered_at_ms, "registered_at_ms")?;
+        let id = task_id_bytes(task_id);
+        let digest: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(existing) = select_program(&transaction, task_id)? {
+            if existing.source_sha256 != digest || existing.source != source {
+                return Err(DurableError::ProgramConflict { task_id });
+            }
+            transaction.commit()?;
+            return Ok(Some(existing));
+        }
+        let (count, total_bytes): (i64, i64) = transaction.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(length(CAST(source AS BLOB))), 0)
+             FROM durable_programs",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if count >= MAX_DURABLE_PROGRAMS as i64 {
+            return Err(DurableError::ProgramLimit);
+        }
+        let source_bytes =
+            i64::try_from(source.len()).map_err(|_| DurableError::ProgramByteLimit)?;
+        if total_bytes
+            .checked_add(source_bytes)
+            .is_none_or(|bytes| bytes > MAX_DURABLE_PROGRAM_TOTAL_BYTES as i64)
+        {
+            return Err(DurableError::ProgramByteLimit);
+        }
+        transaction.execute(
+            "INSERT INTO durable_programs
+             (task_id, source, source_sha256, registered_at_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id.as_slice(), source, digest.as_slice(), registered_at_ms],
+        )?;
+        transaction.commit()?;
+        Ok(None)
+    }
+
+    pub fn program(&self, task_id: TaskId) -> Result<Option<DurableProgram>, DurableError> {
+        let connection = self.lock()?;
+        select_program(&connection, task_id)
+    }
+
+    pub fn load_programs(&self) -> Result<Vec<DurableProgram>, DurableError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT task_id, source, source_sha256, registered_at_ms
+             FROM durable_programs ORDER BY task_id LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![(MAX_DURABLE_PROGRAMS + 1) as i64], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        decode_program_rows(rows)
+    }
+
+    /// Load only registered programs whose wakeup is currently due and not
+    /// leased. This keeps an idle poll from reading and hashing the full source
+    /// catalog.
+    pub fn load_due_programs(&self, now_ms: u64) -> Result<Vec<DurableProgram>, DurableError> {
+        let connection = self.lock()?;
+        let now_ms = to_sql_integer(now_ms, "now_ms")?;
+        let mut statement = connection.prepare(
+            "SELECT p.task_id, p.source, p.source_sha256, p.registered_at_ms
+             FROM durable_programs AS p
+             INNER JOIN durable_wakeups AS w ON w.task_id = p.task_id
+             WHERE w.wake_at_ms <= ?1
+               AND (w.lease_until_ms IS NULL OR w.lease_until_ms <= ?1)
+             ORDER BY p.task_id LIMIT ?2",
+        )?;
+        let rows =
+            statement.query_map(params![now_ms, (MAX_DURABLE_PROGRAMS + 1) as i64], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })?;
+        decode_program_rows(rows)
+    }
+
+    pub fn remove_program(&self, task_id: TaskId) -> Result<Option<DurableProgram>, DurableError> {
+        let id = task_id_bytes(task_id);
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing = select_program(&transaction, task_id)?;
+        if existing.is_some() {
+            let in_use = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM durable_events WHERE task_id = ?1)
+                     OR EXISTS(SELECT 1 FROM durable_wakeups WHERE task_id = ?1)
+                     OR EXISTS(SELECT 1 FROM durable_signal_inbox WHERE task_id = ?1)
+                     OR EXISTS(SELECT 1 FROM durable_signal_waits WHERE task_id = ?1)",
+                params![id.as_slice()],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if in_use {
+                return Err(DurableError::ProgramInUse { task_id });
+            }
+            transaction.execute(
+                "DELETE FROM durable_programs WHERE task_id = ?1",
+                params![id.as_slice()],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(existing)
+    }
+
+    pub fn program_count(&self) -> Result<usize, DurableError> {
+        let connection = self.lock()?;
+        let count: i64 =
+            connection.query_row("SELECT COUNT(*) FROM durable_programs", [], |row| row.get(0))?;
+        usize::try_from(count).map_err(|_| DurableError::ProgramLimit)
     }
 
     /// Append under an IMMEDIATE transaction so concurrent writers allocate a
@@ -973,6 +1135,94 @@ pub enum DurableError {
         "pending signal inbox exceeds {MAX_PENDING_SIGNALS} signals or {MAX_HISTORY_BYTES} bytes"
     )]
     SignalInboxLimit,
+    #[error("durable program must be 1..={MAX_DURABLE_PROGRAM_BYTES} bytes")]
+    InvalidProgram,
+    #[error("durable program catalog exceeds {MAX_DURABLE_PROGRAMS} tasks")]
+    ProgramLimit,
+    #[error("durable program catalog exceeds {MAX_DURABLE_PROGRAM_TOTAL_BYTES} total bytes")]
+    ProgramByteLimit,
+    #[error("durable program for task {task_id} is already registered with different source")]
+    ProgramConflict { task_id: TaskId },
+    #[error("durable program for task {task_id} still has persisted task state")]
+    ProgramInUse { task_id: TaskId },
+    #[error("durable program digest is invalid")]
+    InvalidProgramDigest,
+}
+
+fn validate_program_source(source: &str) -> Result<(), DurableError> {
+    if source.is_empty() || source.len() > MAX_DURABLE_PROGRAM_BYTES {
+        return Err(DurableError::InvalidProgram);
+    }
+    Ok(())
+}
+
+fn select_program(
+    connection: &Connection,
+    task_id: TaskId,
+) -> Result<Option<DurableProgram>, DurableError> {
+    let id = task_id_bytes(task_id);
+    connection
+        .query_row(
+            "SELECT task_id, source, source_sha256, registered_at_ms
+             FROM durable_programs WHERE task_id = ?1",
+            params![id.as_slice()],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .map(|(task_id, source, digest, registered_at_ms)| {
+            decode_program(task_id, source, digest, registered_at_ms)
+        })
+        .transpose()
+}
+
+fn decode_program(
+    task_id: Vec<u8>,
+    source: String,
+    digest: Vec<u8>,
+    registered_at_ms: i64,
+) -> Result<DurableProgram, DurableError> {
+    validate_program_source(&source)?;
+    let source_sha256: [u8; 32] =
+        digest.try_into().map_err(|_| DurableError::InvalidProgramDigest)?;
+    let actual: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+    if source_sha256 != actual {
+        return Err(DurableError::InvalidProgramDigest);
+    }
+    Ok(DurableProgram {
+        task_id: task_id_from_bytes(&task_id)?,
+        source,
+        source_sha256,
+        registered_at_ms: from_sql_integer(registered_at_ms, "registered_at_ms")?,
+    })
+}
+
+fn decode_program_rows<M>(rows: M) -> Result<Vec<DurableProgram>, DurableError>
+where
+    M: IntoIterator<Item = Result<(Vec<u8>, String, Vec<u8>, i64), rusqlite::Error>>,
+{
+    let mut programs = Vec::new();
+    let mut total_bytes = 0usize;
+    for row in rows {
+        if programs.len() >= MAX_DURABLE_PROGRAMS {
+            return Err(DurableError::ProgramLimit);
+        }
+        let (task_id, source, digest, registered_at_ms) = row?;
+        validate_program_source(&source)?;
+        total_bytes =
+            total_bytes.checked_add(source.len()).ok_or(DurableError::ProgramByteLimit)?;
+        if total_bytes > MAX_DURABLE_PROGRAM_TOTAL_BYTES {
+            return Err(DurableError::ProgramByteLimit);
+        }
+        programs.push(decode_program(task_id, source, digest, registered_at_ms)?);
+    }
+    Ok(programs)
 }
 
 fn validate_event(event: &NewEvent) -> Result<(String, i64), DurableError> {
@@ -1217,6 +1467,91 @@ mod tests {
         assert_eq!(history.events[0].key, "load");
         assert_eq!(history.events[1].payload, json!("ok"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn program_catalog_is_bounded_immutable_and_survives_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-durable-programs-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let id = TaskId(70);
+        let source = "(async () => 42)()";
+        {
+            let store = SqliteStore::open(&path).unwrap();
+            assert!(matches!(store.put_program(id, "", 1), Err(DurableError::InvalidProgram)));
+            assert_eq!(store.put_program(id, source, 10).unwrap(), None);
+            let existing = store.put_program(id, source, 20).unwrap().unwrap();
+            assert_eq!(existing.registered_at_ms, 10);
+            assert!(matches!(
+                store.put_program(id, "(async () => 43)()", 20),
+                Err(DurableError::ProgramConflict { task_id }) if task_id == id
+            ));
+            assert_eq!(store.program_count().unwrap(), 1);
+        }
+        let store = SqliteStore::open(&path).unwrap();
+        let programs = store.load_programs().unwrap();
+        assert_eq!(programs.len(), 1);
+        assert_eq!(programs[0].task_id, id);
+        assert_eq!(programs[0].source, source);
+        assert_eq!(programs[0].source_sha256, Sha256::digest(source.as_bytes()).as_slice());
+        assert_eq!(store.remove_program(id).unwrap(), Some(programs[0].clone()));
+        assert!(store.program(id).unwrap().is_none());
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn program_catalog_rejects_a_corrupted_digest() {
+        let store = SqliteStore::in_memory().unwrap();
+        let id = TaskId(71);
+        store.put_program(id, "42", 1).unwrap();
+        let bytes = task_id_bytes(id);
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE durable_programs SET source_sha256 = zeroblob(32) WHERE task_id = ?1",
+                params![bytes.as_slice()],
+            )
+            .unwrap();
+        assert!(matches!(store.program(id), Err(DurableError::InvalidProgramDigest)));
+    }
+
+    #[test]
+    fn program_in_use_cannot_be_removed_or_rebound() {
+        let store = SqliteStore::in_memory().unwrap();
+        let id = TaskId(72);
+        store.put_program(id, "old", 1).unwrap();
+        store.append_event(id, event(EventKind::Step, "used", json!(true), 2)).unwrap();
+        assert!(matches!(
+            store.remove_program(id),
+            Err(DurableError::ProgramInUse { task_id }) if task_id == id
+        ));
+        assert!(matches!(
+            store.put_program(id, "new", 3),
+            Err(DurableError::ProgramConflict { task_id }) if task_id == id
+        ));
+        assert_eq!(store.program(id).unwrap().unwrap().source, "old");
+    }
+
+    #[test]
+    fn due_program_query_excludes_idle_and_leased_tasks() {
+        let store = SqliteStore::in_memory().unwrap();
+        let due = TaskId(73);
+        let idle = TaskId(74);
+        let leased = TaskId(75);
+        for id in [due, idle, leased] {
+            store.put_program(id, &format!("program-{id}"), 1).unwrap();
+        }
+        store.schedule_wakeup(Wakeup { task_id: due, sequence: 0, wake_at_ms: 10 }).unwrap();
+        store.schedule_wakeup(Wakeup { task_id: idle, sequence: 0, wake_at_ms: 20 }).unwrap();
+        store.schedule_wakeup(Wakeup { task_id: leased, sequence: 0, wake_at_ms: 10 }).unwrap();
+        store.claim_wakeup(leased, 10, "runner", 100).unwrap().unwrap();
+
+        let programs = store.load_due_programs(10).unwrap();
+        assert_eq!(programs.iter().map(|program| program.task_id).collect::<Vec<_>>(), vec![due]);
     }
 
     #[test]
