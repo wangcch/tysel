@@ -134,6 +134,20 @@ pub fn skip_request_header(name: &str) -> bool {
     )
 }
 
+pub fn skip_response_header(name: &str) -> bool {
+    matches!(
+        name,
+        "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+    )
+}
+
 fn normalize_host(value: &str) -> String {
     let mut host = value.trim().to_ascii_lowercase();
     if let Some(rest) = host.strip_prefix("https://") {
@@ -259,5 +273,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(headers.headers.len(), 2);
+    }
+
+    #[test]
+    fn hop_by_hop_response_headers_are_skipped() {
+        assert!(skip_response_header("connection"));
+        assert!(skip_response_header("transfer-encoding"));
+        assert!(!skip_response_header("content-type"));
+        assert!(!skip_response_header("x-request-id"));
     }
 }

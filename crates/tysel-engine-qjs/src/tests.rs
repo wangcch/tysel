@@ -644,6 +644,31 @@ async fn fetch_follows_http_redirect() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn fetch_exposes_response_headers() {
+    let addr = serve_header("x-request-id", "abc", Bytes::from_static(b"ok"));
+    let url = format!("http://{addr}/");
+    let value = tokio::task::spawn_blocking(move || {
+        eval(
+            &format!(
+                r#"(async () => {{
+                    const res = await fetch("{url}");
+                    return [
+                        res.headers.get("x-request-id"),
+                        res.headers.get("connection") || "none",
+                        await res.text(),
+                    ].join(":");
+                }})()"#
+            ),
+            config(),
+        )
+    })
+    .await
+    .expect("join")
+    .expect("eval");
+    assert_eq!(value, Value::String("abc:none:ok".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn same_origin_redirect_keeps_authorization() {
     let addr = serve_auth_redirect_same_origin();
     let url = format!("http://{addr}/go");
@@ -790,6 +815,21 @@ fn serve_bytes(body: Bytes) -> SocketAddr {
     spawn_origin(move |_| {
         let body = body.clone();
         async move { Ok::<_, Infallible>(Response::new(http_body_util::Full::new(body))) }
+    })
+}
+
+fn serve_header(name: &'static str, value: &'static str, body: Bytes) -> SocketAddr {
+    spawn_origin(move |_| {
+        let body = body.clone();
+        async move {
+            Ok::<_, Infallible>(
+                Response::builder()
+                    .header(name, value)
+                    .header("connection", "close")
+                    .body(http_body_util::Full::new(body))
+                    .unwrap(),
+            )
+        }
     })
 }
 

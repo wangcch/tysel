@@ -431,15 +431,33 @@ async fn outbound_fetch(
             }
         }
         let code = status.as_u16();
+        let headers_json = response_headers_json(hop.response.headers());
         let (tx, rx) = mpsc::channel(STREAM_WINDOW);
         outbound.install_async(rx).await;
         io_handle().spawn(async move {
             let _keep_alive = hop.sender;
             pump_http_body(hop.response.into_body(), tx, cancel, deadline).await;
         });
-        return Ok(Value::Number(f64::from(code)));
+        return Ok(Value::Record(vec![
+            ("status".into(), Value::Number(f64::from(code))),
+            ("headers".into(), Value::String(headers_json)),
+        ]));
     }
     Err("too many redirects".into())
+}
+
+fn response_headers_json(headers: &hyper::HeaderMap) -> String {
+    let mut pairs = Vec::new();
+    for (name, value) in headers.iter() {
+        if crate::fetch_policy::skip_response_header(name.as_str()) {
+            continue;
+        }
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        pairs.push((name.as_str(), value));
+    }
+    serde_json::to_string(&pairs).unwrap_or_else(|_| "[]".into())
 }
 
 fn normalize_method(method: &str) -> Result<String, String> {

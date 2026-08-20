@@ -149,8 +149,10 @@ pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<
           let body = "";
           if (init.body != null) body = String(init.body);
           else if (input && typeof input !== "string" && input.body != null) body = String(input.body);
-          const status = await tysel._httpStart(String(url), method, JSON.stringify(pairs), body);
-          const response = new Response(null, { status: status });
+          const started = await tysel._httpStart(String(url), method, JSON.stringify(pairs), body);
+          let headerPairs = [];
+          try { headerPairs = JSON.parse(started.headers || "[]"); } catch (_) {}
+          const response = new Response(null, { status: started.status, headers: headerPairs });
           response._stream = true;
           return response;
         };
