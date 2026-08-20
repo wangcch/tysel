@@ -4,6 +4,7 @@
 //! in the supervisor capability broker and cross a bounded IPC pipe.
 
 mod broker;
+mod cgroup;
 mod handler;
 mod landlock;
 mod rlimit;

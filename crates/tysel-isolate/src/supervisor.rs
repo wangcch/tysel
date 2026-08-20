@@ -87,6 +87,7 @@ pub struct Supervisor {
     spec: WorkerSpec,
     broker: Broker,
     next_id: u64,
+    cgroup: Option<crate::cgroup::Guard>,
     child: Option<WorkerConn>,
     handler_source: Option<String>,
     handler_secret_names: Vec<String>,
@@ -113,6 +114,7 @@ impl Supervisor {
             spec,
             broker: Broker::new(secrets),
             next_id: 1,
+            cgroup: None,
             child: None,
             handler_source: None,
             handler_secret_names: Vec::new(),
@@ -142,6 +144,7 @@ impl Supervisor {
             Err(_) => {
                 let _ = conn.child.wait();
                 self.child = None;
+                self.cgroup = None;
                 Ok(())
             }
         }
@@ -152,6 +155,7 @@ impl Supervisor {
             let _ = conn.child.kill();
             let _ = conn.child.wait();
         }
+        self.cgroup = None;
         Ok(())
     }
 
@@ -291,6 +295,7 @@ impl Supervisor {
             return Ok(());
         }
         self.child = None;
+        self.cgroup = None;
         let mut command = Command::new(&self.worker_bin);
         command.env_clear().stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
         let mut child = command.spawn()?;
@@ -326,6 +331,8 @@ impl Supervisor {
             Err(err) => return Err(IsolateError::Worker(format!("start handshake failed: {err}"))),
         }
         let _ = conn.stdin.flush();
+        let pid = conn.child.id();
+        self.cgroup = crate::cgroup::attach(pid, self.spec.rlimit_as_bytes);
         self.child = Some(conn);
         Ok(())
     }
@@ -348,5 +355,7 @@ impl Drop for Supervisor {
             let _ = write_message(&mut conn.stdin, &Message::Shutdown);
             let _ = conn.child.wait();
         }
+        self.child = None;
+        self.cgroup = None;
     }
 }

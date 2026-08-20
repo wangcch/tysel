@@ -1,8 +1,10 @@
 //! Linux seccomp filter for isolated workers.
 //!
-//! This first slice is a denylist: exec, ptrace, mount, modules, and a few
-//! other kernel-attack syscalls return EPERM. It is not a full allowlist.
-//! macOS is not the security gate of record; this is a no-op there.
+//! Isolated workers are restricted to an allowlist: unmatched syscalls return
+//! EPERM, and a mismatched architecture kills the process. The list is enough
+//! for QuickJS, Rust threads, and the shared Tokio I/O runtime, and it omits
+//! sockets, exec, ptrace, mount, and bpf. macOS is not the security gate of
+//! record; this is a no-op there.
 
 use crate::supervisor::IsolateError;
 
@@ -31,36 +33,112 @@ mod linux {
     const AUDIT_ARCH: u32 = 0xC000_00B7;
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    fn denied_syscalls() -> &'static [u32] {
-        &[
-            libc::SYS_execve as u32,
-            libc::SYS_execveat as u32,
-            libc::SYS_ptrace as u32,
-            libc::SYS_mount as u32,
-            libc::SYS_umount2 as u32,
-            libc::SYS_pivot_root as u32,
-            libc::SYS_swapon as u32,
-            libc::SYS_swapoff as u32,
-            libc::SYS_init_module as u32,
-            libc::SYS_finit_module as u32,
-            libc::SYS_delete_module as u32,
-            libc::SYS_bpf as u32,
-            libc::SYS_userfaultfd as u32,
-            libc::SYS_perf_event_open as u32,
-            libc::SYS_kexec_load as u32,
-            libc::SYS_kexec_file_load as u32,
-            libc::SYS_reboot as u32,
-            libc::SYS_unshare as u32,
-            libc::SYS_setns as u32,
-            libc::SYS_capset as u32,
-            libc::SYS_open_by_handle_at as u32,
-            libc::SYS_process_vm_readv as u32,
-            libc::SYS_process_vm_writev as u32,
-            libc::SYS_fsopen as u32,
-            libc::SYS_fsmount as u32,
-            libc::SYS_move_mount as u32,
-            libc::SYS_mount_setattr as u32,
-        ]
+    fn allowed_syscalls() -> Vec<u32> {
+        let mut nrs = vec![
+            libc::SYS_read as u32,
+            libc::SYS_write as u32,
+            libc::SYS_close as u32,
+            libc::SYS_lseek as u32,
+            libc::SYS_readv as u32,
+            libc::SYS_writev as u32,
+            libc::SYS_pread64 as u32,
+            libc::SYS_pwrite64 as u32,
+            libc::SYS_openat as u32,
+            libc::SYS_newfstatat as u32,
+            libc::SYS_fstat as u32,
+            libc::SYS_statx as u32,
+            libc::SYS_readlinkat as u32,
+            libc::SYS_getdents64 as u32,
+            libc::SYS_fcntl as u32,
+            libc::SYS_ioctl as u32,
+            libc::SYS_dup as u32,
+            libc::SYS_dup3 as u32,
+            libc::SYS_pipe2 as u32,
+            libc::SYS_mmap as u32,
+            libc::SYS_mprotect as u32,
+            libc::SYS_munmap as u32,
+            libc::SYS_brk as u32,
+            libc::SYS_madvise as u32,
+            libc::SYS_mremap as u32,
+            libc::SYS_mincore as u32,
+            libc::SYS_clone as u32,
+            libc::SYS_clone3 as u32,
+            libc::SYS_futex as u32,
+            libc::SYS_set_robust_list as u32,
+            libc::SYS_get_robust_list as u32,
+            libc::SYS_set_tid_address as u32,
+            libc::SYS_rseq as u32,
+            libc::SYS_exit as u32,
+            libc::SYS_exit_group as u32,
+            libc::SYS_wait4 as u32,
+            libc::SYS_waitid as u32,
+            libc::SYS_getpid as u32,
+            libc::SYS_gettid as u32,
+            libc::SYS_tgkill as u32,
+            libc::SYS_sched_yield as u32,
+            libc::SYS_sched_getaffinity as u32,
+            libc::SYS_nanosleep as u32,
+            libc::SYS_clock_nanosleep as u32,
+            libc::SYS_clock_gettime as u32,
+            libc::SYS_clock_getres as u32,
+            libc::SYS_gettimeofday as u32,
+            libc::SYS_rt_sigaction as u32,
+            libc::SYS_rt_sigprocmask as u32,
+            libc::SYS_rt_sigreturn as u32,
+            libc::SYS_rt_sigtimedwait as u32,
+            libc::SYS_sigaltstack as u32,
+            libc::SYS_epoll_create1 as u32,
+            libc::SYS_epoll_ctl as u32,
+            libc::SYS_epoll_pwait as u32,
+            libc::SYS_eventfd2 as u32,
+            libc::SYS_ppoll as u32,
+            libc::SYS_getrandom as u32,
+            libc::SYS_getuid as u32,
+            libc::SYS_geteuid as u32,
+            libc::SYS_getgid as u32,
+            libc::SYS_getegid as u32,
+            libc::SYS_getrusage as u32,
+            libc::SYS_prlimit64 as u32,
+            libc::SYS_uname as u32,
+            libc::SYS_sysinfo as u32,
+            libc::SYS_prctl as u32,
+            libc::SYS_membarrier as u32,
+            libc::SYS_restart_syscall as u32,
+            libc::SYS_faccessat as u32,
+            libc::SYS_faccessat2 as u32,
+            libc::SYS_timerfd_create as u32,
+            libc::SYS_timerfd_settime as u32,
+            libc::SYS_timerfd_gettime as u32,
+            libc::SYS_fsync as u32,
+            libc::SYS_fdatasync as u32,
+        ];
+        #[cfg(target_arch = "x86_64")]
+        {
+            nrs.extend([
+                libc::SYS_open as u32,
+                libc::SYS_stat as u32,
+                libc::SYS_lstat as u32,
+                libc::SYS_access as u32,
+                libc::SYS_pipe as u32,
+                libc::SYS_dup2 as u32,
+                libc::SYS_poll as u32,
+                libc::SYS_select as u32,
+                libc::SYS_epoll_wait as u32,
+                libc::SYS_readlink as u32,
+                libc::SYS_arch_prctl as u32,
+                libc::SYS_time as u32,
+            ]);
+        }
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            nrs.push(libc::SYS_openat2 as u32);
+            nrs.push(libc::SYS_close_range as u32);
+            nrs.push(libc::SYS_futex_waitv as u32);
+            nrs.push(libc::SYS_epoll_pwait2 as u32);
+        }
+        nrs.sort_unstable();
+        nrs.dedup();
+        nrs
     }
 
     pub fn restrict() -> Result<(), IsolateError> {
@@ -118,11 +196,11 @@ mod linux {
             stmt(ret, libc::SECCOMP_RET_KILL_PROCESS),
             stmt(ld_abs, offset_of!(libc::seccomp_data, nr) as u32),
         ];
-        for nr in denied_syscalls() {
-            filters.push(jump(jmp_eq, *nr, 0, 1));
-            filters.push(stmt(ret, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32));
+        for nr in allowed_syscalls() {
+            filters.push(jump(jmp_eq, nr, 0, 1));
+            filters.push(stmt(ret, libc::SECCOMP_RET_ALLOW));
         }
-        filters.push(stmt(ret, libc::SECCOMP_RET_ALLOW));
+        filters.push(stmt(ret, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32));
         filters
     }
 
@@ -152,13 +230,13 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn seccomp_denies_execve() {
+    fn seccomp_denies_execve_and_socket() {
         // SAFETY: the child only applies seccomp then exits; the parent waits.
         #[allow(unsafe_code)]
         let pid = unsafe { libc::fork() };
         assert_ne!(pid, -1, "fork");
         if pid == 0 {
-            let denied = apply().is_ok() && execve_is_denied();
+            let denied = apply().is_ok() && execve_is_denied() && socket_is_denied();
             // SAFETY: the child must not run the rest of the test harness.
             #[allow(unsafe_code)]
             unsafe {
@@ -184,6 +262,14 @@ mod tests {
         // SAFETY: pointers are valid C strings for the duration of the call.
         #[allow(unsafe_code)]
         let rc = unsafe { libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        rc == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn socket_is_denied() -> bool {
+        // SAFETY: a failing socket() only returns an error; no fd is created.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
         rc == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 }
