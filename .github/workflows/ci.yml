@@ -11,14 +11,46 @@ env:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tysel
+          POSTGRES_PASSWORD: tysel
+          POSTGRES_DB: tysel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tysel -d tysel"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TYSEL_POSTGRES_TEST_URL: postgres://tysel:tysel@127.0.0.1:5432/tysel
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo test --workspace --all-targets
+
+  # Landlock, seccomp allowlist, and isolate workers are Linux-only.
+  # macOS tests treat those layers as no-ops.
+  sandbox:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p tysel-isolate --all-targets
+      - run: cargo test -p tysel-cap-fs --all-targets
 
   javascript:
     runs-on: ubuntu-latest
