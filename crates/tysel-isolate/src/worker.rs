@@ -13,6 +13,7 @@ use tysel_policy::Policy;
 
 use crate::landlock;
 use crate::rlimit;
+use crate::seccomp;
 use crate::supervisor::IsolateError;
 
 pub fn run() -> Result<(), IsolateError> {
@@ -46,6 +47,7 @@ pub fn run() -> Result<(), IsolateError> {
                 config = IsolateConfig { memory_limit_bytes, cpu_ms_per_turn, request_timeout_ms };
                 rlimit::apply_resource_limits(rlimit_as_bytes)?;
                 landlock::apply()?;
+                seccomp::apply()?;
                 write_locked(&stdout, &Message::Started)?;
             }
             Message::Load { source, secret_names } => {

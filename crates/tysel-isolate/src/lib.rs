@@ -7,6 +7,7 @@ mod broker;
 mod handler;
 mod landlock;
 mod rlimit;
+mod seccomp;
 mod supervisor;
 mod worker;
 
