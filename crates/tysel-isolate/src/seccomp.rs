@@ -2,8 +2,9 @@
 //!
 //! Isolated workers are restricted to an allowlist: unmatched syscalls return
 //! EPERM, and a mismatched architecture kills the process. The list is enough
-//! for QuickJS, Rust threads, and the shared Tokio I/O runtime, and it omits
-//! sockets, exec, ptrace, mount, and bpf. macOS is not the security gate of
+//! for QuickJS, Rust threads, and the shared Tokio I/O runtime. Local
+//! `socketpair` IPC is allowed for Tokio's signal driver, while network sockets,
+//! exec, ptrace, mount, and bpf remain denied. macOS is not the security gate of
 //! record; this is a no-op there.
 
 use crate::supervisor::IsolateError;
@@ -21,11 +22,13 @@ pub fn apply() -> Result<(), IsolateError> {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::mem::offset_of;
+    use std::mem::{offset_of, size_of};
 
     use super::IsolateError;
 
     const PR_SET_NO_NEW_PRIVS: libc::c_int = 38;
+    const SOCK_TYPE_MASK: u32 = 0x0f;
+    const SOCK_ALLOWED_FLAGS: u32 = libc::SOCK_CLOEXEC as u32 | libc::SOCK_NONBLOCK as u32;
 
     #[cfg(target_arch = "x86_64")]
     const AUDIT_ARCH: u32 = 0xC000_003E;
@@ -189,11 +192,29 @@ mod linux {
     fn program() -> Vec<libc::sock_filter> {
         let ld_abs = (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16;
         let jmp_eq = (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16;
+        let alu_and = (libc::BPF_ALU | libc::BPF_AND | libc::BPF_K) as u16;
         let ret = (libc::BPF_RET | libc::BPF_K) as u16;
         let mut filters = vec![
             stmt(ld_abs, offset_of!(libc::seccomp_data, arch) as u32),
             jump(jmp_eq, AUDIT_ARCH, 1, 0),
             stmt(ret, libc::SECCOMP_RET_KILL_PROCESS),
+            stmt(ld_abs, offset_of!(libc::seccomp_data, nr) as u32),
+            // socketpair is needed by Tokio's signal driver, but only as a
+            // local stream pair. Skip this twelve-instruction rule for every
+            // other syscall, then reload nr for the ordinary allowlist.
+            jump(jmp_eq, libc::SYS_socketpair as u32, 0, 12),
+            stmt(ld_abs, arg_low_offset(0)),
+            jump(jmp_eq, libc::AF_UNIX as u32, 0, 9),
+            stmt(ld_abs, arg_low_offset(1)),
+            stmt(alu_and, SOCK_TYPE_MASK),
+            jump(jmp_eq, libc::SOCK_STREAM as u32, 0, 6),
+            stmt(ld_abs, arg_low_offset(1)),
+            stmt(alu_and, !(SOCK_TYPE_MASK | SOCK_ALLOWED_FLAGS)),
+            jump(jmp_eq, 0, 0, 3),
+            stmt(ld_abs, arg_low_offset(2)),
+            jump(jmp_eq, 0, 0, 1),
+            stmt(ret, libc::SECCOMP_RET_ALLOW),
+            stmt(ret, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
             stmt(ld_abs, offset_of!(libc::seccomp_data, nr) as u32),
         ];
         for nr in allowed_syscalls() {
@@ -202,6 +223,12 @@ mod linux {
         }
         filters.push(stmt(ret, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32));
         filters
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn arg_low_offset(index: usize) -> u32 {
+        let word_offset = if cfg!(target_endian = "little") { 0 } else { 4 };
+        (offset_of!(libc::seccomp_data, args) + index * size_of::<u64>() + word_offset) as u32
     }
 
     fn stmt(code: u16, k: u32) -> libc::sock_filter {
@@ -230,13 +257,19 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn seccomp_denies_execve_and_socket() {
+    fn seccomp_denies_execve_and_network_socket_but_allows_unix_pair() {
         // SAFETY: the child only applies seccomp then exits; the parent waits.
         #[allow(unsafe_code)]
         let pid = unsafe { libc::fork() };
         assert_ne!(pid, -1, "fork");
         if pid == 0 {
-            let denied = apply().is_ok() && execve_is_denied() && socket_is_denied();
+            let denied = apply().is_ok()
+                && execve_is_denied()
+                && network_socket_is_denied()
+                && unix_socketpair_is_allowed()
+                && tipc_socketpair_is_denied()
+                && unix_datagram_socketpair_is_denied()
+                && unix_nonzero_protocol_socketpair_is_denied();
             // SAFETY: the child must not run the rest of the test harness.
             #[allow(unsafe_code)]
             unsafe {
@@ -266,10 +299,59 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn socket_is_denied() -> bool {
+    fn network_socket_is_denied() -> bool {
         // SAFETY: a failing socket() only returns an error; no fd is created.
         #[allow(unsafe_code)]
         let rc = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        rc == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn unix_socketpair_is_allowed() -> bool {
+        let mut fds = [-1, -1];
+        // SAFETY: fds has room for the two descriptors returned by socketpair.
+        #[allow(unsafe_code)]
+        let rc = unsafe {
+            libc::socketpair(
+                libc::AF_UNIX,
+                libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
+                0,
+                fds.as_mut_ptr(),
+            )
+        };
+        if rc != 0 {
+            return false;
+        }
+        // SAFETY: successful socketpair initialized both descriptors.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+        true
+    }
+
+    #[cfg(target_os = "linux")]
+    fn tipc_socketpair_is_denied() -> bool {
+        socketpair_is_denied(libc::AF_TIPC, libc::SOCK_STREAM, 0)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn unix_datagram_socketpair_is_denied() -> bool {
+        socketpair_is_denied(libc::AF_UNIX, libc::SOCK_DGRAM, 0)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn unix_nonzero_protocol_socketpair_is_denied() -> bool {
+        socketpair_is_denied(libc::AF_UNIX, libc::SOCK_STREAM, 1)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn socketpair_is_denied(domain: libc::c_int, kind: libc::c_int, protocol: libc::c_int) -> bool {
+        let mut fds = [-1, -1];
+        // SAFETY: fds has room for two descriptors; denied calls create none.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::socketpair(domain, kind, protocol, fds.as_mut_ptr()) };
         rc == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 }
