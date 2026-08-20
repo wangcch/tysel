@@ -2777,10 +2777,17 @@ dependencies = [
 [[package]]
 name = "tysel-scheduler"
 version = "0.0.1"
+dependencies = [
+ "thiserror",
+ "tysel-task",
+]
 
 [[package]]
 name = "tysel-task"
 version = "0.0.1"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "tysel-testkit"

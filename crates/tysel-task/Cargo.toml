@@ -11,3 +11,4 @@ description = "Unified task model for HTTP, cron, queue, MCP, and agent work"
 workspace = true
 
 [dependencies]
+thiserror.workspace = true

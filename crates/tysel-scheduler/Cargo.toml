@@ -11,3 +11,5 @@ description = "Task queueing, deadlines, cancellation, and worker dispatch."
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
+tysel-task.workspace = true
