@@ -3,10 +3,14 @@ use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use tysel_engine::Value;
+use tysel_engine::{HttpHead, HttpRequest, IsolateConfig, Value};
 use tysel_ipc::{IpcError, Message, WireValue, read_message, write_message};
 
 use crate::broker::Broker;
+
+/// Request/response bodies larger than this cannot fit in a 64KiB IPC frame
+/// with headers and JSON envelope.
+pub const MAX_ISOLATED_HTTP_BODY: usize = 32 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IsolateError {
@@ -20,7 +24,9 @@ pub enum IsolateError {
     Broker(String),
     #[error("resource limit: {0}")]
     Limit(String),
-    #[error("worker binary not found")]
+    #[error(
+        "worker binary not found; set TYSEL_WORKER or place tysel-worker next to the tysel binary"
+    )]
     MissingWorker,
 }
 
@@ -43,12 +49,47 @@ impl Default for WorkerSpec {
     }
 }
 
+impl From<IsolateConfig> for WorkerSpec {
+    fn from(config: IsolateConfig) -> Self {
+        Self {
+            memory_limit_bytes: config.memory_limit_bytes,
+            cpu_ms_per_turn: config.cpu_ms_per_turn,
+            request_timeout_ms: config.request_timeout_ms,
+            ..Self::default()
+        }
+    }
+}
+
+/// Resolve `tysel-worker` for isolated HTTP. `TYSEL_WORKER` wins; otherwise a
+/// sibling of the current executable is used.
+pub fn locate_worker() -> Result<PathBuf, IsolateError> {
+    if let Some(path) = std::env::var_os("TYSEL_WORKER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(IsolateError::MissingWorker);
+    }
+    let exe = std::env::current_exe().map_err(IsolateError::from)?;
+    let dir = exe.parent().ok_or(IsolateError::MissingWorker)?;
+    let mut sibling = dir.join("tysel-worker");
+    if cfg!(windows) {
+        sibling.set_extension("exe");
+    }
+    if sibling.is_file() {
+        return Ok(sibling);
+    }
+    Err(IsolateError::MissingWorker)
+}
+
 pub struct Supervisor {
     worker_bin: PathBuf,
     spec: WorkerSpec,
     broker: Broker,
     next_id: u64,
     child: Option<WorkerConn>,
+    handler_source: Option<String>,
+    handler_secret_names: Vec<String>,
 }
 
 struct WorkerConn {
@@ -67,8 +108,15 @@ impl Supervisor {
         if !worker_bin.is_file() {
             return Err(IsolateError::MissingWorker);
         }
-        let mut supervisor =
-            Self { worker_bin, spec, broker: Broker::new(secrets), next_id: 1, child: None };
+        let mut supervisor = Self {
+            worker_bin,
+            spec,
+            broker: Broker::new(secrets),
+            next_id: 1,
+            child: None,
+            handler_source: None,
+            handler_secret_names: Vec::new(),
+        };
         supervisor.ensure_worker()?;
         Ok(supervisor)
     }
@@ -105,6 +153,104 @@ impl Supervisor {
             let _ = conn.child.wait();
         }
         Ok(())
+    }
+
+    pub fn load_handler(
+        &mut self,
+        source: &str,
+        secret_names: Vec<String>,
+    ) -> Result<(), IsolateError> {
+        self.handler_source = Some(source.to_owned());
+        self.handler_secret_names = secret_names;
+        self.ensure_worker()?;
+        self.send_load()
+    }
+
+    pub fn http(&mut self, request: &HttpRequest) -> Result<(HttpHead, Vec<u8>), IsolateError> {
+        match self.http_inner(request) {
+            Ok(value) => Ok(value),
+            Err(err) if self.worker_exited() => {
+                self.ensure_worker()?;
+                if self.handler_source.is_some() {
+                    self.send_load()?;
+                }
+                self.http_inner(request)
+                    .map_err(|retry| IsolateError::Worker(format!("{err}; retry: {retry}")))
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn send_load(&mut self) -> Result<(), IsolateError> {
+        let source = self
+            .handler_source
+            .clone()
+            .ok_or_else(|| IsolateError::Worker("handler source missing".into()))?;
+        let secret_names = self.handler_secret_names.clone();
+        let conn = self.child.as_mut().expect("worker");
+        write_message(&mut conn.stdin, &Message::Load { source, secret_names })?;
+        match read_message(&mut conn.stdout)? {
+            Message::Loaded => Ok(()),
+            Message::LoadErr { error } => Err(IsolateError::Worker(error)),
+            other => Err(IsolateError::Worker(format!("expected loaded, got {other:?}"))),
+        }
+    }
+
+    fn http_inner(&mut self, request: &HttpRequest) -> Result<(HttpHead, Vec<u8>), IsolateError> {
+        if request.body.len() > MAX_ISOLATED_HTTP_BODY {
+            return Err(IsolateError::Worker("isolated request body exceeds 32KiB IPC cap".into()));
+        }
+        self.ensure_worker()?;
+        let id = self.next_id;
+        self.next_id += 1;
+        {
+            let conn = self.child.as_mut().expect("worker");
+            write_message(
+                &mut conn.stdin,
+                &Message::Http {
+                    id,
+                    method: request.method.clone(),
+                    url: request.url.clone(),
+                    headers: request.headers.clone(),
+                    body: String::from_utf8_lossy(&request.body).into_owned(),
+                },
+            )?;
+        }
+        loop {
+            let message = {
+                let conn = self.child.as_mut().expect("worker");
+                read_message(&mut conn.stdout)?
+            };
+            match message {
+                Message::CapCall { id: cap_id, op, args } => {
+                    let reply = match self.broker.call(&op, &args) {
+                        Ok(value) => Message::CapOk { id: cap_id, value: WireValue::from(value) },
+                        Err(err) => Message::CapErr { id: cap_id, error: err.to_string() },
+                    };
+                    let conn = self.child.as_mut().expect("worker");
+                    write_message(&mut conn.stdin, &reply)?;
+                }
+                Message::HttpOk { id: reply_id, status, headers, body, websocket }
+                    if reply_id == id =>
+                {
+                    if websocket {
+                        return Err(IsolateError::Worker(
+                            "websocket is not available in the isolated profile".into(),
+                        ));
+                    }
+                    if body.len() > MAX_ISOLATED_HTTP_BODY {
+                        return Err(IsolateError::Worker(
+                            "isolated response body exceeds 32KiB IPC cap".into(),
+                        ));
+                    }
+                    return Ok((HttpHead { status, headers, websocket: false }, body.into_bytes()));
+                }
+                Message::HttpErr { id: reply_id, error } if reply_id == id => {
+                    return Err(IsolateError::Worker(error));
+                }
+                other => return Err(IsolateError::Worker(format!("unexpected message {other:?}"))),
+            }
+        }
     }
 
     fn eval_inner(&mut self, source: &str) -> Result<Value, IsolateError> {

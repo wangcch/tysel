@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
@@ -9,9 +8,8 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tysel_engine::IsolateConfig;
-use tysel_engine_qjs::IsolatePool;
 use tysel_manifest::Manifest;
-use tysel_runtime::{SharedPool, handle_stream};
+use tysel_runtime::{AppIsolate, SharedPool, handle_stream, spawn_app_isolate};
 
 const IGNORED_DIRS: &[&str] = &["node_modules", "target", "dist", ".git", "data"];
 
@@ -50,7 +48,7 @@ pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
 fn load(
     manifest_path: &Path,
     entry: Option<&Path>,
-) -> Result<(Arc<IsolatePool>, usize, std::net::SocketAddr, bool)> {
+) -> Result<(AppIsolate, usize, std::net::SocketAddr, bool)> {
     let manifest = Manifest::from_path(manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let root = manifest_path.parent().unwrap_or(Path::new("."));
@@ -71,6 +69,7 @@ fn load(
         &file_values,
     ));
     tysel_engine_qjs::configure_fetch_hosts(tap.manifest.fetch_hosts.clone());
+    tysel_engine_qjs::configure_execution_profile(&tap.manifest.execution_profile);
     tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);
     let source = tap.bundle_source()?.to_owned();
     let config = IsolateConfig {
@@ -78,13 +77,19 @@ fn load(
         cpu_ms_per_turn: tap.manifest.cpu_ms_per_turn,
         request_timeout_ms: tap.manifest.request_timeout_ms,
     };
-    let pool = IsolatePool::spawn(1, &source, config)?;
+    let pool = spawn_app_isolate(
+        &tap.manifest.execution_profile,
+        &source,
+        config,
+        tap.manifest.secret_names.clone(),
+    )?;
     let addr = tap
         .manifest
         .listen
         .parse()
         .map_err(|_| anyhow!("invalid listen address '{}'", tap.manifest.listen))?;
-    Ok((Arc::new(pool), tap.manifest.max_request_bytes, addr, tap.manifest.websocket))
+    let websocket = tap.manifest.websocket && !matches!(pool, AppIsolate::Isolated(_));
+    Ok((pool, tap.manifest.max_request_bytes, addr, websocket))
 }
 
 fn watch(root: &Path) -> Result<Watch> {

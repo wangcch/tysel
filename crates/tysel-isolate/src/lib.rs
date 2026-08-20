@@ -4,11 +4,13 @@
 //! in the supervisor capability broker and cross a bounded IPC pipe.
 
 mod broker;
+mod handler;
 mod rlimit;
 mod supervisor;
 mod worker;
 
-pub use supervisor::{IsolateError, Supervisor, WorkerSpec};
+pub use handler::IsolatedHttpPool;
+pub use supervisor::{IsolateError, MAX_ISOLATED_HTTP_BODY, Supervisor, WorkerSpec, locate_worker};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

@@ -102,6 +102,19 @@ impl IsolatePool {
             Err(_) => Err(EngineError::Isolate("isolate dropped the response head".into())),
         }
     }
+
+    /// Run one request to completion on the process I/O runtime. Isolated
+    /// workers use this from a blocking IPC thread.
+    pub fn dispatch_sync(&self, request: HttpRequest) -> Result<(HttpHead, Vec<u8>), EngineError> {
+        crate::queue::io_handle().block_on(async {
+            let (head, mut chunks) = self.dispatch(request).await?;
+            let mut body = Vec::new();
+            while let Some(chunk) = chunks.recv().await {
+                body.extend(chunk);
+            }
+            Ok((head, body))
+        })
+    }
 }
 
 impl Drop for IsolatePool {

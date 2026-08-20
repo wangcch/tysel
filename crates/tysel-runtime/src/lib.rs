@@ -7,8 +7,8 @@ mod http;
 mod service;
 
 pub use http::{
-    HttpError, SharedPool, bind, bind_with, bind_with_request_limit, handle_stream, serve,
-    serve_with_websocket,
+    AppIsolate, HttpError, SharedPool, bind, bind_with, bind_with_request_limit, handle_stream,
+    serve, serve_with_websocket, spawn_app_isolate,
 };
 pub use service::{StubError, run_stub, run_tap};
 

@@ -42,6 +42,32 @@ pub enum Message {
         id: u64,
         error: String,
     },
+    Load {
+        source: String,
+        secret_names: Vec<String>,
+    },
+    Loaded,
+    LoadErr {
+        error: String,
+    },
+    Http {
+        id: u64,
+        method: String,
+        url: String,
+        headers: Vec<(String, String)>,
+        body: String,
+    },
+    HttpOk {
+        id: u64,
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: String,
+        websocket: bool,
+    },
+    HttpErr {
+        id: u64,
+        error: String,
+    },
     CapCall {
         id: u64,
         op: String,
@@ -143,6 +169,33 @@ mod tests {
         write_message(&mut buf, &Message::Eval { id: 7, source: "1+1".into() }).unwrap();
         let decoded = read_message(&mut Cursor::new(buf)).unwrap();
         assert_eq!(decoded, Message::Eval { id: 7, source: "1+1".into() });
+    }
+
+    #[test]
+    fn roundtrip_http_message() {
+        let mut buf = Vec::new();
+        write_message(
+            &mut buf,
+            &Message::Http {
+                id: 3,
+                method: "GET".into(),
+                url: "http://tysel.local/".into(),
+                headers: vec![("accept".into(), "*/*".into())],
+                body: String::new(),
+            },
+        )
+        .unwrap();
+        let decoded = read_message(&mut Cursor::new(buf)).unwrap();
+        assert_eq!(
+            decoded,
+            Message::Http {
+                id: 3,
+                method: "GET".into(),
+                url: "http://tysel.local/".into(),
+                headers: vec![("accept".into(), "*/*".into())],
+                body: String::new(),
+            }
+        );
     }
 
     #[test]

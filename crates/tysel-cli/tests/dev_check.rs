@@ -269,6 +269,115 @@ request_timeout_ms = 2000
 }
 
 #[test]
+fn dev_isolated_profile_denies_fetch_even_when_hosts_are_listed() {
+    let dir = temp_app("dev-isolated-fetch");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "isolated"
+
+[server]
+listen = "127.0.0.1:0"
+
+[limits]
+request_timeout_ms = 2000
+
+[permissions]
+fetch = ["192.0.2.1"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        r#"export default {
+  async fetch() {
+    try {
+      await fetch("http://192.0.2.1/");
+      return new Response("allowed");
+    } catch (err) {
+      return new Response(String(err), { status: 403 });
+    }
+  },
+};
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new(cli_exe())
+        .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .env("TYSEL_WORKER", ensure_worker())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel dev");
+    let stdout = child.stdout.take().expect("stdout");
+    let started = std::time::Instant::now();
+    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let body = http_get(&addr);
+    assert!(started.elapsed() < Duration::from_secs(2), "deny took {:?}", started.elapsed());
+    assert!(body.contains("403"), "{body}");
+    assert!(body.contains("isolated profile"), "{body}");
+    assert!(!body.contains("not permitted"), "{body}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn dev_isolated_profile_does_not_inherit_supervisor_env() {
+    let dir = temp_app("dev-isolated-env");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "hello-service"
+entry = "src/index.js"
+profile = "isolated"
+
+[server]
+listen = "127.0.0.1:0"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.js"),
+        r#"export default {
+  async fetch() {
+    return new Response("ENV:" + tysel.envKeys() + ":END");
+  },
+};
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new(cli_exe())
+        .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .env("TYSEL_WORKER", ensure_worker())
+        .env("TYSEL_TEST_SECRET", "should-not-leak")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel dev");
+    let stdout = child.stdout.take().expect("stdout");
+    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let body = http_get(&addr);
+    let start = body.find("ENV:").expect("env marker");
+    let rest = &body[start + 4..];
+    let keys = rest.split(":END").next().unwrap_or(rest);
+    for leaked in ["HOME", "USER", "PATH", "TYSEL_TEST_SECRET"] {
+        assert!(!keys.split(',').any(|key| key == leaked), "worker inherited {leaked}: {keys}");
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
 fn dev_fetch_expands_secret_handles_on_the_host() {
     let (origin, seen) = spawn_header_echo();
     let dir = temp_app("dev-fetch-secret");
@@ -452,5 +561,37 @@ fn cli_exe() -> PathBuf {
         candidate.set_extension("exe");
     }
     assert!(candidate.is_file(), "missing tysel at {}", candidate.display());
+    candidate
+}
+
+fn ensure_worker() -> PathBuf {
+    let worker = worker_exe_candidate();
+    if worker.is_file() {
+        return worker;
+    }
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "-p", "tysel-isolate", "--bin", "tysel-worker", "--quiet"])
+        .status()
+        .expect("cargo build tysel-worker");
+    assert!(status.success(), "failed to build tysel-worker");
+    assert!(worker.is_file(), "missing tysel-worker at {}", worker.display());
+    worker
+}
+
+fn worker_exe_candidate() -> PathBuf {
+    for key in ["CARGO_BIN_EXE_tysel_worker", "CARGO_BIN_EXE_tysel-worker"] {
+        if let Some(path) = std::env::var_os(key) {
+            return PathBuf::from(path);
+        }
+    }
+    let test_exe = std::env::current_exe().expect("current_exe");
+    let mut candidate = test_exe
+        .parent()
+        .and_then(|deps| deps.parent())
+        .map(|debug| debug.join("tysel-worker"))
+        .expect("target debug directory");
+    if cfg!(windows) {
+        candidate.set_extension("exe");
+    }
     candidate
 }

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use tysel_engine::Value;
-use tysel_isolate::{Supervisor, WorkerSpec};
+use tysel_engine::{HttpRequest, Value};
+use tysel_isolate::{IsolatedHttpPool, Supervisor, WorkerSpec};
 
 #[test]
 fn eval_echo_runs_in_broker() {
@@ -97,6 +97,32 @@ fn sqlite_is_denied_in_isolated_worker() {
 }
 
 #[test]
+fn fetch_is_denied_in_isolated_worker() {
+    let mut supervisor = supervisor();
+    let value = supervisor
+        .eval(
+            r#"(async () => {
+                try {
+                    await fetch("http://127.0.0.1/");
+                    return "allowed";
+                } catch (err) {
+                    return String(err);
+                }
+            })()"#,
+        )
+        .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(
+                message.contains("capability is not available in the isolated worker"),
+                "unexpected error: {message}"
+            );
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
 fn sleep_timeout_keeps_supervisor_live() {
     let mut supervisor =
         Supervisor::spawn(worker_exe(), WorkerSpec { request_timeout_ms: 80, ..spec() }, secrets())
@@ -124,6 +150,86 @@ fn linux_overalloc_kills_worker_and_recovers() {
     supervisor.overalloc().expect("worker should die under RLIMIT_AS");
     let value = supervisor.eval("1 + 1").expect("eval after overalloc");
     assert_eq!(value, Value::Number(2.0));
+}
+
+#[test]
+fn isolated_http_handler_runs_in_the_worker() {
+    let pool = IsolatedHttpPool::spawn(
+        worker_exe(),
+        r#"export default { async fetch() { return new Response("ok"); } };"#,
+        spec(),
+        Vec::new(),
+    )
+    .expect("spawn isolated http");
+    let (head, body) = pool
+        .dispatch_sync(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/".into(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        })
+        .expect("dispatch");
+    assert_eq!(head.status, 200);
+    assert_eq!(body, b"ok");
+}
+
+#[test]
+fn isolated_http_handler_does_not_see_supervisor_env() {
+    let pool = IsolatedHttpPool::spawn(
+        worker_exe(),
+        r#"export default { async fetch() { return new Response("ENV:" + tysel.envKeys() + ":END"); } };"#,
+        spec(),
+        Vec::new(),
+    )
+    .expect("spawn isolated http");
+    let (_head, body) = pool
+        .dispatch_sync(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/".into(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        })
+        .expect("dispatch");
+    let text = String::from_utf8(body).expect("utf8");
+    let keys =
+        text.strip_prefix("ENV:").and_then(|rest| rest.strip_suffix(":END")).unwrap_or(&text);
+    for leaked in ["HOME", "USER", "PATH", "TYSEL_TEST_SECRET"] {
+        assert!(!keys.split(',').any(|key| key == leaked), "worker inherited {leaked}: {keys}");
+    }
+}
+
+#[test]
+fn isolated_http_denies_outbound_fetch() {
+    let pool = IsolatedHttpPool::spawn(
+        worker_exe(),
+        r#"export default {
+          async fetch() {
+            try {
+              await fetch("http://127.0.0.1/");
+              return new Response("allowed");
+            } catch (err) {
+              return new Response(String(err), { status: 403 });
+            }
+          },
+        };"#,
+        spec(),
+        Vec::new(),
+    )
+    .expect("spawn isolated http");
+    let (head, body) = pool
+        .dispatch_sync(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/".into(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        })
+        .expect("dispatch");
+    assert_eq!(head.status, 403);
+    let message = String::from_utf8_lossy(&body);
+    assert!(
+        message.contains("isolated profile") || message.contains("isolated worker"),
+        "unexpected error: {message}"
+    );
 }
 
 fn supervisor() -> Supervisor {

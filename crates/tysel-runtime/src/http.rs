@@ -18,8 +18,9 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
-use tysel_engine::EngineError;
+use tysel_engine::{EngineError, HttpHead, HttpRequest, IsolateConfig};
 use tysel_engine_qjs::{IncomingHttp, IsolatePool, STREAM_WINDOW};
+use tysel_isolate::{IsolatedHttpPool, MAX_ISOLATED_HTTP_BODY, locate_worker};
 use tysel_package::default_max_request_bytes;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,36 +36,123 @@ pub enum HttpError {
 }
 
 #[derive(Clone)]
+pub enum AppIsolate {
+    Trusted(Arc<IsolatePool>),
+    Isolated(Arc<IsolatedHttpPool>),
+}
+
+impl From<Arc<IsolatePool>> for AppIsolate {
+    fn from(pool: Arc<IsolatePool>) -> Self {
+        Self::Trusted(pool)
+    }
+}
+
+impl AppIsolate {
+    async fn dispatch_incoming(
+        &self,
+        request: IncomingHttp,
+    ) -> Result<(tysel_engine::HttpHead, mpsc::Receiver<Vec<u8>>), EngineError> {
+        match self {
+            Self::Trusted(pool) => pool.dispatch_incoming(request).await,
+            Self::Isolated(pool) => dispatch_isolated(pool.clone(), request).await,
+        }
+    }
+}
+
+pub fn spawn_app_isolate(
+    execution_profile: &str,
+    source: &str,
+    config: IsolateConfig,
+    secret_names: Vec<String>,
+) -> Result<AppIsolate, EngineError> {
+    if execution_profile.eq_ignore_ascii_case("isolated") {
+        let worker = locate_worker().map_err(|err| EngineError::Isolate(err.to_string()))?;
+        let pool = IsolatedHttpPool::spawn_from_config(worker, source, config, secret_names)
+            .map_err(|err| EngineError::Isolate(err.to_string()))?;
+        Ok(AppIsolate::Isolated(Arc::new(pool)))
+    } else {
+        Ok(AppIsolate::Trusted(Arc::new(IsolatePool::spawn(1, source, config)?)))
+    }
+}
+
+async fn dispatch_isolated(
+    pool: Arc<IsolatedHttpPool>,
+    request: IncomingHttp,
+) -> Result<(HttpHead, mpsc::Receiver<Vec<u8>>), EngineError> {
+    if request.ws_in.is_some() || request.ws_out.is_some() {
+        return Err(EngineError::Isolate(
+            "websocket is not available in the isolated profile".into(),
+        ));
+    }
+    let mut body = Vec::new();
+    let mut inbound = request.body;
+    while let Some(chunk) = inbound.recv().await {
+        let chunk = chunk.map_err(|err| {
+            if err.contains("exceeds") {
+                EngineError::BodyTooLarge
+            } else {
+                EngineError::Isolate(err)
+            }
+        })?;
+        body.extend(chunk);
+        if body.len() > MAX_ISOLATED_HTTP_BODY {
+            return Err(EngineError::BodyTooLarge);
+        }
+    }
+    let result = tokio::task::spawn_blocking(move || {
+        pool.dispatch_sync(HttpRequest {
+            method: request.method,
+            url: request.url,
+            headers: request.headers,
+            body,
+        })
+    })
+    .await
+    .map_err(|err| EngineError::Isolate(err.to_string()))?;
+    let (head, bytes) = result.map_err(|err| EngineError::Isolate(err.to_string()))?;
+    let (tx, rx) = mpsc::channel(1);
+    if !bytes.is_empty() {
+        let _ = tx.try_send(bytes);
+    }
+    Ok((head, rx))
+}
+
+#[derive(Clone)]
 pub struct SharedPool {
-    inner: Arc<RwLock<(Arc<IsolatePool>, usize, bool)>>,
+    inner: Arc<RwLock<(AppIsolate, usize, bool)>>,
 }
 
 impl SharedPool {
-    pub fn new(pool: Arc<IsolatePool>, max_request_bytes: usize) -> Self {
+    pub fn new(pool: impl Into<AppIsolate>, max_request_bytes: usize) -> Self {
         Self::with_websocket(pool, max_request_bytes, false)
     }
 
     pub fn with_websocket(
-        pool: Arc<IsolatePool>,
+        pool: impl Into<AppIsolate>,
         max_request_bytes: usize,
         websocket: bool,
     ) -> Self {
-        Self { inner: Arc::new(RwLock::new((pool, max_request_bytes, websocket))) }
+        Self { inner: Arc::new(RwLock::new((pool.into(), max_request_bytes, websocket))) }
     }
 
-    pub fn replace(&self, pool: Arc<IsolatePool>, max_request_bytes: usize) {
+    pub fn replace(&self, pool: impl Into<AppIsolate>, max_request_bytes: usize) {
         self.replace_with(pool, max_request_bytes, self.websocket());
     }
 
-    pub fn replace_with(&self, pool: Arc<IsolatePool>, max_request_bytes: usize, websocket: bool) {
+    pub fn replace_with(
+        &self,
+        pool: impl Into<AppIsolate>,
+        max_request_bytes: usize,
+        websocket: bool,
+    ) {
         let previous = {
             let mut guard = self.inner.write().expect("pool lock");
-            std::mem::replace(&mut *guard, (pool, max_request_bytes, websocket))
+            std::mem::replace(&mut *guard, (pool.into(), max_request_bytes, websocket))
         };
         drop(previous);
     }
 
-    pub fn current(&self) -> (Arc<IsolatePool>, usize) {
+    pub fn current(&self) -> (AppIsolate, usize) {
         let guard = self.inner.read().expect("pool lock");
         (guard.0.clone(), guard.1)
     }
@@ -76,7 +164,7 @@ impl SharedPool {
 
 pub async fn serve(
     listener: TcpListener,
-    pool: Arc<IsolatePool>,
+    pool: impl Into<AppIsolate>,
     max_request_bytes: usize,
 ) -> Result<(), HttpError> {
     serve_with_websocket(listener, pool, max_request_bytes, false).await
@@ -84,7 +172,7 @@ pub async fn serve(
 
 pub async fn serve_with_websocket(
     listener: TcpListener,
-    pool: Arc<IsolatePool>,
+    pool: impl Into<AppIsolate>,
     max_request_bytes: usize,
     websocket: bool,
 ) -> Result<(), HttpError> {
@@ -151,7 +239,7 @@ pub async fn bind_with(
 }
 
 async fn dispatch(
-    pool: Arc<IsolatePool>,
+    pool: AppIsolate,
     request: Request<Incoming>,
     max_request_bytes: usize,
     websocket: bool,
@@ -175,7 +263,7 @@ async fn dispatch(
 }
 
 async fn dispatch_inner(
-    pool: Arc<IsolatePool>,
+    pool: AppIsolate,
     request: Request<Incoming>,
     max_request_bytes: usize,
     websocket_enabled: bool,

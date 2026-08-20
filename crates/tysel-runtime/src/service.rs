@@ -1,13 +1,11 @@
 use std::io::{self, Write};
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use tokio::net::TcpListener;
 use tysel_engine::IsolateConfig;
-use tysel_engine_qjs::IsolatePool;
 use tysel_package::Tap;
 
-use crate::http::{HttpError, serve_with_websocket};
+use crate::http::{AppIsolate, HttpError, serve_with_websocket, spawn_app_isolate};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StubError {
@@ -42,18 +40,19 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         &std::collections::HashMap::new(),
     ));
     tysel_engine_qjs::configure_fetch_hosts(tap.manifest.fetch_hosts.clone());
+    tysel_engine_qjs::configure_execution_profile(&tap.manifest.execution_profile);
     tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);
-    let pool = IsolatePool::spawn(1, &bundle, config)?;
+    let pool = spawn_app_isolate(
+        &tap.manifest.execution_profile,
+        &bundle,
+        config,
+        tap.manifest.secret_names.clone(),
+    )?;
+    let websocket = tap.manifest.websocket && !matches!(pool, AppIsolate::Isolated(_));
     let listener = TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     println!("tysel listen {bound}");
     io::stdout().flush()?;
-    serve_with_websocket(
-        listener,
-        Arc::new(pool),
-        tap.manifest.max_request_bytes,
-        tap.manifest.websocket,
-    )
-    .await?;
+    serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await?;
     Ok(())
 }

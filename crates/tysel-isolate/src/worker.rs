@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::io::{self, BufReader, Write};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tysel_engine::{InterruptReason, IsolateConfig, Value};
+use tysel_engine::{HttpRequest, InterruptReason, IsolateConfig, Value};
 use tysel_engine_qjs::{
-    IoCompletion, IoRequest, IsolateCancel, OpId, eval_with_reactor, open_bridge,
+    IoCompletion, IoRequest, IsolateCancel, IsolatePool, OpId, eval_with_reactor, open_bridge,
 };
 use tysel_ipc::{Message, WireValue, read_message, write_message};
+use tysel_policy::Policy;
 
 use crate::rlimit;
 use crate::supervisor::IsolateError;
@@ -30,6 +32,7 @@ pub fn run() -> Result<(), IsolateError> {
     write_locked(&stdout, &Message::WorkerReady)?;
 
     let mut config = IsolateConfig::default();
+    let mut handler: Option<IsolatePool> = None;
     loop {
         let message = stdin_rx.recv().map_err(|err| IsolateError::Worker(err.to_string()))?;
         match message {
@@ -42,6 +45,37 @@ pub fn run() -> Result<(), IsolateError> {
                 config = IsolateConfig { memory_limit_bytes, cpu_ms_per_turn, request_timeout_ms };
                 rlimit::apply_resource_limits(rlimit_as_bytes)?;
                 write_locked(&stdout, &Message::Started)?;
+            }
+            Message::Load { source, secret_names } => {
+                let reply = match load_handler(&source, secret_names, config) {
+                    Ok(pool) => {
+                        handler = Some(pool);
+                        Message::Loaded
+                    }
+                    Err(err) => Message::LoadErr { error: err.to_string() },
+                };
+                write_locked(&stdout, &reply)?;
+            }
+            Message::Http { id, method, url, headers, body } => {
+                let reply = match handler.as_ref() {
+                    Some(pool) => match pool.dispatch_sync(HttpRequest {
+                        method,
+                        url,
+                        headers,
+                        body: body.into_bytes(),
+                    }) {
+                        Ok((head, bytes)) => Message::HttpOk {
+                            id,
+                            status: head.status,
+                            headers: head.headers,
+                            body: String::from_utf8_lossy(&bytes).into_owned(),
+                            websocket: head.websocket,
+                        },
+                        Err(err) => Message::HttpErr { id, error: err.to_string() },
+                    },
+                    None => Message::HttpErr { id, error: "handler not loaded".into() },
+                };
+                write_locked(&stdout, &reply)?;
             }
             Message::Eval { id, source } => {
                 let reply = match eval_source(&source, config, &stdout, &stdin_rx) {
@@ -67,6 +101,21 @@ pub fn run() -> Result<(), IsolateError> {
             }
         }
     }
+}
+
+fn load_handler(
+    source: &str,
+    secret_names: Vec<String>,
+    config: IsolateConfig,
+) -> Result<IsolatePool, IsolateError> {
+    tysel_engine_qjs::configure_execution_profile("isolated");
+    tysel_engine_qjs::configure_fetch_hosts(Vec::new());
+    let mut secrets = HashMap::new();
+    for name in secret_names {
+        secrets.insert(name, String::new());
+    }
+    tysel_engine_qjs::configure_secrets(secrets);
+    IsolatePool::spawn(1, source, config).map_err(|err| IsolateError::Worker(err.to_string()))
 }
 
 fn eval_source(
@@ -179,24 +228,24 @@ fn wait_interruptible(
 fn cap_call(request: &IoRequest) -> Option<Message> {
     match request {
         IoRequest::Sleep { .. } => unreachable!("sleep stays in the worker"),
-        IoRequest::Echo { id, value } => Some(Message::CapCall {
-            id: id.0,
-            op: "echo".into(),
-            args: vec![WireValue::String { v: value.clone() }],
-        }),
-        IoRequest::SecretRef { id, name } => Some(Message::CapCall {
-            id: id.0,
-            op: "secret.ref".into(),
-            args: vec![WireValue::String { v: name.clone() }],
-        }),
-        IoRequest::ReadBody { .. }
-        | IoRequest::HttpGet { .. }
-        | IoRequest::HttpRead { .. }
-        | IoRequest::WsRead { .. }
-        | IoRequest::WsSend { .. }
-        | IoRequest::WsClose { .. }
-        | IoRequest::SqliteExec { .. }
-        | IoRequest::SqliteQuery { .. } => None,
+        other => {
+            if !Policy::isolated().allows(other.capability()) {
+                return None;
+            }
+            match other {
+                IoRequest::Echo { id, value } => Some(Message::CapCall {
+                    id: id.0,
+                    op: "echo".into(),
+                    args: vec![WireValue::String { v: value.clone() }],
+                }),
+                IoRequest::SecretRef { id, name } => Some(Message::CapCall {
+                    id: id.0,
+                    op: "secret.ref".into(),
+                    args: vec![WireValue::String { v: name.clone() }],
+                }),
+                _ => None,
+            }
+        }
     }
 }
 
