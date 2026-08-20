@@ -20,7 +20,7 @@ mod trust;
 pub use durable::DurableSession;
 pub use fetch_policy::configure as configure_fetch_hosts;
 pub use isolate::{
-    IsolateCancel, eval, eval_cancellable, eval_durable, eval_with_reactor,
+    IsolateCancel, eval, eval_cancellable, eval_durable, eval_durable_module, eval_with_reactor,
     eval_with_reactor_deadline,
 };
 pub use pool::{IncomingHttp, IsolatePool};

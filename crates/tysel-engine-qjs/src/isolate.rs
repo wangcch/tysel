@@ -3,13 +3,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
-use rquickjs::{Context, Ctx, Promise, Runtime};
+use rquickjs::{Context, Ctx, Module, Promise, Runtime};
 use tysel_engine::{EngineError, InterruptReason, IsolateConfig, Value};
 
 use crate::cpu::CpuBudget;
 use crate::durable::DurableSession;
 use crate::host;
 use crate::queue::{self, IoCompletion};
+
+#[derive(Clone, Copy)]
+enum Evaluation<'a> {
+    Script(&'a str),
+    DurableModule { source: &'a str, input_json: &'a str },
+}
+
+impl Evaluation<'_> {
+    fn is_durable_module(self) -> bool {
+        matches!(self, Self::DurableModule { .. })
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct IsolateCancel(Arc<AtomicBool>);
@@ -52,6 +64,39 @@ pub fn eval_durable(
     eval_cancellable_with_durable(script, config, IsolateCancel::new(), Some(session))
 }
 
+/// Evaluate an ESM durable task whose default export is
+/// `async (ctx, input) => value`. `ctx` is the replay-safe durable API and
+/// `input_json` is parsed once inside the isolate before invocation.
+pub fn eval_durable_module(
+    source: &str,
+    input_json: &str,
+    config: IsolateConfig,
+    session: DurableSession,
+) -> Result<Value, EngineError> {
+    const MAX_INPUT_BYTES: usize = 1_048_576;
+    if input_json.len() > MAX_INPUT_BYTES {
+        return Err(EngineError::Isolate(format!(
+            "durable task input exceeds {MAX_INPUT_BYTES} bytes"
+        )));
+    }
+    serde_json::from_str::<serde_json::Value>(input_json)
+        .map_err(|err| EngineError::Isolate(format!("invalid durable task input: {err}")))?;
+    let source = source.to_owned();
+    let input_json = input_json.to_owned();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("tysel-qjs".into())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_module_on_worker(&source, &input_json, config, session)
+            }))
+            .unwrap_or_else(|_| Err(EngineError::Isolate("quickjs worker panicked".into())));
+            let _ = tx.send(result);
+        })
+        .map_err(|err| EngineError::Isolate(err.to_string()))?;
+    rx.recv().map_err(|err| EngineError::Isolate(err.to_string()))?
+}
+
 fn eval_cancellable_with_durable(
     script: &str,
     config: IsolateConfig,
@@ -82,7 +127,37 @@ fn run_on_worker(
     let request_deadline = Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
     let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
     let reactor = queue::spawn_reactor(cancel.flag(), request_deadline);
-    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu, durable)
+    run_with_reactor(
+        Evaluation::Script(script),
+        config,
+        cancel,
+        reactor,
+        request_deadline,
+        cpu,
+        durable,
+    )
+}
+
+fn run_module_on_worker(
+    source: &str,
+    input_json: &str,
+    config: IsolateConfig,
+    session: DurableSession,
+) -> Result<Value, EngineError> {
+    let input_json = session.record_input_json(input_json).map_err(EngineError::Isolate)?;
+    let cancel = IsolateCancel::new();
+    let request_deadline = Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
+    let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
+    let reactor = queue::spawn_reactor(cancel.flag(), request_deadline);
+    run_with_reactor(
+        Evaluation::DurableModule { source, input_json: &input_json },
+        config,
+        cancel,
+        reactor,
+        request_deadline,
+        cpu,
+        Some(session),
+    )
 }
 
 /// Evaluate `script` using a caller-supplied I/O reactor (local or IPC proxy).
@@ -105,11 +180,19 @@ pub fn eval_with_reactor_deadline(
     request_deadline: Instant,
 ) -> Result<Value, EngineError> {
     let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
-    run_with_reactor(script, config, cancel, reactor, request_deadline, cpu, None)
+    run_with_reactor(
+        Evaluation::Script(script),
+        config,
+        cancel,
+        reactor,
+        request_deadline,
+        cpu,
+        None,
+    )
 }
 
 fn run_with_reactor(
-    script: &str,
+    evaluation: Evaluation<'_>,
     config: IsolateConfig,
     cancel: IsolateCancel,
     reactor: queue::Reactor,
@@ -134,7 +217,7 @@ fn run_with_reactor(
     let started_async = context.with(|ctx| {
         start_script(
             ctx,
-            script,
+            evaluation,
             reactor.io.clone(),
             &cancel,
             request_deadline,
@@ -155,9 +238,27 @@ fn run_with_reactor(
                 &cpu,
                 durable.as_ref(),
             )?;
-            context
+            let settled = context
                 .with(|ctx| take_settled(&ctx, &cancel, request_deadline, &cpu))?
-                .ok_or_else(|| EngineError::Isolate("async script did not settle".into()))
+                .ok_or_else(|| EngineError::Isolate("async script did not settle".into()))?;
+            if evaluation.is_durable_module() {
+                context.with(|ctx| {
+                    let json = ctx
+                        .globals()
+                        .get::<_, String>("__tysel_task_value_json")
+                        .map_err(js_err)?;
+                    if json.len() > 1_048_576 {
+                        return Err(EngineError::Isolate(
+                            "durable task result exceeds 1048576 bytes".into(),
+                        ));
+                    }
+                    let value: serde_json::Value = serde_json::from_str(&json)
+                        .map_err(|err| EngineError::Isolate(err.to_string()))?;
+                    Ok(from_json(value))
+                })
+            } else {
+                Ok(settled)
+            }
         }
     };
 
@@ -170,6 +271,8 @@ fn run_with_reactor(
     let _ = context.with(|ctx| {
         let _ = host::drop_host(&ctx);
         let _ = ctx.globals().remove("__tysel_result");
+        let _ = ctx.globals().remove("__tysel_task_input_json");
+        let _ = ctx.globals().remove("__tysel_task_value_json");
         Ok::<_, EngineError>(())
     });
     drop(context);
@@ -180,7 +283,7 @@ fn run_with_reactor(
 
 fn start_script(
     ctx: Ctx<'_>,
-    script: &str,
+    evaluation: Evaluation<'_>,
     io: crate::queue::IoHandle,
     cancel: &IsolateCancel,
     request_deadline: Instant,
@@ -191,6 +294,19 @@ fn start_script(
         Some(durable) => host::install_durable(ctx.clone(), io, 0, durable).map_err(js_err)?,
         None => host::install(ctx.clone(), io, 0).map_err(js_err)?,
     }
+    let Evaluation::Script(script) = evaluation else {
+        let Evaluation::DurableModule { source, input_json } = evaluation else {
+            unreachable!();
+        };
+        ctx.globals().set("__tysel_task_input_json", input_json).map_err(js_err)?;
+        Module::declare(ctx.clone(), "tysel-task-input.js", DURABLE_INPUT_MODULE)
+            .map_err(js_err)?;
+        Module::declare(ctx.clone(), "app.js", source).map_err(js_err)?;
+        let promise = Module::evaluate(ctx.clone(), "tysel-task-boot.js", BOOT_DURABLE_TASK)
+            .map_err(js_err)?;
+        ctx.globals().set("__tysel_result", promise).map_err(js_err)?;
+        return Ok(None);
+    };
     let evaluated = ctx
         .eval::<rquickjs::Value, _>(script)
         .map_err(|err| map_eval_error(err, cancel, request_deadline, cpu))?;
@@ -201,6 +317,26 @@ fn start_script(
         from_js(&ctx, evaluated).map(Some)
     }
 }
+
+const DURABLE_INPUT_MODULE: &str = r#"
+const input = JSON.parse(globalThis.__tysel_task_input_json);
+delete globalThis.__tysel_task_input_json;
+export default input;
+"#;
+
+const BOOT_DURABLE_TASK: &str = r#"
+import input from "tysel-task-input.js";
+import task from "app.js";
+if (typeof task !== "function") {
+  throw new TypeError("durable task module must export a default function");
+}
+const value = await task(globalThis.tysel.durable, input);
+const encoded = JSON.stringify(value);
+if (encoded === undefined) {
+  throw new TypeError("durable task result must be JSON serializable");
+}
+globalThis.__tysel_task_value_json = encoded;
+"#;
 
 pub(crate) fn wait_until_settled(
     runtime: &Runtime,
@@ -320,6 +456,21 @@ fn from_js(ctx: &Ctx<'_>, value: rquickjs::Value<'_>) -> Result<Value, EngineErr
     }
     let _ = ctx;
     Err(EngineError::Isolate(format!("unsupported js type: {}", value.type_name())))
+}
+
+fn from_json(value: serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(value) => Value::Bool(value),
+        serde_json::Value::Number(value) => Value::Number(value.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(value) => Value::String(value),
+        serde_json::Value::Array(values) => {
+            Value::Array(values.into_iter().map(from_json).collect())
+        }
+        serde_json::Value::Object(fields) => {
+            Value::Record(fields.into_iter().map(|(key, value)| (key, from_json(value))).collect())
+        }
+    }
 }
 
 pub(crate) fn map_eval_error(

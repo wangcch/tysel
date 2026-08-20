@@ -6,8 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tysel_durable::{
-    DurableError, MAX_DURABLE_PROGRAM_BYTES, MAX_DURABLE_PROGRAM_TOTAL_BYTES, MAX_DURABLE_PROGRAMS,
-    SqliteStore,
+    DurableError, DurableProgramKind, MAX_DURABLE_PROGRAM_BYTES, MAX_DURABLE_PROGRAM_TOTAL_BYTES,
+    MAX_DURABLE_PROGRAMS, SqliteStore,
 };
 use tysel_task::TaskId;
 
@@ -115,6 +115,16 @@ impl DurableProgramCatalog {
         Ok(previous.map(|program| Arc::from(program.source)))
     }
 
+    pub fn register_module(
+        &self,
+        task_id: TaskId,
+        source: impl Into<String>,
+    ) -> Result<Option<Arc<str>>, ProgramRegistryError> {
+        let source = source.into();
+        let previous = self.store.put_module(task_id, &source, unix_time_ms()?)?;
+        Ok(previous.map(|program| Arc::from(program.source)))
+    }
+
     pub fn resolve(&self, task_id: TaskId) -> Result<Option<Arc<str>>, ProgramRegistryError> {
         Ok(self.store.program(task_id)?.map(|program| Arc::from(program.source)))
     }
@@ -131,9 +141,13 @@ impl DurableProgramCatalog {
         Ok(self.len()? == 0)
     }
 
-    fn due_snapshot(&self, now_ms: u64) -> Result<Vec<(TaskId, Arc<str>)>, ProgramRegistryError> {
+    fn due_snapshot(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+    ) -> Result<Vec<(TaskId, Arc<str>)>, ProgramRegistryError> {
         self.store
-            .load_due_programs(now_ms)?
+            .load_due_programs_by_kind(now_ms, kind)?
             .into_iter()
             .map(|program| Ok((program.task_id, Arc::from(program.source))))
             .collect()
@@ -146,16 +160,36 @@ enum ProgramSource {
     Persistent(DurableProgramCatalog),
 }
 
+#[derive(Clone, Copy)]
+enum ProgramExecution {
+    Script,
+    Module,
+}
+
+impl ProgramExecution {
+    fn kind(self) -> DurableProgramKind {
+        match self {
+            Self::Script => DurableProgramKind::Script,
+            Self::Module => DurableProgramKind::Module,
+        }
+    }
+}
+
 impl ProgramSource {
-    async fn snapshot(&self) -> Result<Vec<(TaskId, Arc<str>)>, PollerError> {
+    async fn snapshot(
+        &self,
+        execution: ProgramExecution,
+    ) -> Result<Vec<(TaskId, Arc<str>)>, PollerError> {
         match self {
             Self::Memory(registry) => Ok(registry.snapshot()?),
             Self::Persistent(catalog) => {
                 let catalog = catalog.clone();
-                tokio::task::spawn_blocking(move || catalog.due_snapshot(unix_time_ms()?))
-                    .await
-                    .map_err(PollerError::Join)?
-                    .map_err(PollerError::Registry)
+                tokio::task::spawn_blocking(move || {
+                    catalog.due_snapshot(unix_time_ms()?, execution.kind())
+                })
+                .await
+                .map_err(PollerError::Join)?
+                .map_err(PollerError::Registry)
             }
         }
     }
@@ -167,6 +201,7 @@ pub struct DurablePoller {
     interval: Duration,
     batch_size: usize,
     cursor: AtomicUsize,
+    execution: ProgramExecution,
 }
 
 impl DurablePoller {
@@ -176,7 +211,13 @@ impl DurablePoller {
         interval: Duration,
         batch_size: usize,
     ) -> Result<Self, PollerError> {
-        Self::with_programs(dispatcher, ProgramSource::Memory(programs), interval, batch_size)
+        Self::with_programs(
+            dispatcher,
+            ProgramSource::Memory(programs),
+            ProgramExecution::Script,
+            interval,
+            batch_size,
+        )
     }
 
     /// Build a poller backed by the dispatcher's SQLite program catalog. The
@@ -188,12 +229,34 @@ impl DurablePoller {
         batch_size: usize,
     ) -> Result<Self, PollerError> {
         let catalog = DurableProgramCatalog::new(dispatcher.store());
-        Self::with_programs(dispatcher, ProgramSource::Persistent(catalog), interval, batch_size)
+        Self::with_programs(
+            dispatcher,
+            ProgramSource::Persistent(catalog),
+            ProgramExecution::Script,
+            interval,
+            batch_size,
+        )
+    }
+
+    pub fn new_persistent_modules(
+        dispatcher: Arc<DurableDispatcher>,
+        interval: Duration,
+        batch_size: usize,
+    ) -> Result<Self, PollerError> {
+        let catalog = DurableProgramCatalog::new(dispatcher.store());
+        Self::with_programs(
+            dispatcher,
+            ProgramSource::Persistent(catalog),
+            ProgramExecution::Module,
+            interval,
+            batch_size,
+        )
     }
 
     fn with_programs(
         dispatcher: Arc<DurableDispatcher>,
         programs: ProgramSource,
+        execution: ProgramExecution,
         interval: Duration,
         batch_size: usize,
     ) -> Result<Self, PollerError> {
@@ -203,7 +266,14 @@ impl DurablePoller {
         if batch_size == 0 || batch_size > MAX_POLL_BATCH {
             return Err(PollerError::InvalidBatchSize);
         }
-        Ok(Self { dispatcher, programs, interval, batch_size, cursor: AtomicUsize::new(0) })
+        Ok(Self {
+            dispatcher,
+            programs,
+            interval,
+            batch_size,
+            cursor: AtomicUsize::new(0),
+            execution,
+        })
     }
 
     pub async fn poll_once(&self) -> Result<Vec<DurableRun>, PollerError> {
@@ -215,7 +285,8 @@ impl DurablePoller {
         shutdown: Option<&PollerShutdown>,
     ) -> Result<Vec<DurableRun>, PollerError> {
         let dispatcher = self.dispatcher.clone();
-        let mut programs = self.programs.snapshot().await?;
+        let execution = self.execution;
+        let mut programs = self.programs.snapshot(execution).await?;
         let batch_size = self.batch_size;
         if !programs.is_empty() {
             let start = self.cursor.fetch_add(batch_size, Ordering::Relaxed) % programs.len();
@@ -234,7 +305,10 @@ impl DurablePoller {
                     break;
                 };
                 let dispatcher = dispatcher.clone();
-                pending.spawn_blocking(move || dispatcher.dispatch_task(task_id, &script));
+                pending.spawn_blocking(move || match execution {
+                    ProgramExecution::Script => dispatcher.dispatch_task(task_id, &script),
+                    ProgramExecution::Module => dispatcher.dispatch_module_task(task_id, &script),
+                });
             }
 
             let Some(joined) = pending.join_next().await else {
@@ -352,15 +426,24 @@ mod tests {
     const WAIT_SCRIPT: &str = r#"
         (async () => JSON.stringify(await tysel.durable.waitForSignal("approval")))()
     "#;
+    const WAIT_MODULE: &str = r#"
+        export default async function task(ctx, input) {
+            const approval = await ctx.waitForSignal("approval");
+            return JSON.stringify({ input, approval });
+        }
+    "#;
 
     fn dispatcher(store: Arc<SqliteStore>, owner: &str) -> Arc<DurableDispatcher> {
         Arc::new(
             DurableDispatcher::new(
                 store,
                 owner,
-                1_000,
+                5_000,
                 IsolateConfig {
-                    request_timeout_ms: 10,
+                    // Durable waits suspend as soon as the boundary is recorded.
+                    // Keep this above a few milliseconds so parallel workspace
+                    // load cannot turn a suspend into an ordinary timeout.
+                    request_timeout_ms: 500,
                     cpu_ms_per_turn: 50,
                     memory_limit_bytes: 8 * 1024 * 1024,
                 },
@@ -488,6 +571,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persistent_module_catalog_replays_input_after_store_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-runtime-modules-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let id = TaskId(310);
+        {
+            let store = Arc::new(SqliteStore::open(&path).unwrap());
+            let setup = dispatcher(store.clone(), "setup");
+            DurableProgramCatalog::new(store.clone()).register_module(id, WAIT_MODULE).unwrap();
+            assert!(matches!(
+                setup.start_module(id, WAIT_MODULE, r#"{"customer":"Ada"}"#).result,
+                Ok(crate::DurableRunStatus::Suspended)
+            ));
+            assert_eq!(store.load_history(id).unwrap().events[0].key, "$tysel:task-input");
+            store.send_signal(id, "approval", &serde_json::json!(true), unix_time_ms()).unwrap();
+        }
+
+        let reopened = Arc::new(SqliteStore::open(&path).unwrap());
+        let poller = DurablePoller::new_persistent_modules(
+            dispatcher(reopened.clone(), "module-poller"),
+            Duration::from_millis(10),
+            8,
+        )
+        .unwrap();
+        let runs = poller.poll_once().await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].task_id, id);
+        assert_eq!(
+            runs[0].result.as_ref().unwrap(),
+            &crate::DurableRunStatus::Completed(Value::String(
+                r#"{"input":{"customer":"Ada"},"approval":true}"#.into()
+            ))
+        );
+        drop(poller);
+        drop(reopened);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
     async fn round_robin_cursor_prevents_a_failing_task_from_starving_the_batch() {
         let store = Arc::new(SqliteStore::in_memory().unwrap());
         let setup = dispatcher(store.clone(), "setup");
@@ -568,10 +692,12 @@ mod tests {
         let programs = DurableProgramRegistry::default();
         for offset in 0..20 {
             let id = TaskId(400 + offset);
-            assert!(matches!(
-                setup.start(id, WAIT_SCRIPT).result,
-                Ok(crate::DurableRunStatus::Suspended)
-            ));
+            let started = setup.start(id, WAIT_SCRIPT);
+            assert!(
+                matches!(started.result, Ok(crate::DurableRunStatus::Suspended)),
+                "task {id} should suspend waiting for approval: {:?}",
+                started.result
+            );
             store.send_signal(id, "approval", &serde_json::json!(true), unix_time_ms()).unwrap();
             programs.register(id, "(async () => tysel.sleep(5000))()").unwrap();
         }
@@ -579,9 +705,11 @@ mod tests {
             DurableDispatcher::new(
                 store,
                 "poller",
-                1_000,
+                5_000,
                 IsolateConfig {
-                    request_timeout_ms: 100,
+                    // Keep the wave in flight long enough that cancel arrives
+                    // before the first completions refill the concurrency slots.
+                    request_timeout_ms: 500,
                     cpu_ms_per_turn: 50,
                     memory_limit_bytes: 8 * 1024 * 1024,
                 },
@@ -601,9 +729,13 @@ mod tests {
                 })
                 .await
         });
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
         stop.cancel();
-        tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap().unwrap();
-        assert_eq!(completed.load(Ordering::Relaxed), MAX_POLL_CONCURRENCY);
+        tokio::time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap().unwrap();
+        assert_eq!(
+            completed.load(Ordering::Relaxed),
+            MAX_POLL_CONCURRENCY,
+            "cancel should drain one full concurrency wave without refilling"
+        );
     }
 }

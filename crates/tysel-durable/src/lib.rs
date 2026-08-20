@@ -198,9 +198,33 @@ pub struct SignalWait {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DurableProgram {
     pub task_id: TaskId,
+    pub kind: DurableProgramKind,
     pub source: String,
     pub source_sha256: [u8; 32],
     pub registered_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DurableProgramKind {
+    Script,
+    Module,
+}
+
+impl DurableProgramKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Script => "script",
+            Self::Module => "module",
+        }
+    }
+
+    fn parse(raw: &str) -> Result<Self, DurableError> {
+        match raw {
+            "script" => Ok(Self::Script),
+            "module" => Ok(Self::Module),
+            _ => Err(DurableError::InvalidProgramKind(raw.into())),
+        }
+    }
 }
 
 pub struct SqliteStore {
@@ -222,7 +246,7 @@ impl SqliteStore {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    fn from_connection(connection: Connection) -> Result<Self, DurableError> {
+    fn from_connection(mut connection: Connection) -> Result<Self, DurableError> {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA foreign_keys = ON;
@@ -261,22 +285,14 @@ impl SqliteStore {
              );
              CREATE TABLE IF NOT EXISTS durable_programs (
                  task_id BLOB PRIMARY KEY,
+                 program_kind TEXT NOT NULL DEFAULT 'script'
+                     CHECK (program_kind IN ('script', 'module')),
                  source TEXT NOT NULL,
                  source_sha256 BLOB NOT NULL CHECK (length(source_sha256) = 32),
                  registered_at_ms INTEGER NOT NULL CHECK (registered_at_ms >= 0)
              );",
         )?;
-        let sequence_added = migrate_wakeup_columns(&connection)?;
-        if sequence_added {
-            connection.execute_batch(
-                "UPDATE durable_wakeups
-                 SET sequence = COALESCE((
-                     SELECT MAX(sequence) FROM durable_events
-                     WHERE durable_events.task_id = durable_wakeups.task_id
-                       AND kind = 'sleep'
-                 ), sequence);",
-            )?;
-        }
+        migrate_schema_columns(&mut connection)?;
         connection.execute_batch(
             "DROP INDEX IF EXISTS durable_wakeups_due;
              CREATE INDEX durable_wakeups_due
@@ -302,6 +318,25 @@ impl SqliteStore {
         source: &str,
         registered_at_ms: u64,
     ) -> Result<Option<DurableProgram>, DurableError> {
+        self.put_program_inner(task_id, DurableProgramKind::Script, source, registered_at_ms)
+    }
+
+    pub fn put_module(
+        &self,
+        task_id: TaskId,
+        source: &str,
+        registered_at_ms: u64,
+    ) -> Result<Option<DurableProgram>, DurableError> {
+        self.put_program_inner(task_id, DurableProgramKind::Module, source, registered_at_ms)
+    }
+
+    fn put_program_inner(
+        &self,
+        task_id: TaskId,
+        kind: DurableProgramKind,
+        source: &str,
+        registered_at_ms: u64,
+    ) -> Result<Option<DurableProgram>, DurableError> {
         validate_program_source(source)?;
         let registered_at_ms = to_sql_integer(registered_at_ms, "registered_at_ms")?;
         let id = task_id_bytes(task_id);
@@ -309,7 +344,10 @@ impl SqliteStore {
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(existing) = select_program(&transaction, task_id)? {
-            if existing.source_sha256 != digest || existing.source != source {
+            if existing.kind != kind
+                || existing.source_sha256 != digest
+                || existing.source != source
+            {
                 return Err(DurableError::ProgramConflict { task_id });
             }
             transaction.commit()?;
@@ -334,9 +372,9 @@ impl SqliteStore {
         }
         transaction.execute(
             "INSERT INTO durable_programs
-             (task_id, source, source_sha256, registered_at_ms)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![id.as_slice(), source, digest.as_slice(), registered_at_ms],
+             (task_id, program_kind, source, source_sha256, registered_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id.as_slice(), kind.as_str(), source, digest.as_slice(), registered_at_ms],
         )?;
         transaction.commit()?;
         Ok(None)
@@ -350,15 +388,16 @@ impl SqliteStore {
     pub fn load_programs(&self) -> Result<Vec<DurableProgram>, DurableError> {
         let connection = self.lock()?;
         let mut statement = connection.prepare(
-            "SELECT task_id, source, source_sha256, registered_at_ms
+            "SELECT task_id, program_kind, source, source_sha256, registered_at_ms
              FROM durable_programs ORDER BY task_id LIMIT ?1",
         )?;
         let rows = statement.query_map(params![(MAX_DURABLE_PROGRAMS + 1) as i64], |row| {
             Ok((
                 row.get::<_, Vec<u8>>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-                row.get::<_, i64>(3)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         })?;
         decode_program_rows(rows)
@@ -368,25 +407,37 @@ impl SqliteStore {
     /// leased. This keeps an idle poll from reading and hashing the full source
     /// catalog.
     pub fn load_due_programs(&self, now_ms: u64) -> Result<Vec<DurableProgram>, DurableError> {
+        self.load_due_programs_by_kind(now_ms, DurableProgramKind::Script)
+    }
+
+    pub fn load_due_programs_by_kind(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+    ) -> Result<Vec<DurableProgram>, DurableError> {
         let connection = self.lock()?;
         let now_ms = to_sql_integer(now_ms, "now_ms")?;
         let mut statement = connection.prepare(
-            "SELECT p.task_id, p.source, p.source_sha256, p.registered_at_ms
+            "SELECT p.task_id, p.program_kind, p.source, p.source_sha256, p.registered_at_ms
              FROM durable_programs AS p
              INNER JOIN durable_wakeups AS w ON w.task_id = p.task_id
              WHERE w.wake_at_ms <= ?1
                AND (w.lease_until_ms IS NULL OR w.lease_until_ms <= ?1)
-             ORDER BY p.task_id LIMIT ?2",
+               AND p.program_kind = ?2
+             ORDER BY p.task_id LIMIT ?3",
         )?;
-        let rows =
-            statement.query_map(params![now_ms, (MAX_DURABLE_PROGRAMS + 1) as i64], |row| {
+        let rows = statement.query_map(
+            params![now_ms, kind.as_str(), (MAX_DURABLE_PROGRAMS + 1) as i64],
+            |row| {
                 Ok((
                     row.get::<_, Vec<u8>>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, i64>(4)?,
                 ))
-            })?;
+            },
+        )?;
         decode_program_rows(rows)
     }
 
@@ -1145,6 +1196,8 @@ pub enum DurableError {
     ProgramConflict { task_id: TaskId },
     #[error("durable program for task {task_id} still has persisted task state")]
     ProgramInUse { task_id: TaskId },
+    #[error("unknown durable program kind {0:?}")]
+    InvalidProgramKind(String),
     #[error("durable program digest is invalid")]
     InvalidProgramDigest,
 }
@@ -1163,27 +1216,29 @@ fn select_program(
     let id = task_id_bytes(task_id);
     connection
         .query_row(
-            "SELECT task_id, source, source_sha256, registered_at_ms
+            "SELECT task_id, program_kind, source, source_sha256, registered_at_ms
              FROM durable_programs WHERE task_id = ?1",
             params![id.as_slice()],
             |row| {
                 Ok((
                     row.get::<_, Vec<u8>>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, i64>(4)?,
                 ))
             },
         )
         .optional()?
-        .map(|(task_id, source, digest, registered_at_ms)| {
-            decode_program(task_id, source, digest, registered_at_ms)
+        .map(|(task_id, kind, source, digest, registered_at_ms)| {
+            decode_program(task_id, kind, source, digest, registered_at_ms)
         })
         .transpose()
 }
 
 fn decode_program(
     task_id: Vec<u8>,
+    kind: String,
     source: String,
     digest: Vec<u8>,
     registered_at_ms: i64,
@@ -1197,6 +1252,7 @@ fn decode_program(
     }
     Ok(DurableProgram {
         task_id: task_id_from_bytes(&task_id)?,
+        kind: DurableProgramKind::parse(&kind)?,
         source,
         source_sha256,
         registered_at_ms: from_sql_integer(registered_at_ms, "registered_at_ms")?,
@@ -1205,7 +1261,7 @@ fn decode_program(
 
 fn decode_program_rows<M>(rows: M) -> Result<Vec<DurableProgram>, DurableError>
 where
-    M: IntoIterator<Item = Result<(Vec<u8>, String, Vec<u8>, i64), rusqlite::Error>>,
+    M: IntoIterator<Item = Result<(Vec<u8>, String, String, Vec<u8>, i64), rusqlite::Error>>,
 {
     let mut programs = Vec::new();
     let mut total_bytes = 0usize;
@@ -1213,14 +1269,14 @@ where
         if programs.len() >= MAX_DURABLE_PROGRAMS {
             return Err(DurableError::ProgramLimit);
         }
-        let (task_id, source, digest, registered_at_ms) = row?;
+        let (task_id, kind, source, digest, registered_at_ms) = row?;
         validate_program_source(&source)?;
         total_bytes =
             total_bytes.checked_add(source.len()).ok_or(DurableError::ProgramByteLimit)?;
         if total_bytes > MAX_DURABLE_PROGRAM_TOTAL_BYTES {
             return Err(DurableError::ProgramByteLimit);
         }
-        programs.push(decode_program(task_id, source, digest, registered_at_ms)?);
+        programs.push(decode_program(task_id, kind, source, digest, registered_at_ms)?);
     }
     Ok(programs)
 }
@@ -1373,6 +1429,24 @@ fn register_signal_wait(
     Ok(())
 }
 
+fn migrate_schema_columns(connection: &mut Connection) -> Result<(), DurableError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    migrate_program_columns(&transaction)?;
+    let sequence_added = migrate_wakeup_columns(&transaction)?;
+    if sequence_added {
+        transaction.execute_batch(
+            "UPDATE durable_wakeups
+             SET sequence = COALESCE((
+                 SELECT MAX(sequence) FROM durable_events
+                 WHERE durable_events.task_id = durable_wakeups.task_id
+                   AND kind = 'sleep'
+             ), sequence);",
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
 fn migrate_wakeup_columns(connection: &Connection) -> Result<bool, DurableError> {
     let columns = {
         let mut statement = connection.prepare("PRAGMA table_info(durable_wakeups)")?;
@@ -1393,6 +1467,22 @@ fn migrate_wakeup_columns(connection: &Connection) -> Result<bool, DurableError>
             .execute_batch("ALTER TABLE durable_wakeups ADD COLUMN lease_until_ms INTEGER")?;
     }
     Ok(sequence_added)
+}
+
+fn migrate_program_columns(connection: &Connection) -> Result<(), DurableError> {
+    let columns = {
+        let mut statement = connection.prepare("PRAGMA table_info(durable_programs)")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    if !columns.iter().any(|column| column == "program_kind") {
+        connection.execute_batch(
+            "ALTER TABLE durable_programs
+             ADD COLUMN program_kind TEXT NOT NULL DEFAULT 'script'
+             CHECK (program_kind IN ('script', 'module'))",
+        )?;
+    }
+    Ok(())
 }
 
 fn stored_event(
@@ -1494,6 +1584,7 @@ mod tests {
         let programs = store.load_programs().unwrap();
         assert_eq!(programs.len(), 1);
         assert_eq!(programs[0].task_id, id);
+        assert_eq!(programs[0].kind, DurableProgramKind::Script);
         assert_eq!(programs[0].source, source);
         assert_eq!(programs[0].source_sha256, Sha256::digest(source.as_bytes()).as_slice());
         assert_eq!(store.remove_program(id).unwrap(), Some(programs[0].clone()));
@@ -1550,8 +1641,68 @@ mod tests {
         store.schedule_wakeup(Wakeup { task_id: leased, sequence: 0, wake_at_ms: 10 }).unwrap();
         store.claim_wakeup(leased, 10, "runner", 100).unwrap().unwrap();
 
+        let module = TaskId(76);
+        store.put_module(module, "export default () => 1", 1).unwrap();
+        store.schedule_wakeup(Wakeup { task_id: module, sequence: 0, wake_at_ms: 10 }).unwrap();
+
         let programs = store.load_due_programs(10).unwrap();
         assert_eq!(programs.iter().map(|program| program.task_id).collect::<Vec<_>>(), vec![due]);
+        let modules = store.load_due_programs_by_kind(10, DurableProgramKind::Module).unwrap();
+        assert_eq!(modules.iter().map(|program| program.task_id).collect::<Vec<_>>(), vec![module]);
+    }
+
+    #[test]
+    fn existing_program_schema_is_migrated_as_script() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-durable-program-migrate-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let task_id = TaskId(77);
+        let source = "42";
+        let digest: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE durable_programs (
+                         task_id BLOB PRIMARY KEY,
+                         source TEXT NOT NULL,
+                         source_sha256 BLOB NOT NULL,
+                         registered_at_ms INTEGER NOT NULL
+                     );",
+                )
+                .unwrap();
+            let id = task_id_bytes(task_id);
+            connection
+                .execute(
+                    "INSERT INTO durable_programs VALUES (?1, ?2, ?3, 9)",
+                    params![id.as_slice(), source, digest.as_slice()],
+                )
+                .unwrap();
+        }
+
+        let barrier = Arc::new(Barrier::new(3));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    SqliteStore::open(path)
+                })
+            })
+            .collect();
+        barrier.wait();
+        let mut stores: Vec<_> =
+            handles.into_iter().map(|handle| handle.join().unwrap().unwrap()).collect();
+        let store = stores.pop().unwrap();
+        let program = store.program(task_id).unwrap().unwrap();
+        assert_eq!(program.kind, DurableProgramKind::Script);
+        assert_eq!(program.source, source);
+        drop(store);
+        drop(stores);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

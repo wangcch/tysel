@@ -31,6 +31,29 @@ enum WakeupKind {
 }
 
 impl DurableSession {
+    pub(crate) fn record_input_json(&self, input_json: &str) -> Result<String, String> {
+        const INPUT_KEY: &str = "$tysel:task-input";
+        let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        if let Some(event) =
+            inner.replay.consume_event(EventKind::Step, INPUT_KEY).map_err(replay_error)?
+        {
+            return Ok(event.payload_json().into());
+        }
+        let stored = inner
+            .store
+            .append_event_json_at(
+                inner.task_id,
+                inner.next_sequence,
+                EventKind::Step,
+                INPUT_KEY.into(),
+                input_json,
+                unix_time_ms()?,
+            )
+            .map_err(|err| err.to_string())?;
+        inner.next_sequence = stored.sequence.saturating_add(1);
+        Ok(stored.payload_json().into())
+    }
+
     /// Start a task that has no pending wakeup. Suspended tasks must enter via
     /// `from_claim` so they cannot resume early or run under two schedulers.
     pub fn new(store: Arc<SqliteStore>, task_id: TaskId) -> Result<Self, String> {

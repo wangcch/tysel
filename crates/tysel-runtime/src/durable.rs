@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tysel_durable::{DurableError, SqliteStore, WakeupClaim};
 use tysel_engine::{EngineError, IsolateConfig, Value};
-use tysel_engine_qjs::{DurableSession, eval_durable};
+use tysel_engine_qjs::{DurableSession, eval_durable, eval_durable_module};
 use tysel_task::TaskId;
 
 const MAX_OWNER_BYTES: usize = 128;
@@ -46,6 +46,16 @@ impl DurableDispatcher {
         DurableRun { task_id, result }
     }
 
+    /// Start an ESM durable task whose default export is
+    /// `async (ctx, input) => value`. The input is recorded as the first
+    /// durable boundary and is therefore not required when resuming.
+    pub fn start_module(&self, task_id: TaskId, source: &str, input_json: &str) -> DurableRun {
+        let result = DurableSession::new(self.store.clone(), task_id)
+            .map_err(DurableRunError::Session)
+            .and_then(|session| self.evaluate_module(source, input_json, session));
+        DurableRun { task_id, result }
+    }
+
     /// Claim and execute one exact registered task if its wakeup is due.
     pub fn dispatch_task(
         &self,
@@ -62,6 +72,23 @@ impl DurableDispatcher {
             return Ok(None);
         };
         Ok(Some(self.execute_claim(claim, script)))
+    }
+
+    pub fn dispatch_module_task(
+        &self,
+        task_id: TaskId,
+        source: &str,
+    ) -> Result<Option<DurableRun>, DispatchError> {
+        let Some(claim) = self.store.claim_wakeup(
+            task_id,
+            unix_time_ms()?,
+            &self.owner,
+            self.lease_duration_ms,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.execute_module_claim(claim, source)))
     }
 
     /// Claim and execute up to `limit` due tasks. The resolver supplies the
@@ -116,12 +143,33 @@ impl DurableDispatcher {
         DurableRun { task_id, result }
     }
 
+    fn execute_module_claim(&self, claim: WakeupClaim, source: &str) -> DurableRun {
+        let task_id = claim.task_id;
+        let result = DurableSession::from_claim(self.store.clone(), claim)
+            .map_err(DurableRunError::Session)
+            .and_then(|session| self.evaluate_module(source, "null", session));
+        DurableRun { task_id, result }
+    }
+
     fn evaluate(
         &self,
         script: &str,
         session: DurableSession,
     ) -> Result<DurableRunStatus, DurableRunError> {
         match eval_durable(script, self.isolate, session) {
+            Ok(value) => Ok(DurableRunStatus::Completed(value)),
+            Err(EngineError::Suspended) => Ok(DurableRunStatus::Suspended),
+            Err(error) => Err(DurableRunError::Engine(error)),
+        }
+    }
+
+    fn evaluate_module(
+        &self,
+        source: &str,
+        input_json: &str,
+        session: DurableSession,
+    ) -> Result<DurableRunStatus, DurableRunError> {
+        match eval_durable_module(source, input_json, self.isolate, session) {
             Ok(value) => Ok(DurableRunStatus::Completed(value)),
             Err(EngineError::Suspended) => Ok(DurableRunStatus::Suspended),
             Err(error) => Err(DurableRunError::Engine(error)),

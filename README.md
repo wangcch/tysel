@@ -106,6 +106,12 @@ consumption requires the current wakeup lease.
 backoff. Completed attempts replay their recorded success value or failure without
 rerunning the callback, while an attempt interrupted before its outcome resumes
 from its nested durable boundaries.
+`eval_durable_module` runs an ES module whose default export is an async
+`(ctx, input)` task. Its JSON input is recorded at the first durable boundary,
+so a resumed task receives the original input after restart; its JSON result is
+limited to 1 MiB. Register module source with
+`DurableProgramCatalog::register_module` and resume it with
+`DurablePoller::new_persistent_modules`.
 `tysel-runtime::DurableDispatcher` starts local tasks and resumes due wakeups with
 per-run lease renewal, execution outcome classification, and a caller-provided
 task-program resolver. `DurableProgramRegistry` provides a bounded in-memory

@@ -19,7 +19,7 @@ use tysel_task::TaskId;
 
 use crate::{
     DurableSession, IncomingHttp, IsolateCancel, IsolatePool, STREAM_WINDOW, eval,
-    eval_cancellable, eval_durable,
+    eval_cancellable, eval_durable, eval_durable_module,
 };
 
 fn config() -> IsolateConfig {
@@ -69,6 +69,101 @@ fn durable_step_replays_without_running_the_callback() {
     let history = store.load_history(id).unwrap();
     assert_eq!(history.events.len(), 1);
     assert_eq!(history.events[0].kind, EventKind::Step);
+}
+
+#[test]
+fn durable_module_receives_context_and_json_input() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let value = eval_durable_module(
+        r#"
+        export default async function task(ctx, input) {
+            const recorded = await ctx.step("input", () => input.value);
+            return { recorded, attempt: input.attempt };
+        }
+        "#,
+        r#"{"value":"hello","attempt":2}"#,
+        config(),
+        DurableSession::new(store, TaskId(116)).unwrap(),
+    )
+    .expect("durable module");
+    assert_eq!(
+        value,
+        Value::Record(vec![
+            ("recorded".into(), Value::String("hello".into())),
+            ("attempt".into(), Value::Number(2.0)),
+        ])
+    );
+}
+
+#[test]
+fn durable_module_suspends_and_resumes_from_history() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(117);
+    let source = r#"
+        export default async function task(ctx, input) {
+            const recorded = await ctx.step("name", () => input.name);
+            await ctx.sleep("30ms");
+            return recorded;
+        }
+    "#;
+    let first = eval_durable_module(
+        source,
+        r#"{"name":"Ada"}"#,
+        config(),
+        DurableSession::new(store.clone(), id).unwrap(),
+    )
+    .expect_err("module suspends");
+    assert!(matches!(first, EngineError::Suspended));
+
+    let wakeup = store.wakeup(id).unwrap().unwrap();
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    thread::sleep(Duration::from_millis(wakeup.wake_at_ms.saturating_sub(now_ms) + 1));
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let claim = store.claim_due_wakeups(now_ms, 1, "module-runner", 5_000).unwrap().pop().unwrap();
+    let resumed = eval_durable_module(
+        source,
+        r#"{"name":"changed"}"#,
+        config(),
+        DurableSession::from_claim(store.clone(), claim).unwrap(),
+    )
+    .expect("module resumes");
+    assert_eq!(resumed, Value::String("Ada".into()));
+    assert_eq!(store.wakeup(id).unwrap(), None);
+}
+
+#[test]
+fn durable_module_records_input_before_top_level_suspension() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let id = TaskId(118);
+    let source = r#"
+        await tysel.durable.waitForSignal("ready");
+        export default async function task(_ctx, input) {
+            return input;
+        }
+    "#;
+    let first = eval_durable_module(
+        source,
+        r#"{"name":"Ada"}"#,
+        config(),
+        DurableSession::new(store.clone(), id).unwrap(),
+    )
+    .expect_err("module suspends at top level");
+    assert!(matches!(first, EngineError::Suspended));
+    let history = store.load_history(id).unwrap();
+    assert_eq!(history.events.len(), 1);
+    assert_eq!(history.events[0].key, "$tysel:task-input");
+
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    store.send_signal(id, "ready", &serde_json::json!(true), now_ms).unwrap();
+    let claim = store.claim_due_wakeups(now_ms, 1, "module-runner", 5_000).unwrap().pop().unwrap();
+    let resumed = eval_durable_module(
+        source,
+        r#"{"name":"changed"}"#,
+        config(),
+        DurableSession::from_claim(store, claim).unwrap(),
+    )
+    .expect("module resumes");
+    assert_eq!(resumed, Value::Record(vec![("name".into(), Value::String("Ada".into()))]));
 }
 
 #[test]
