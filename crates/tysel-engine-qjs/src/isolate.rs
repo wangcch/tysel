@@ -93,6 +93,17 @@ pub fn eval_with_reactor(
     reactor: queue::Reactor,
 ) -> Result<Value, EngineError> {
     let request_deadline = Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
+    eval_with_reactor_deadline(script, config, cancel, reactor, request_deadline)
+}
+
+/// Evaluate `script` with a caller-supplied reactor and shared request deadline.
+pub fn eval_with_reactor_deadline(
+    script: &str,
+    config: IsolateConfig,
+    cancel: IsolateCancel,
+    reactor: queue::Reactor,
+    request_deadline: Instant,
+) -> Result<Value, EngineError> {
     let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
     run_with_reactor(script, config, cancel, reactor, request_deadline, cpu, None)
 }

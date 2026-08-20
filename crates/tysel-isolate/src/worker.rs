@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use tysel_engine::{HttpRequest, InterruptReason, IsolateConfig, Value};
 use tysel_engine_qjs::{
-    IoCompletion, IoRequest, IsolateCancel, IsolatePool, OpId, eval_with_reactor, open_bridge,
+    IoCompletion, IoRequest, IsolateCancel, IsolatePool, OpId, eval_with_reactor_deadline,
+    open_bridge,
 };
 use tysel_ipc::{Message, WireValue, read_message, write_message};
 use tysel_policy::Policy;
@@ -185,7 +186,8 @@ fn eval_source(
     thread::Builder::new()
         .name("tysel-qjs".into())
         .spawn(move || {
-            let result = eval_with_reactor(&script, config, cancel_eval, reactor);
+            let result =
+                eval_with_reactor_deadline(&script, config, cancel_eval, reactor, deadline);
             let _ = result_tx.send(result);
         })
         .map_err(|err| IsolateError::Worker(err.to_string()))?;
