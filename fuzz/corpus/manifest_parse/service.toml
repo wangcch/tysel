@@ -1,0 +1,8 @@
+[app]
+name = "fuzz-service"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+fetch = ["api.example.com"]
+postgres = ["main:read-only"]

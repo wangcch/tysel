@@ -17,7 +17,7 @@ use tysel_capability::{
 use wasmtime::component::types::{ComponentItem, Type};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Precompiled, Store, StoreLimits, StoreLimitsBuilder};
-use wasmtime_wasi::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 #[allow(dead_code)]
 mod wit_contract {
@@ -205,15 +205,9 @@ struct StoreState {
     wasi: WasiCtx,
 }
 
-impl IoView for StoreState {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-}
-
 impl WasiView for StoreState {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView { ctx: &mut self.wasi, table: &mut self.table }
     }
 }
 
@@ -402,7 +396,7 @@ impl WasmComponentEngine {
         linker: &mut Linker<StoreState>,
     ) -> Result<(), ComponentError> {
         if !component.wasi_runtime_imports.is_empty() {
-            wasmtime_wasi::add_to_linker_sync(linker)
+            wasmtime_wasi::p2::add_to_linker_sync(linker)
                 .map_err(|error| ComponentError::Link(bounded_display(error)))?;
         }
         Ok(())

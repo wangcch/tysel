@@ -117,3 +117,34 @@ for example `openssl rand -hex 32 > release.key` followed by `chmod 600
 release.key`. The trust policy is itself a deployment trust anchor: distribute
 it through an authenticated configuration channel, refresh it before
 `expires_at_unix`, and prevent rollback at that layer.
+
+## M5.5 Security audit and fuzzing gates
+
+CI treats known RustSec advisories, yanked dependencies, unapproved licenses,
+and unknown registries or Git sources as release blockers. `cargo-audit` runs
+with warnings denied, and `cargo-deny` evaluates the complete locked dependency
+graph for all supported targets and features. Workspace path dependencies are
+allowed because they are reviewed source in this repository; registry and Git
+dependencies remain source-restricted. Duplicate dependency versions are
+reported for maintenance without weakening the advisory gate. Advisory ignores
+must not be added to make CI green: a vulnerable dependency is upgraded or the
+affected feature is removed.
+
+The fuzz workspace is independently locked and pins the CI nightly and
+`cargo-fuzz` version. Five targets exercise the externally controlled parsing
+boundaries: TAP decoding and round trips, manifest and grant parsing, isolate
+IPC framing, task RPC framing, and release evidence/signature/trust metadata.
+Every pull request runs 10,000 bounded executions per target with per-input
+timeouts and an RSS limit. This smoke suite is a deterministic release gate,
+not a replacement for longer campaigns. Before a release candidate, run each
+target with a time budget and retain any minimized regression input, for
+example:
+
+```sh
+cargo +nightly-2026-08-15 fuzz run tap_decode -- -max_total_time=3600 -timeout=10 -rss_limit_mb=4096
+```
+
+Crashing inputs are promoted to named corpus fixtures only after confirming
+that they contain no secret or customer data. The root and fuzz lockfiles must
+both be regenerated after security-driven dependency upgrades, and the runtime
+SBOM inventory must be regenerated before the change is accepted.

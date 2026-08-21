@@ -1,0 +1,55 @@
+[package]
+name = "tysel-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+tysel-build = { path = "../crates/tysel-build" }
+tysel-ipc = { path = "../crates/tysel-ipc" }
+tysel-manifest = { path = "../crates/tysel-manifest" }
+tysel-package = { path = "../crates/tysel-package" }
+tysel-task-rpc = { path = "../crates/tysel-task-rpc" }
+
+[[bin]]
+name = "tap_decode"
+path = "fuzz_targets/tap_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest_parse"
+path = "fuzz_targets/manifest_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isolate_ipc"
+path = "fuzz_targets/isolate_ipc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "task_rpc"
+path = "fuzz_targets/task_rpc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "release_metadata"
+path = "fuzz_targets/release_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

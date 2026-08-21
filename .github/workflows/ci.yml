@@ -47,6 +47,34 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
 
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
+      - run: cargo audit --deny warnings
+      - run: cargo deny check
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly-2026-08-15
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz@0.13.2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> target
+      - name: Run bounded security fuzz smoke suite
+        run: |
+          for target in tap_decode manifest_parse isolate_ipc task_rpc release_metadata; do
+            cargo fuzz run "$target" -- -runs=10000 -timeout=10 -rss_limit_mb=4096
+          done
+
   component-host-macos:
     runs-on: macos-14
     steps:

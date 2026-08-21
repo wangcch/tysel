@@ -511,10 +511,11 @@ request_timeout_ms = 2000
         .spawn()
         .expect("spawn tysel dev");
     let stdout = child.stdout.take().expect("stdout");
-    let started = std::time::Instant::now();
     let addr = wait_listen(stdout, Duration::from_secs(8));
+    let started = std::time::Instant::now();
     let body = http_get(&addr);
-    assert!(started.elapsed() < Duration::from_secs(2), "deny took {:?}", started.elapsed());
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_secs(2), "deny took {elapsed:?}");
     assert!(body.contains("403"), "{body}");
     assert!(body.contains("192.0.2.1"), "{body}");
     assert!(body.contains("not permitted"), "{body}");
@@ -571,11 +572,13 @@ fetch = ["192.0.2.1"]
         .expect("spawn tysel dev");
     let stdout = child.stdout.take().expect("stdout");
     let log = capture_output(child.stderr.take().expect("stderr"));
-    let started = std::time::Instant::now();
     let addr = wait_listen(stdout, Duration::from_secs(8));
+    let started = std::time::Instant::now();
     let body = http_get(&addr);
+    let elapsed = started.elapsed();
     wait_log(&log, "\"capability\":\"fetch\"", Duration::from_secs(2));
-    assert!(started.elapsed() < Duration::from_secs(2), "deny took {:?}", started.elapsed());
+    wait_log(&log, "\"method\":\"GET\"", Duration::from_secs(2));
+    assert!(elapsed < Duration::from_secs(2), "deny took {elapsed:?}");
     assert!(body.contains("403"), "{body}");
     assert!(body.contains("isolated profile"), "{body}");
     assert!(!body.contains("not permitted"), "{body}");

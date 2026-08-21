@@ -1,0 +1,1 @@
+{"policy_version":1,"issued_at_unix":1000,"expires_at_unix":2000,"keys":[{"key_id":"ea4a6c63e29c520abef5507b132ec5f995d5bbfe52690bbd8e1b5d9d2b6ed957","algorithm":"ed25519","public_key":"ea4a6c63e29c520abef5507b132ec5f995d5bbfe52690bbd8e1b5d9d2b6ed957","status":"revoked","valid_from_unix":0}]}
