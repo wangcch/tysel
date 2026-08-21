@@ -310,7 +310,7 @@ fn compat_classifies_project_dependencies() {
         r#"{
   "name": "compat-deps",
   "private": true,
-  "dependencies": { "hono": "4.0.0", "sharp": "0.33.0", "buffer": "6.0.0" }
+  "dependencies": { "hono": "4.0.0", "@standard-schema/spec": "1.0.0", "sharp": "0.33.0", "buffer": "6.0.0" }
 }"#,
     )
     .unwrap();
@@ -318,6 +318,7 @@ fn compat_classifies_project_dependencies() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("hono"), "{stdout}");
+    assert!(stdout.contains("@standard-schema/spec"), "{stdout}");
     assert!(stdout.contains("sharp"), "{stdout}");
     assert!(stdout.contains("Node native addon"), "{stdout}");
     assert!(stdout.contains("Requires Shim\n  buffer"), "{stdout}");

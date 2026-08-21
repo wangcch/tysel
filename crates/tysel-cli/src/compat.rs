@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::node_scan;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CompatKind {
     Compatible,
     Shim,
@@ -151,7 +151,11 @@ fn collect_deps(value: &Value, names: &mut Vec<String>) {
 }
 
 fn classify(name: &str) -> Finding {
-    let bare = node_scan::builtin_root(name).unwrap_or(name);
+    let bare = if node_scan::is_node_builtin(name) {
+        node_scan::builtin_root(name).unwrap_or(name)
+    } else {
+        package_root(name)
+    };
     if let Some((_, reason)) = UNSUPPORTED.iter().find(|(pkg, _)| *pkg == bare) {
         return Finding { name: name.into(), kind: CompatKind::Unsupported, reason };
     }
@@ -181,6 +185,16 @@ fn classify(name: &str) -> Finding {
         kind: CompatKind::Unknown,
         reason: "not yet present in the Tysel compatibility catalog",
     }
+}
+
+fn package_root(specifier: &str) -> &str {
+    let specifier = specifier.trim();
+    if specifier.starts_with('@') {
+        let second_slash =
+            specifier.char_indices().filter_map(|(index, ch)| (ch == '/').then_some(index)).nth(1);
+        return second_slash.map_or(specifier, |index| &specifier[..index]);
+    }
+    specifier.split('/').next().unwrap_or(specifier)
 }
 
 fn summary(findings: &[Finding]) -> Value {
@@ -213,4 +227,16 @@ fn print_group(title: &str, kind: CompatKind, findings: &[Finding]) {
         println!("    reason: {}", finding.reason);
     }
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_scoped_packages_and_subpath_imports_by_package_root() {
+        assert_eq!(classify("@standard-schema/spec").kind, CompatKind::Compatible);
+        assert_eq!(classify("hono/cors").kind, CompatKind::Compatible);
+        assert_eq!(classify("node:fs/promises").kind, CompatKind::Unsupported);
+    }
 }
