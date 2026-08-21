@@ -821,6 +821,43 @@ fn crypto_get_random_values_fills_buffer() {
 }
 
 #[test]
+fn crypto_subtle_digest_and_hmac_match_known_vectors() {
+    let value = eval(
+        r#"(async () => {
+            const empty = new Uint8Array();
+            const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", empty));
+            const hex = Array.from(digest).map((b) => b.toString(16).padStart(2, "0")).join("");
+            const key = await crypto.subtle.importKey(
+                "raw",
+                new TextEncoder().encode("key"),
+                { name: "HMAC", hash: "SHA-256" },
+                false,
+                ["sign", "verify"],
+            );
+            const data = new TextEncoder().encode("The quick brown fox jumps over the lazy dog");
+            const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, data));
+            const hmac = Array.from(signature).map((b) => b.toString(16).padStart(2, "0")).join("");
+            const verified = await crypto.subtle.verify("HMAC", key, signature, data);
+            return JSON.stringify({ hex, hmac, verified });
+        })()"#,
+        config(),
+    )
+    .expect("eval");
+    match value {
+        Value::String(json) => {
+            assert!(
+                json.contains("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            );
+            assert!(
+                json.contains("f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
+            );
+            assert!(json.contains("\"verified\":true"));
+        }
+        other => panic!("expected JSON string, got {other:?}"),
+    }
+}
+
+#[test]
 fn crypto_get_random_values_enforces_quota() {
     let value = eval(
         r#"(() => {

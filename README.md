@@ -109,7 +109,7 @@ Trusted-path `fetch` supports HTTP and HTTPS GET, HEAD, POST, PUT, PATCH, and DE
 
 When `[app] profile = "isolated"`, outbound fetch, SQLite, WebSocket, Postgres, and filesystem access are denied even if listed in `[permissions]`. `tysel.sleep`, `tysel.echo`, and `tysel.secrets.ref` remain available. `tysel dev` and a packaged stub run the fetch handler in a `tysel-worker` child process (set `TYSEL_WORKER` or place the binary next to `tysel`). Request and response bodies over the worker pipe are capped at 32KiB. The supervisor keeps secret values; the worker only sees declared names. Isolated bundles must fit in a 64KiB IPC frame. On Linux the worker also applies Landlock (no host files except `/dev/urandom` / `/dev/random`) and a seccomp allowlist (no exec, sockets, ptrace, mount, or bpf). The supervisor best-effort attaches the worker to a cgroup v2 `memory.max` when the host allows it. macOS is not that security gate.
 
-`setTimeout` / `setInterval` run while the current request or eval is pending; leftover timers are dropped when the request ends. `TextEncoder` / `TextDecoder` are UTF-8 only. `crypto.getRandomValues` fills at most 65536 bytes. `crypto.subtle` is not implemented yet.
+`setTimeout` / `setInterval` run while the current request or eval is pending; leftover timers are dropped when the request ends. `TextEncoder` / `TextDecoder` are UTF-8 only. `crypto.getRandomValues` fills at most 65536 bytes. `crypto.subtle` supports `digest` (`SHA-256` / `SHA-384` / `SHA-512`) and HMAC `importKey` / `sign` / `verify`.
 
 The experimental Rust `eval_durable` path installs `tysel.durable.step`,
 `effect`, `sleep`, `waitForSignal`, `retry`, `now`, and `random`. Durable boundaries must

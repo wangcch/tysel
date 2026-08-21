@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "31568f27ffe070a5c7809e849f84f890bb68b7805c60d76f365acab9e8e270a5",
+  "cargo_lock_sha256": "f6528a743acd715b4ccbe5ad69a38e358eb5299c25f55bb81e2d9ca642f5756e",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -990,6 +990,14 @@
       "purl": "pkg:cargo/hmac-sha1-compact@1.1.7",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "b0b3ba31f6dc772cc8221ce81dbbbd64fa1e668255a6737d95eeace59b5a8823"
+    },
+    {
+      "name": "hmac",
+      "version": "0.12.1",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/hmac@0.12.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
     },
     {
       "name": "hmac",

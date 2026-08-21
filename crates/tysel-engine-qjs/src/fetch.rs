@@ -341,7 +341,51 @@ const BOOTSTRAP: &str = r##"
       view.set(tysel._randomBytes(view.byteLength));
       return typedArray;
     },
+    subtle: {
+      async digest(algorithm, data) {
+        const name = typeof algorithm === "string" ? algorithm : String(algorithm && algorithm.name || "");
+        return tysel._digest(name, toCryptoBytes(data)).buffer;
+      },
+      async importKey(format, keyData, algorithm, extractable, keyUsages) {
+        if (format !== "raw") throw new DOMException("only raw CryptoKeys are supported", "NotSupportedError");
+        const algo = typeof algorithm === "string" ? { name: algorithm } : algorithm || {};
+        if (String(algo.name) !== "HMAC") throw new DOMException("only HMAC keys are supported", "NotSupportedError");
+        const hash = algo.hash && (algo.hash.name || algo.hash) || "SHA-256";
+        const bytes = toCryptoBytes(keyData);
+        const key = {
+          type: "secret",
+          extractable: Boolean(extractable),
+          algorithm: { name: "HMAC", hash: { name: String(hash) } },
+          usages: Array.from(keyUsages || []),
+        };
+        cryptoKeys.set(key, { hash: String(hash), bytes });
+        return key;
+      },
+      async sign(algorithm, key, data) {
+        const rec = cryptoKeys.get(key);
+        if (!rec) throw new TypeError("unknown CryptoKey");
+        const name = typeof algorithm === "string" ? algorithm : String(algorithm && algorithm.name || "HMAC");
+        if (name !== "HMAC") throw new DOMException("only HMAC signing is supported", "NotSupportedError");
+        return tysel._hmac(rec.hash, rec.bytes, toCryptoBytes(data)).buffer;
+      },
+      async verify(algorithm, key, signature, data) {
+        const expected = new Uint8Array(await globalThis.crypto.subtle.sign(algorithm, key, data));
+        const actual = toCryptoBytes(signature);
+        if (expected.byteLength !== actual.byteLength) return false;
+        let diff = 0;
+        for (let i = 0; i < expected.byteLength; i++) diff |= expected[i] ^ actual[i];
+        return diff === 0;
+      },
+    },
   };
+  const cryptoKeys = new WeakMap();
+  function toCryptoBytes(data) {
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (ArrayBuffer.isView(data)) {
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    }
+    throw new TypeError("expected BufferSource");
+  }
 
   globalThis.Headers = Headers;
   globalThis.Request = Request;

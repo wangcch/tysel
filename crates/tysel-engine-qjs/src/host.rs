@@ -1,4 +1,6 @@
+use hmac::{Hmac, Mac};
 use rquickjs::{Ctx, Exception, Function, IntoJs, Object, Promise, TypedArray};
+use sha2::{Digest, Sha256, Sha384, Sha512};
 use tysel_engine::{InterruptReason, Value};
 
 use crate::DurableSession;
@@ -129,6 +131,25 @@ fn install_inner(
                 .map_err(|err| Exception::throw_type(&ctx, &err.to_string()))?;
             TypedArray::<u8>::new(ctx, buf)
         })?,
+    )?;
+    tysel.set(
+        "_digest",
+        Function::new(ctx.clone(), |ctx, algorithm: String, data: TypedArray<u8>| {
+            let out = digest_bytes(&algorithm, data.as_ref())
+                .map_err(|err| Exception::throw_type(&ctx, &err))?;
+            TypedArray::<u8>::new(ctx, out)
+        })?,
+    )?;
+    tysel.set(
+        "_hmac",
+        Function::new(
+            ctx.clone(),
+            |ctx, algorithm: String, key: TypedArray<u8>, data: TypedArray<u8>| {
+                let out = hmac_bytes(&algorithm, key.as_ref(), data.as_ref())
+                    .map_err(|err| Exception::throw_type(&ctx, &err))?;
+                TypedArray::<u8>::new(ctx, out)
+            },
+        )?,
     )?;
     tysel.set(
         "_durableStart",
@@ -704,6 +725,42 @@ pub fn reset_timers(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     ctx.eval::<(), _>(
         "if (typeof globalThis.__tysel_resetTimers === 'function') globalThis.__tysel_resetTimers();",
     )
+}
+
+fn digest_bytes(algorithm: &str, data: &[u8]) -> Result<Vec<u8>, String> {
+    match normalize_hash_name(algorithm) {
+        "SHA-256" => Ok(Sha256::digest(data).to_vec()),
+        "SHA-384" => Ok(Sha384::digest(data).to_vec()),
+        "SHA-512" => Ok(Sha512::digest(data).to_vec()),
+        _ => Err(format!("unsupported digest algorithm {algorithm}")),
+    }
+}
+
+fn hmac_bytes(algorithm: &str, key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+    match normalize_hash_name(algorithm) {
+        "SHA-256" => finish_hmac(Hmac::<Sha256>::new_from_slice(key), data),
+        "SHA-384" => finish_hmac(Hmac::<Sha384>::new_from_slice(key), data),
+        "SHA-512" => finish_hmac(Hmac::<Sha512>::new_from_slice(key), data),
+        _ => Err(format!("unsupported HMAC algorithm {algorithm}")),
+    }
+}
+
+fn finish_hmac<M: Mac>(
+    mac: Result<M, hmac::digest::InvalidLength>,
+    data: &[u8],
+) -> Result<Vec<u8>, String> {
+    let mut mac = mac.map_err(|err| err.to_string())?;
+    mac.update(data);
+    Ok(mac.finalize().into_bytes().to_vec())
+}
+
+fn normalize_hash_name(algorithm: &str) -> &str {
+    match algorithm.trim() {
+        "SHA-256" | "SHA256" | "sha-256" | "sha256" => "SHA-256",
+        "SHA-384" | "SHA384" | "sha-384" | "sha384" => "SHA-384",
+        "SHA-512" | "SHA512" | "sha-512" | "sha512" => "SHA-512",
+        other => other,
+    }
 }
 
 fn pending<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
