@@ -12,7 +12,8 @@
     "./durable": "./durable/index.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit -p tsconfig.json"
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "7.0.2"

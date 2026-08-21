@@ -10,6 +10,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  FUZZ_TARGET: x86_64-unknown-linux-gnu
+  FUZZ_TOOLCHAIN: nightly-2026-08-15
   RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src -C link-arg=-Wl,--build-id=none
 
 jobs:
@@ -23,9 +25,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          workspaces: |
-            . -> target
-            fuzz -> target
+          workspaces: . -> target
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
         with:
           tool: cargo-audit@0.22.2,cargo-deny@0.20.2,cargo-fuzz@0.13.2
@@ -37,13 +37,24 @@ jobs:
           cargo deny check
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
-          toolchain: nightly-2026-08-15
+          toolchain: ${{ env.FUZZ_TOOLCHAIN }}
+          targets: ${{ env.FUZZ_TARGET }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        env:
+          CARGO_BUILD_TARGET: ${{ env.FUZZ_TARGET }}
+          RUSTUP_TOOLCHAIN: ${{ env.FUZZ_TOOLCHAIN }}
+        with:
+          workspaces: fuzz -> target
       - name: Run bounded release fuzz suite
+        env:
+          CARGO_BUILD_TARGET: ${{ env.FUZZ_TARGET }}
+          RUSTUP_TOOLCHAIN: ${{ env.FUZZ_TOOLCHAIN }}
         run: |
-          cargo +nightly-2026-08-15 metadata --locked \
+          cargo metadata --locked \
             --manifest-path fuzz/Cargo.toml --format-version 1 --no-deps > /dev/null
           for target in tap_decode manifest_parse isolate_ipc task_rpc release_metadata; do
-            cargo +nightly-2026-08-15 fuzz run "$target" -- -runs=10000 -timeout=10 -rss_limit_mb=4096
+            cargo fuzz run --target "$FUZZ_TARGET" "$target" -- \
+              -runs=10000 -timeout=10 -rss_limit_mb=4096
           done
       - name: Record source security policy evidence
         shell: bash
@@ -52,10 +63,11 @@ jobs:
           jq -n \
             --arg sourceCommit "$GITHUB_SHA" \
             --arg cargoLockSha256 "$(sha256sum Cargo.lock | awk '{print $1}')" \
+            --arg fuzzToolchain "$FUZZ_TOOLCHAIN" \
             '{evidenceVersion: 1, scope: "source", sourceCommit: $sourceCommit,
               cargoLockSha256: $cargoLockSha256,
               dependencyGates: {cargoAudit: "0.22.2", cargoDeny: "0.20.2"},
-              fuzz: {cargoFuzz: "0.13.2", toolchain: "nightly-2026-08-15", runsPerTarget: 10000,
+              fuzz: {cargoFuzz: "0.13.2", toolchain: $fuzzToolchain, runsPerTarget: 10000,
                 targets: ["tap_decode", "manifest_parse", "isolate_ipc", "task_rpc", "release_metadata"]}}' \
             > target/release-policy/security-policy-evidence.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -175,7 +187,7 @@ jobs:
           version="${version//\//-}"
           bash .github/scripts/assemble-security-evidence.sh \
             target/release-policy/security-policy-evidence.json \
-            target/release-output "$version" "$GITHUB_SHA" Cargo.lock
+            target/release-output "$version" "$GITHUB_SHA" Cargo.lock "$FUZZ_TOOLCHAIN"
       - name: Build the isolated release signer
         run: cargo build --locked --release -p tysel-release-signing --bin tysel-release-signer
       - name: Sign deterministic release evidence

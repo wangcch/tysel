@@ -7,6 +7,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  FUZZ_TARGET: x86_64-unknown-linux-gnu
+  FUZZ_TOOLCHAIN: nightly-2026-08-15
+  MSRV_TOOLCHAIN: 1.95.0
 
 jobs:
   rust:
@@ -28,31 +31,43 @@ jobs:
     env:
       TYSEL_POSTGRES_TEST_URL: postgres://tysel:tysel@127.0.0.1:5432/tysel
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
+          toolchain: 1.97.1
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --all -- --check
       - name: Verify runtime SBOM inventory is current
         run: cargo run --locked -p tysel-build --bin tysel-supply-chain -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --all-targets
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace --all-targets
 
   rust-msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: ${{ env.MSRV_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.MSRV_TOOLCHAIN }}
+      - name: Check the workspace with the minimum supported Rust version
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.MSRV_TOOLCHAIN }}
+        run: |
+          rustc --version
+          cargo check --locked --workspace --all-targets
 
   security-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+      - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
         with:
           tool: cargo-audit@0.22.2,cargo-deny@0.20.2
       - run: cargo audit --deny warnings
@@ -61,27 +76,41 @@ jobs:
   fuzz-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly-2026-08-15
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: ${{ env.FUZZ_TOOLCHAIN }}
+          targets: ${{ env.FUZZ_TARGET }}
+      - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
         with:
           tool: cargo-fuzz@0.13.2
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        env:
+          CARGO_BUILD_TARGET: ${{ env.FUZZ_TARGET }}
+          RUSTUP_TOOLCHAIN: ${{ env.FUZZ_TOOLCHAIN }}
         with:
           workspaces: fuzz -> target
       - name: Run bounded security fuzz smoke suite
+        env:
+          CARGO_BUILD_TARGET: ${{ env.FUZZ_TARGET }}
+          RUSTUP_TOOLCHAIN: ${{ env.FUZZ_TOOLCHAIN }}
         run: |
+          cargo metadata --locked --manifest-path fuzz/Cargo.toml \
+            --format-version 1 --no-deps > /dev/null
           for target in tap_decode manifest_parse isolate_ipc task_rpc release_metadata; do
-            cargo fuzz run "$target" -- -runs=10000 -timeout=10 -rss_limit_mb=4096
+            cargo fuzz run --target "$FUZZ_TARGET" "$target" -- \
+              -runs=10000 -timeout=10 -rss_limit_mb=4096
           done
 
   component-host-macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p tysel-engine-wasm --all-targets
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo test --locked -p tysel-engine-wasm --all-targets
 
   # Landlock, seccomp allowlist, and isolate workers are Linux-only.
   # x86_64 coverage comes from the rust job. One arm64 runner covers both
@@ -89,44 +118,49 @@ jobs:
   rust-arm64:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p tysel-engine-wasm --all-targets
-      - run: cargo test -p tysel-isolate --all-targets
-      - run: cargo test -p tysel-cap-fs --all-targets
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo test --locked -p tysel-engine-wasm --all-targets
+      - run: cargo test --locked -p tysel-isolate --all-targets
+      - run: cargo test --locked -p tysel-cap-fs --all-targets
 
   javascript:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - run: pnpm test
 
   component-sdk-go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: 1.25.5
           cache-dependency-path: |
             sdk/component-go/go.mod
             sdk/examples/go-echo/go.sum
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: go test ./...
         working-directory: sdk/component-go
       - run: go install github.com/bytecodealliance/componentize-go@v0.4.1
       - run: componentize-go -d ../../../wit/component -w task build -o echo.component.wasm
         working-directory: sdk/examples/go-echo
       - run: >-
-          cargo test -p tysel-engine-wasm --test sdk_fixtures
+          cargo test --locked -p tysel-engine-wasm --test sdk_fixtures
           go_sdk_fixture_matches_the_host_contract_with_restricted_wasi
           -- --exact --ignored
         env:
@@ -135,27 +169,28 @@ jobs:
   component-sdk-rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
+          toolchain: 1.97.1
           targets: wasm32-unknown-unknown
-      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+      - uses: bytecodealliance/actions/wasm-tools/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1
         with:
           version: "1.247.0"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: |
             . -> target
             sdk/examples/rust-echo -> target
       - run: >-
-          cargo build --manifest-path sdk/examples/rust-echo/Cargo.toml
+          cargo build --locked --manifest-path sdk/examples/rust-echo/Cargo.toml
           --target wasm32-unknown-unknown --release
       - run: >-
           wasm-tools component new
           sdk/examples/rust-echo/target/wasm32-unknown-unknown/release/tysel_rust_echo_component.wasm
           -o sdk/examples/rust-echo/target/echo.component.wasm
       - run: >-
-          cargo test -p tysel-engine-wasm --test sdk_fixtures
+          cargo test --locked -p tysel-engine-wasm --test sdk_fixtures
           rust_sdk_fixture_matches_the_host_contract
           -- --exact --ignored
         env:
@@ -165,18 +200,20 @@ jobs:
   linux-pss:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Build packaged runtime stub
-        run: cargo build -p tysel-runtime --bin tysel-service --release
+        run: cargo build --locked -p tysel-runtime --bin tysel-service --release
       - name: Measure hello-service cold start, PSS, and artifact size
         run: >-
-          cargo run -p tysel-testkit --bin tysel-bench --release --
+          cargo run --locked -p tysel-testkit --bin tysel-bench --release --
           --evidence target/benchmark-evidence-linux-x64.json
           --source-commit ${{ github.sha }}
-          --command "cargo run -p tysel-testkit --bin tysel-bench --release"
-      - uses: actions/upload-artifact@v4
+          --command "cargo run --locked -p tysel-testkit --bin tysel-bench --release"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-evidence-linux-x64
           path: target/benchmark-evidence-linux-x64.json
