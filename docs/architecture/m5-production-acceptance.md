@@ -39,12 +39,17 @@ host-specific value so identical TAP payloads produce identical reports.
 
 ## M5.2 Release evidence index
 
-`tysel build --release` emits three sidecars next to the single executable:
+`tysel build --release` emits five sidecars next to the single executable:
 
 - `.sha256` contains only the lowercase SHA-256 artifact digest.
 - `.compat.json` contains the M5.1 TAP compatibility report.
+- `.sbom.cdx.json` is a deterministic CycloneDX 1.5 inventory whose metadata
+  component binds the final executable SHA-256 digest.
+- `.licenses.json` contains the normalized SPDX license expression for every
+  production component.
 - `.evidence.json` binds the artifact digest, byte size, target, application
-  identity, execution profile, and compatibility report under a versioned
+  identity, execution profile, compatibility report, SBOM digest, license
+  inventory digest, and embedded runtime-inventory digest under a versioned
   schema.
 
 These files are deterministic for identical inputs and contain no timestamp or
@@ -58,3 +63,25 @@ last as the commit marker; failed publication leaves no authoritative index.
 Non-release builds do not emit release sidecars. Evidence and compatibility
 schemas reject unknown fields so newer security semantics cannot be ignored by
 older verifiers.
+
+## M5.3 SBOM and license gate
+
+The checked-in runtime inventory is generated from `cargo metadata --locked`.
+Its production roots are `tysel-cli`, `tysel-runtime`, and `tysel-isolate`;
+normal and build dependencies are followed across supported targets, while
+dev-only edges are excluded. Registry source checksums come from `Cargo.lock`.
+Generation fails closed when a reachable package lacks a license expression,
+has no lock entry, produces a duplicate package URL, or cannot be resolved.
+Legacy slash-separated dual-license declarations are normalized to SPDX `OR`.
+
+The inventory is sorted by package URL and contains the `Cargo.lock` digest,
+but no timestamps, host paths, or network-derived mutable fields. CI runs
+`cargo run --locked -p tysel-build --bin tysel-supply-chain -- --check`, which
+regenerates the inventory and fails on drift. A release build consumes the
+checked inventory without invoking Cargo or requiring network access.
+
+`verify_release_evidence` re-hashes the executable, SBOM, license inventory,
+and checksum sidecars; compares the compatibility sidecar to the index; parses
+all JSON with strict schemas; verifies that the SBOM identifies the executable;
+and rejects a runtime-inventory mismatch. `.evidence.json` remains the final
+commit marker, so partially published sidecars are never authoritative.

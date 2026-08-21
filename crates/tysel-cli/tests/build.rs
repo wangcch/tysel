@@ -60,6 +60,8 @@ listen = "127.0.0.1:0"
     assert!(!sidecar(&output, ".evidence.json").exists());
     assert!(!sidecar(&output, ".compat.json").exists());
     assert!(!sidecar(&output, ".sha256").exists());
+    assert!(!sidecar(&output, ".sbom.cdx.json").exists());
+    assert!(!sidecar(&output, ".licenses.json").exists());
 }
 
 #[test]
@@ -85,6 +87,8 @@ fn release_build_writes_compatible_deterministic_evidence() {
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(stdout.contains("Checksum         "), "{stdout}");
     assert!(stdout.contains("Compatibility    "), "{stdout}");
+    assert!(stdout.contains("SBOM             "), "{stdout}");
+    assert!(stdout.contains("Licenses         "), "{stdout}");
     assert!(stdout.contains("Evidence         "), "{stdout}");
 
     let artifact = fs::read(&output).unwrap();
@@ -102,12 +106,21 @@ fn release_build_writes_compatible_deterministic_evidence() {
 
     let evidence: serde_json::Value =
         serde_json::from_slice(&fs::read(sidecar(&output, ".evidence.json")).unwrap()).unwrap();
-    assert_eq!(evidence["evidence_version"], 1);
+    assert_eq!(evidence["evidence_version"], 2);
     assert_eq!(evidence["artifact"]["sha256"], expected_digest);
     assert_eq!(evidence["artifact"]["size_bytes"], artifact.len());
     assert_eq!(evidence["application_id"], "hello-service");
     assert_eq!(evidence["compatibility"]["compatible"], true);
     assert!(evidence.get("timestamp").is_none());
+    let sbom: serde_json::Value =
+        serde_json::from_slice(&fs::read(sidecar(&output, ".sbom.cdx.json")).unwrap()).unwrap();
+    assert_eq!(sbom["bomFormat"], "CycloneDX");
+    assert_eq!(sbom["specVersion"], "1.5");
+    assert_eq!(sbom["metadata"]["component"]["hashes"][0]["content"], expected_digest);
+    let licenses: serde_json::Value =
+        serde_json::from_slice(&fs::read(sidecar(&output, ".licenses.json")).unwrap()).unwrap();
+    assert!(licenses["components"].as_array().unwrap().len() > 100);
+    tysel_build::verify_release_evidence(&output).unwrap();
 }
 
 #[test]

@@ -34,6 +34,8 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      - name: Verify runtime SBOM inventory is current
+        run: cargo run --locked -p tysel-build --bin tysel-supply-chain -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets
 

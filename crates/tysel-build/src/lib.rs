@@ -5,6 +5,7 @@
 
 mod bundle;
 mod evidence;
+mod supply_chain;
 mod transpile;
 
 use std::fs;
@@ -15,8 +16,13 @@ use tysel_manifest::Manifest;
 use tysel_package::{PackageManifest, PackagedAot, PackagedComponent, Tap, identity_source_map};
 
 pub use evidence::{
-    RELEASE_EVIDENCE_VERSION, ReleaseArtifactEvidence, ReleaseEvidenceIndex, ReleaseSidecars,
+    RELEASE_EVIDENCE_VERSION, ReleaseArtifactEvidence, ReleaseDocumentEvidence,
+    ReleaseEvidenceIndex, ReleaseSidecars, ReleaseSupplyChainEvidence, verify_release_evidence,
     write_release_evidence,
+};
+pub use supply_chain::{
+    CycloneDxBom, LicenseInventory, RuntimeInventory, SUPPLY_CHAIN_VERSION, SupplyChainComponent,
+    embedded_runtime_inventory,
 };
 
 pub fn crate_name() -> &'static str {

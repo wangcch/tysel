@@ -3207,6 +3207,7 @@ dependencies = [
  "oxc_resolver",
  "serde",
  "serde_json",
+ "toml",
  "tysel-capability",
  "tysel-engine-wasm",
  "tysel-manifest",

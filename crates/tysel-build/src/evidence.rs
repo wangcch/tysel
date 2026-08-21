@@ -9,7 +9,9 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use tysel_package::{Tap, TapCompatibilityReport, bundle_hash, compatibility_report};
 
-pub const RELEASE_EVIDENCE_VERSION: u32 = 1;
+use crate::supply_chain::{CycloneDxBom, LicenseInventory, inventory_digest, release_supply_chain};
+
+pub const RELEASE_EVIDENCE_VERSION: u32 = 2;
 static TEMP_FILE_IDS: AtomicU64 = AtomicU64::new(1);
 
 /// Deterministic index tying one executable digest to its TAP compatibility
@@ -23,6 +25,7 @@ pub struct ReleaseEvidenceIndex {
     pub application_id: String,
     pub execution_profile: String,
     pub compatibility: TapCompatibilityReport,
+    pub supply_chain: ReleaseSupplyChainEvidence,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,10 +37,28 @@ pub struct ReleaseArtifactEvidence {
     pub sha256: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseSupplyChainEvidence {
+    pub runtime_inventory_sha256: String,
+    pub sbom: ReleaseDocumentEvidence,
+    pub licenses: ReleaseDocumentEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseDocumentEvidence {
+    pub kind: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseSidecars {
     pub checksum: PathBuf,
     pub compatibility: PathBuf,
+    pub sbom: PathBuf,
+    pub licenses: PathBuf,
     pub evidence: PathBuf,
 }
 
@@ -46,6 +67,8 @@ pub fn write_release_evidence(output: impl AsRef<Path>, target: &str) -> Result<
     let sidecars = ReleaseSidecars {
         checksum: sidecar_path(output, ".sha256"),
         compatibility: sidecar_path(output, ".compat.json"),
+        sbom: sidecar_path(output, ".sbom.cdx.json"),
+        licenses: sidecar_path(output, ".licenses.json"),
         evidence: sidecar_path(output, ".evidence.json"),
     };
     remove_file_if_present(&sidecars.evidence)?;
@@ -58,6 +81,9 @@ pub fn write_release_evidence(output: impl AsRef<Path>, target: &str) -> Result<
     let compatibility = compatibility_report(&tap_payload);
     ensure!(compatibility.compatible, "release TAP is not compatible with this runtime");
     let digest = bundle_hash(&artifact);
+    let (sbom, licenses) = release_supply_chain(&tap, &digest)?;
+    let sbom_bytes = json_bytes(&sbom)?;
+    let license_bytes = json_bytes(&licenses)?;
     let index = ReleaseEvidenceIndex {
         evidence_version: RELEASE_EVIDENCE_VERSION,
         artifact: ReleaseArtifactEvidence {
@@ -69,21 +95,148 @@ pub fn write_release_evidence(output: impl AsRef<Path>, target: &str) -> Result<
         application_id: tap.manifest.application_id.clone(),
         execution_profile: tap.manifest.execution_profile.clone(),
         compatibility: compatibility.clone(),
+        supply_chain: ReleaseSupplyChainEvidence {
+            runtime_inventory_sha256: inventory_digest(),
+            sbom: document_evidence("cyclonedx-1.5", &sbom_bytes),
+            licenses: document_evidence("spdx-license-inventory", &license_bytes),
+        },
     };
     let compatibility = stage_json(&sidecars.compatibility, &compatibility)?;
+    let sbom = StagedFile::new(&sidecars.sbom, &sbom_bytes)?;
+    let licenses = StagedFile::new(&sidecars.licenses, &license_bytes)?;
     let evidence = stage_json(&sidecars.evidence, &index)?;
     let checksum = StagedFile::new(&sidecars.checksum, format!("{digest}\n").as_bytes())?;
 
     compatibility.commit()?;
+    sbom.commit()?;
+    licenses.commit()?;
     checksum.commit()?;
     evidence.commit()?;
     Ok(sidecars)
 }
 
+pub fn verify_release_evidence(output: impl AsRef<Path>) -> Result<ReleaseEvidenceIndex> {
+    let output = output.as_ref();
+    let index: ReleaseEvidenceIndex = read_json(&sidecar_path(output, ".evidence.json"))?;
+    ensure!(
+        index.evidence_version == RELEASE_EVIDENCE_VERSION,
+        "unsupported release evidence version"
+    );
+    let artifact = fs::read(output)
+        .with_context(|| format!("failed to read release artifact {}", output.display()))?;
+    ensure!(
+        artifact.len() as u64 == index.artifact.size_bytes,
+        "release artifact size does not match evidence"
+    );
+    ensure!(
+        bundle_hash(&artifact) == index.artifact.sha256,
+        "release artifact digest does not match evidence"
+    );
+    ensure!(index.artifact.kind == "tysel-single-executable", "unexpected artifact kind");
+    ensure!(!index.artifact.target.is_empty(), "release target is empty");
+    let tap = Tap::from_path(output).context("release artifact contains an invalid TAP")?;
+    ensure!(
+        tap.manifest.application_id == index.application_id,
+        "application identity does not match evidence"
+    );
+    ensure!(
+        tap.manifest.execution_profile == index.execution_profile,
+        "execution profile does not match evidence"
+    );
+    let tap_payload = tap.encode().context("failed to encode embedded TAP during verification")?;
+    ensure!(
+        compatibility_report(&tap_payload) == index.compatibility,
+        "embedded TAP compatibility does not match evidence"
+    );
+    let checksum = fs::read_to_string(sidecar_path(output, ".sha256"))?;
+    ensure!(
+        checksum == format!("{}\n", index.artifact.sha256),
+        "checksum sidecar does not match evidence"
+    );
+    let compatibility: TapCompatibilityReport = read_json(&sidecar_path(output, ".compat.json"))?;
+    ensure!(compatibility == index.compatibility, "compatibility sidecar does not match evidence");
+    let sbom_bytes = verify_document(output, ".sbom.cdx.json", &index.supply_chain.sbom)?;
+    let license_bytes = verify_document(output, ".licenses.json", &index.supply_chain.licenses)?;
+    let sbom: CycloneDxBom = serde_json::from_slice(&sbom_bytes)?;
+    let licenses: LicenseInventory = serde_json::from_slice(&license_bytes)?;
+    let (expected_sbom, expected_licenses) = release_supply_chain(&tap, &index.artifact.sha256)?;
+    ensure!(sbom == expected_sbom, "SBOM does not match the embedded TAP and runtime inventory");
+    ensure!(
+        licenses == expected_licenses,
+        "license inventory does not match the embedded runtime inventory"
+    );
+    ensure!(
+        sbom.metadata
+            .component
+            .hashes
+            .iter()
+            .any(|hash| { hash.alg == "SHA-256" && hash.content == index.artifact.sha256 }),
+        "SBOM does not identify the release artifact"
+    );
+    ensure!(
+        sbom.components.len() == licenses.components.len(),
+        "SBOM and license inventory component counts differ"
+    );
+    ensure!(
+        sbom.components.iter().zip(&licenses.components).all(|(component, licensed)| {
+            component.name == licensed.name
+                && component.version.as_deref() == Some(licensed.version.as_str())
+                && component.purl.as_deref() == Some(licensed.purl.as_str())
+                && component.licenses.as_slice()
+                    == [crate::supply_chain::BomLicenseChoice {
+                        expression: licensed.license.clone(),
+                    }]
+        }),
+        "SBOM and license inventory components differ"
+    );
+    ensure!(
+        index.supply_chain.runtime_inventory_sha256 == inventory_digest(),
+        "embedded runtime inventory does not match evidence"
+    );
+    Ok(index)
+}
+
+fn verify_document(
+    output: &Path,
+    suffix: &str,
+    evidence: &ReleaseDocumentEvidence,
+) -> Result<Vec<u8>> {
+    let path = sidecar_path(output, suffix);
+    let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    ensure!(
+        bytes.len() as u64 == evidence.size_bytes,
+        "{} size does not match evidence",
+        evidence.kind
+    );
+    ensure!(
+        bundle_hash(&bytes) == evidence.sha256,
+        "{} digest does not match evidence",
+        evidence.kind
+    );
+    Ok(bytes)
+}
+
+fn document_evidence(kind: &str, contents: &[u8]) -> ReleaseDocumentEvidence {
+    ReleaseDocumentEvidence {
+        kind: kind.into(),
+        size_bytes: contents.len() as u64,
+        sha256: bundle_hash(contents),
+    }
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("invalid JSON in {}", path.display()))
+}
+
 fn stage_json(path: &Path, value: &impl Serialize) -> Result<StagedFile> {
+    StagedFile::new(path, &json_bytes(value)?)
+}
+
+fn json_bytes(value: &impl Serialize) -> Result<Vec<u8>> {
     let mut json = serde_json::to_vec_pretty(value)?;
     json.push(b'\n');
-    StagedFile::new(path, &json)
+    Ok(json)
 }
 
 fn sidecar_path(output: &Path, suffix: &str) -> PathBuf {
@@ -206,6 +359,38 @@ mod tests {
         assert_eq!(index.artifact.size_bytes, artifact.len() as u64);
         assert!(index.compatibility.compatible);
         assert_eq!(index.application_id, "release-app");
+        assert_eq!(index.supply_chain.sbom.kind, "cyclonedx-1.5");
+        assert!(first.sbom.exists());
+        assert!(first.licenses.exists());
+        assert_eq!(verify_release_evidence(&output).unwrap(), index);
+    }
+
+    #[test]
+    fn verification_rejects_tampered_supply_chain_evidence() {
+        let root = temp_root("tampered-sbom");
+        fs::create_dir_all(&root).unwrap();
+        let output = root.join("release-app");
+        fs::write(&output, tap().embed_into(b"release-binary").unwrap()).unwrap();
+        let sidecars = write_release_evidence(&output, "linux-x64").unwrap();
+        fs::write(&sidecars.sbom, b"{}\n").unwrap();
+
+        let error = verify_release_evidence(&output).unwrap_err();
+        assert!(error.to_string().contains("size does not match evidence"));
+    }
+
+    #[test]
+    fn verification_rejects_an_index_that_misidentifies_the_artifact() {
+        let root = temp_root("wrong-identity");
+        fs::create_dir_all(&root).unwrap();
+        let output = root.join("release-app");
+        fs::write(&output, tap().embed_into(b"release-binary").unwrap()).unwrap();
+        let sidecars = write_release_evidence(&output, "linux-x64").unwrap();
+        let mut index: ReleaseEvidenceIndex = read_json(&sidecars.evidence).unwrap();
+        index.application_id = "different-application".into();
+        fs::write(&sidecars.evidence, json_bytes(&index).unwrap()).unwrap();
+
+        let error = verify_release_evidence(&output).unwrap_err();
+        assert!(error.to_string().contains("application identity does not match evidence"));
     }
 
     #[test]

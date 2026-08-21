@@ -90,6 +90,8 @@ pub fn run(
     if let Some(sidecars) = release_sidecars {
         println!("Checksum         {}", sidecars.checksum.display());
         println!("Compatibility    {}", sidecars.compatibility.display());
+        println!("SBOM             {}", sidecars.sbom.display());
+        println!("Licenses         {}", sidecars.licenses.display());
         println!("Evidence         {}", sidecars.evidence.display());
     }
     Ok(())
