@@ -9,6 +9,7 @@ Tysel denies undeclared resources. The isolated profile additionally denies host
 | Opaque secrets | Yes | Brokered | `permissions.secrets` |
 | SQLite / Postgres / filesystem | Grant-bound | No | Corresponding permission/store |
 | Inbound WebSocket | Yes | No | `server.websocket = true` |
+| Outbound WebSocket | Allowlisted | No | `permissions.fetch` |
 | LLM generation | Yes | No | Provider environment + secret |
 | Durable handlers | Yes | Supervisor execution | `[durable]` |
 | Timers, encoding, random | Yes | Yes | Limits only |

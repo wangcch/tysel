@@ -209,7 +209,9 @@ JSON on stdout and shuts the local TaskRPC service down at EOF.
 to a registered Queue handler, waits for its fenced terminal outcome, and
 prints the JSON result. Scheduler capacity remains the backpressure boundary.
 
-Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Isolated workers cannot accept WebSockets. Outbound `WebSocket` clients are not implemented yet.
+Inbound WebSocket is available on the trusted path when `[server] websocket = true`. A handler calls `tysel.acceptWebSocket()`, returns status 101, and can `send` / `addEventListener("message")` for text frames. Trusted code can also create outbound `WebSocket` clients; destinations use the same `permissions.fetch` host allowlist as `fetch`. Isolated workers cannot use WebSockets.
+
+`[server] http1` and `http2` select accepted protocols. Enabling both performs cleartext protocol detection; an HTTP/2-only listener accepts h2c prior knowledge. Production TLS should terminate at a reverse proxy or ingress before forwarding HTTP/2 to Tysel.
 
 Trusted-path SQLite is available as `tysel.sqlite.exec(sql, params?)` and `tysel.sqlite.query(sql, params?)`. Parameters are bound (never concatenated). Isolated workers cannot open SQLite. The default database is in-memory; `[durable] store = "sqlite"` with `path` pins a file (created on first use). `tysel dev` resolves a relative path against the manifest directory; a packaged binary resolves it against the process working directory. See `examples/sqlite-worker`.
 

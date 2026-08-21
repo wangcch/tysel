@@ -25,7 +25,7 @@ Request/task context exposes `requestId` and absolute `deadlineMs`.
 
 ## Web and host APIs
 
-Tysel provides `Request`, `Response`, `Headers`, allowlisted outbound `fetch`, UTF-8 encoders, timers, URL APIs, random UUID/bytes, and Web Crypto digest/HMAC operations.
+Tysel provides `Request`, `Response`, `Headers`, allowlisted outbound `fetch` and `WebSocket`, UTF-8 encoders, timers, URL APIs, random UUID/bytes, and Web Crypto digest/HMAC operations.
 
 | API | Contract | Grant |
 | --- | --- | --- |
@@ -36,6 +36,13 @@ Tysel provides `Request`, `Response`, `Headers`, allowlisted outbound `fetch`, U
 | `tysel.llm.generate(options)` | OpenAI-compatible bounded generation. | Provider configuration. |
 | `tysel.durable.start/sendSignal` | Start and wake durable handlers. | Durable store. |
 | `tysel.acceptWebSocket()` | Accept the current inbound upgrade. | WebSocket enabled, trusted profile. |
+| `new WebSocket(url)` | Connect, send text, and receive text/binary frames. `opened` exposes the connection promise; one outbound socket may be active per isolate request. | Trusted profile + `permissions.fetch` host. |
+
+`crypto.subtle` supports SHA-256/384/512 `digest` plus raw HMAC `importKey`, `sign`, and `verify`. HMAC key usages are enforced and verification is performed by the native constant-time implementation.
+
+## Server protocols
+
+`server.http1` defaults to true and `server.http2` defaults to false. At least one must be enabled. Enabling both accepts HTTP/1.1 and cleartext HTTP/2 on the same listener; HTTP/2-only mode accepts h2c prior knowledge. WebSocket upgrades are HTTP/1.1-only. Terminate public TLS at an ingress or reverse proxy.
 
 ## Durable context
 

@@ -11,6 +11,7 @@ Tysel is a lightweight native runtime for TypeScript services and durable agents
 - [npm compatibility](compatibility/README.md): how to interpret `tysel compat`.
 - [Durable Agent demo](https://github.com/wangcch/tysel/tree/main/examples/durable-agent): LLM call, human approval, restart, and exactly-once result persistence.
 - [Production operations](operations/production.md): deployment, recovery, observability, and release evidence.
+- [Phase 3 acceptance](architecture/phase3-acceptance.md): Web Crypto, outbound WebSocket, HTTP/2, compatibility, and OTLP evidence.
 
 ## Developer loop
 
