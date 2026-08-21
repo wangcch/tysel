@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
-use tysel_durable::{EventKind, ReplayCursor, ReplayError, SqliteStore, WakeupClaim};
+use tysel_durable::{DurableStore, EventKind, ReplayCursor, ReplayError, WakeupClaim};
 use tysel_task::TaskId;
 
 #[derive(Clone)]
@@ -10,7 +10,7 @@ pub struct DurableSession {
 }
 
 struct SessionInner {
-    store: Arc<SqliteStore>,
+    store: Arc<dyn DurableStore>,
     task_id: TaskId,
     replay: ReplayCursor,
     next_sequence: u64,
@@ -56,7 +56,7 @@ impl DurableSession {
 
     /// Start a task that has no pending wakeup. Suspended tasks must enter via
     /// `from_claim` so they cannot resume early or run under two schedulers.
-    pub fn new(store: Arc<SqliteStore>, task_id: TaskId) -> Result<Self, String> {
+    pub fn new(store: Arc<dyn DurableStore>, task_id: TaskId) -> Result<Self, String> {
         if let Some(wakeup) = store.wakeup(task_id).map_err(|err| err.to_string())? {
             return Err(format!(
                 "durable task is suspended until {} and must be resumed from a wakeup claim",
@@ -72,7 +72,7 @@ impl DurableSession {
         Self::load(store, task_id, None)
     }
 
-    pub fn from_claim(store: Arc<SqliteStore>, claim: WakeupClaim) -> Result<Self, String> {
+    pub fn from_claim(store: Arc<dyn DurableStore>, claim: WakeupClaim) -> Result<Self, String> {
         let now_ms = unix_time_ms()?;
         if now_ms < claim.wake_at_ms {
             return Err(format!("durable wakeup is not due until {}", claim.wake_at_ms));
@@ -85,7 +85,7 @@ impl DurableSession {
     }
 
     fn load(
-        store: Arc<SqliteStore>,
+        store: Arc<dyn DurableStore>,
         task_id: TaskId,
         active_claim: Option<WakeupClaim>,
     ) -> Result<Self, String> {

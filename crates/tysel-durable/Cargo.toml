@@ -11,6 +11,11 @@ description = "Durable task history, replay, and wakeup store."
 workspace = true
 
 [dependencies]
+native-tls.workspace = true
+postgres = "0.19"
+postgres-native-tls = "0.5"
+r2d2 = "0.8"
+r2d2_postgres = "0.18"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json.workspace = true
 sha2.workspace = true

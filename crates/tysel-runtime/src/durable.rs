@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tysel_durable::{DurableError, SqliteStore, WakeupClaim};
+#[cfg(test)]
+use tysel_durable::SqliteStore;
+use tysel_durable::{DurableError, DurableStore, WakeupClaim};
 use tysel_engine::{EngineError, IsolateConfig, Value};
 use tysel_engine_qjs::{DurableSession, eval_durable, eval_durable_module};
 use tysel_task::TaskId;
@@ -9,7 +11,7 @@ use tysel_task::TaskId;
 const MAX_OWNER_BYTES: usize = 128;
 
 pub struct DurableDispatcher {
-    store: Arc<SqliteStore>,
+    store: Arc<dyn DurableStore>,
     owner: String,
     lease_duration_ms: u64,
     isolate: IsolateConfig,
@@ -17,7 +19,7 @@ pub struct DurableDispatcher {
 
 impl DurableDispatcher {
     pub fn new(
-        store: Arc<SqliteStore>,
+        store: Arc<dyn DurableStore>,
         owner: impl Into<String>,
         lease_duration_ms: u64,
         isolate: IsolateConfig,
@@ -35,7 +37,7 @@ impl DurableDispatcher {
         Ok(Self { store, owner, lease_duration_ms, isolate })
     }
 
-    pub(crate) fn store(&self) -> Arc<SqliteStore> {
+    pub(crate) fn store(&self) -> Arc<dyn DurableStore> {
         self.store.clone()
     }
 

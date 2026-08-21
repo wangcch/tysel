@@ -1,4 +1,8 @@
-//! Durable task event history, deterministic replay, and SQLite wakeup storage.
+//! Durable task history, deterministic replay, and SQLite/Postgres storage.
+
+mod postgres_store;
+
+pub use postgres_store::{POSTGRES_URL_ENV, PostgresStore};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -210,6 +214,100 @@ pub struct DurableProgram {
 pub enum DurableProgramKind {
     Script,
     Module,
+}
+
+/// Storage contract consumed by the durable engine and scheduler.
+///
+/// Implementations must preserve per-task event ordering and make composite
+/// event/wakeup and signal operations atomic. The synchronous surface is
+/// intentional: callers run durable storage work on blocking worker threads.
+pub trait DurableStore: Send + Sync {
+    fn log_version(&self) -> Result<u32, DurableError>;
+    fn put_program(
+        &self,
+        task_id: TaskId,
+        source: &str,
+        registered_at_ms: u64,
+    ) -> Result<Option<DurableProgram>, DurableError>;
+    fn put_module(
+        &self,
+        task_id: TaskId,
+        source: &str,
+        registered_at_ms: u64,
+    ) -> Result<Option<DurableProgram>, DurableError>;
+    fn program(&self, task_id: TaskId) -> Result<Option<DurableProgram>, DurableError>;
+    fn load_due_programs_by_kind(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+    ) -> Result<Vec<DurableProgram>, DurableError>;
+    fn remove_program(&self, task_id: TaskId) -> Result<Option<DurableProgram>, DurableError>;
+    fn program_count(&self) -> Result<usize, DurableError>;
+    fn append_event_json_at(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        kind: EventKind,
+        key: String,
+        payload_json: &str,
+        recorded_at_ms: u64,
+    ) -> Result<TaskEvent, DurableError>;
+    fn append_event_json_with_wakeup_at(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        key: String,
+        payload_json: &str,
+        recorded_at_ms: u64,
+        wake_at_ms: u64,
+    ) -> Result<TaskEvent, DurableError>;
+    fn load_history(&self, task_id: TaskId) -> Result<History, DurableError>;
+    fn claim_due_wakeups(
+        &self,
+        now_ms: u64,
+        limit: usize,
+        lease_owner: &str,
+        lease_duration_ms: u64,
+    ) -> Result<Vec<WakeupClaim>, DurableError>;
+    fn claim_wakeup(
+        &self,
+        task_id: TaskId,
+        now_ms: u64,
+        lease_owner: &str,
+        lease_duration_ms: u64,
+    ) -> Result<Option<WakeupClaim>, DurableError>;
+    fn complete_wakeup(
+        &self,
+        task_id: TaskId,
+        sequence: u64,
+        lease_owner: Option<&str>,
+        now_ms: u64,
+    ) -> Result<bool, DurableError>;
+    fn claim_is_active(&self, claim: &WakeupClaim, now_ms: u64) -> Result<bool, DurableError>;
+    fn renew_wakeup_claim(
+        &self,
+        claim: &WakeupClaim,
+        now_ms: u64,
+        lease_duration_ms: u64,
+    ) -> Result<Option<WakeupClaim>, DurableError>;
+    fn release_wakeup_claim(&self, claim: &WakeupClaim) -> Result<bool, DurableError>;
+    fn wakeup(&self, task_id: TaskId) -> Result<Option<Wakeup>, DurableError>;
+    fn signal_wait(&self, task_id: TaskId) -> Result<Option<SignalWait>, DurableError>;
+    fn send_signal(
+        &self,
+        task_id: TaskId,
+        signal_name: &str,
+        payload: &Value,
+        sent_at_ms: u64,
+    ) -> Result<u64, DurableError>;
+    fn poll_signal(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        signal_name: &str,
+        now_ms: u64,
+        claim: Option<&WakeupClaim>,
+    ) -> Result<Option<TaskEvent>, DurableError>;
 }
 
 impl DurableProgramKind {
@@ -1100,12 +1198,182 @@ impl SqliteStore {
     }
 }
 
+impl DurableStore for SqliteStore {
+    fn log_version(&self) -> Result<u32, DurableError> {
+        SqliteStore::log_version(self)
+    }
+
+    fn put_program(
+        &self,
+        task_id: TaskId,
+        source: &str,
+        registered_at_ms: u64,
+    ) -> Result<Option<DurableProgram>, DurableError> {
+        SqliteStore::put_program(self, task_id, source, registered_at_ms)
+    }
+
+    fn put_module(
+        &self,
+        task_id: TaskId,
+        source: &str,
+        registered_at_ms: u64,
+    ) -> Result<Option<DurableProgram>, DurableError> {
+        SqliteStore::put_module(self, task_id, source, registered_at_ms)
+    }
+
+    fn program(&self, task_id: TaskId) -> Result<Option<DurableProgram>, DurableError> {
+        SqliteStore::program(self, task_id)
+    }
+
+    fn load_due_programs_by_kind(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+    ) -> Result<Vec<DurableProgram>, DurableError> {
+        SqliteStore::load_due_programs_by_kind(self, now_ms, kind)
+    }
+
+    fn remove_program(&self, task_id: TaskId) -> Result<Option<DurableProgram>, DurableError> {
+        SqliteStore::remove_program(self, task_id)
+    }
+
+    fn program_count(&self) -> Result<usize, DurableError> {
+        SqliteStore::program_count(self)
+    }
+
+    fn append_event_json_at(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        kind: EventKind,
+        key: String,
+        payload_json: &str,
+        recorded_at_ms: u64,
+    ) -> Result<TaskEvent, DurableError> {
+        SqliteStore::append_event_json_at(
+            self,
+            task_id,
+            expected_sequence,
+            kind,
+            key,
+            payload_json,
+            recorded_at_ms,
+        )
+    }
+
+    fn append_event_json_with_wakeup_at(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        key: String,
+        payload_json: &str,
+        recorded_at_ms: u64,
+        wake_at_ms: u64,
+    ) -> Result<TaskEvent, DurableError> {
+        SqliteStore::append_event_json_with_wakeup_at(
+            self,
+            task_id,
+            expected_sequence,
+            key,
+            payload_json,
+            recorded_at_ms,
+            wake_at_ms,
+        )
+    }
+
+    fn load_history(&self, task_id: TaskId) -> Result<History, DurableError> {
+        SqliteStore::load_history(self, task_id)
+    }
+
+    fn claim_due_wakeups(
+        &self,
+        now_ms: u64,
+        limit: usize,
+        lease_owner: &str,
+        lease_duration_ms: u64,
+    ) -> Result<Vec<WakeupClaim>, DurableError> {
+        SqliteStore::claim_due_wakeups(self, now_ms, limit, lease_owner, lease_duration_ms)
+    }
+
+    fn claim_wakeup(
+        &self,
+        task_id: TaskId,
+        now_ms: u64,
+        lease_owner: &str,
+        lease_duration_ms: u64,
+    ) -> Result<Option<WakeupClaim>, DurableError> {
+        SqliteStore::claim_wakeup(self, task_id, now_ms, lease_owner, lease_duration_ms)
+    }
+
+    fn complete_wakeup(
+        &self,
+        task_id: TaskId,
+        sequence: u64,
+        lease_owner: Option<&str>,
+        now_ms: u64,
+    ) -> Result<bool, DurableError> {
+        SqliteStore::complete_wakeup(self, task_id, sequence, lease_owner, now_ms)
+    }
+
+    fn claim_is_active(&self, claim: &WakeupClaim, now_ms: u64) -> Result<bool, DurableError> {
+        SqliteStore::claim_is_active(self, claim, now_ms)
+    }
+
+    fn renew_wakeup_claim(
+        &self,
+        claim: &WakeupClaim,
+        now_ms: u64,
+        lease_duration_ms: u64,
+    ) -> Result<Option<WakeupClaim>, DurableError> {
+        SqliteStore::renew_wakeup_claim(self, claim, now_ms, lease_duration_ms)
+    }
+
+    fn release_wakeup_claim(&self, claim: &WakeupClaim) -> Result<bool, DurableError> {
+        SqliteStore::release_wakeup_claim(self, claim)
+    }
+
+    fn wakeup(&self, task_id: TaskId) -> Result<Option<Wakeup>, DurableError> {
+        SqliteStore::wakeup(self, task_id)
+    }
+
+    fn signal_wait(&self, task_id: TaskId) -> Result<Option<SignalWait>, DurableError> {
+        SqliteStore::signal_wait(self, task_id)
+    }
+
+    fn send_signal(
+        &self,
+        task_id: TaskId,
+        signal_name: &str,
+        payload: &Value,
+        sent_at_ms: u64,
+    ) -> Result<u64, DurableError> {
+        SqliteStore::send_signal(self, task_id, signal_name, payload, sent_at_ms)
+    }
+
+    fn poll_signal(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        signal_name: &str,
+        now_ms: u64,
+        claim: Option<&WakeupClaim>,
+    ) -> Result<Option<TaskEvent>, DurableError> {
+        SqliteStore::poll_signal(self, task_id, expected_sequence, signal_name, now_ms, claim)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DurableError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Postgres(#[from] postgres::Error),
+    #[error("Postgres durable connection pool: {0}")]
+    PostgresPool(String),
+    #[error("Postgres durable configuration: {0}")]
+    PostgresConfiguration(&'static str),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error("durable store lock is poisoned")]

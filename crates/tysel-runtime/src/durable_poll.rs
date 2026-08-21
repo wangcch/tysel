@@ -6,8 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tysel_durable::{
-    DurableError, DurableProgramKind, MAX_DURABLE_PROGRAM_BYTES, MAX_DURABLE_PROGRAM_TOTAL_BYTES,
-    MAX_DURABLE_PROGRAMS, SqliteStore,
+    DurableError, DurableProgramKind, DurableStore, MAX_DURABLE_PROGRAM_BYTES,
+    MAX_DURABLE_PROGRAM_TOTAL_BYTES, MAX_DURABLE_PROGRAMS,
 };
 use tysel_task::TaskId;
 
@@ -97,11 +97,11 @@ fn next_total_bytes(
 
 #[derive(Clone)]
 pub struct DurableProgramCatalog {
-    store: Arc<SqliteStore>,
+    store: Arc<dyn DurableStore>,
 }
 
 impl DurableProgramCatalog {
-    pub fn new(store: Arc<SqliteStore>) -> Self {
+    pub fn new(store: Arc<dyn DurableStore>) -> Self {
         Self { store }
     }
 

@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "79ec16df2b5566594ecde20ea32b4c8f9257a5c00dfa52b51899334a3812fa02",
+  "cargo_lock_sha256": "d8e4e65b33bbc395739095da4e95f608ab4b4d30762808428f6c71cb6704915c",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -1864,6 +1864,14 @@
       "checksum": "851ca9db4932932d69f3ea811b1abe63087a0f740a47692619dd40d4899b68be"
     },
     {
+      "name": "postgres",
+      "version": "0.19.14",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/postgres@0.19.14",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "33ad20e0aa0b24f5a394eab4f78c781d248982b22b25cecc7e3aa46a681605bd"
+    },
+    {
       "name": "potential_utf",
       "version": "0.1.6",
       "license": "Unicode-3.0",
@@ -1926,6 +1934,22 @@
       "purl": "pkg:cargo/r-efi@6.0.0",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+    },
+    {
+      "name": "r2d2",
+      "version": "0.8.10",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/r2d2@0.8.10",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "51de85fb3fb6524929c8a2eb85e6b6d363de4e8c48f9e2c2eac4944abc181c93"
+    },
+    {
+      "name": "r2d2_postgres",
+      "version": "0.18.2",
+      "license": "MIT",
+      "purl": "pkg:cargo/r2d2_postgres@0.18.2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "efd4b47636dbca581cd057e2f27a5d39be741ea4f85fd3c29e415c55f71c7595"
     },
     {
       "name": "rand",
@@ -2142,6 +2166,14 @@
       "purl": "pkg:cargo/schannel@0.1.29",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
+    },
+    {
+      "name": "scheduled-thread-pool",
+      "version": "0.2.7",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/scheduled-thread-pool@0.2.7",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "3cbc66816425a074528352f5789333ecff06ca41b36b0b0efdfbb29edc391a19"
     },
     {
       "name": "scopeguard",

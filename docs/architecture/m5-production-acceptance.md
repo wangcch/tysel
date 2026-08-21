@@ -189,3 +189,34 @@ excluded from the archive and reproducibility comparison.
 Both the archive and its reproducibility proof receive detached signatures, so
 the build commands and source provenance cannot be replaced independently of
 the published bytes.
+
+## M5.7 Postgres Durable Store
+
+The durable engine and scheduler consume the backend-neutral `DurableStore`
+contract. `SqliteStore` remains the local implementation; `PostgresStore` is
+the production implementation and uses a bounded connection pool. Existing
+`DurableSession`, `DurableDispatcher`, and persistent program-catalog callers
+therefore exercise the same replay and ownership path with either backend.
+
+Postgres mutations take an exact per-task row lock before allocating a history
+sequence or changing signal state. Event/history accounting, event+wakeup,
+signal enqueue+wakeup, and signal consume+event append are single database
+transactions. Due-task acquisition uses `FOR UPDATE SKIP LOCKED`; completion,
+renewal, and release compare the complete lease token so a stale worker cannot
+modify a newer generation. The schema enforces unsigned-range checks where
+Postgres permits them, fixed-size task IDs and digests, immutable program
+identity, bounded history, inbox, and program catalogs, and the same durable
+log version as SQLite.
+
+Production credentials are host-only. Set `TYSEL_DURABLE_POSTGRES_URL` and call
+`PostgresStore::connect_from_env`; the URL is not represented in the manifest,
+TAP, logs, or durable history. TLS is selected by the PostgreSQL `sslmode`
+setting. `sslmode=disable` is intended only for a trusted local test service;
+production deployments use certificate-validated TLS.
+
+CI supplies `TYSEL_POSTGRES_TEST_URL` to a live parity test. The test verifies
+concurrent sequence compare-and-swap, deterministic replay history, exclusive
+claim ownership and completion, signal suspension/wakeup/consumption, and the
+persistent module catalog. Without that variable the live test is skipped so
+offline development remains deterministic; the release workflow always
+provides its Postgres service.
