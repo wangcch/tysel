@@ -8,7 +8,8 @@ Tysel runs TypeScript services, workers, and agents as a single native executabl
 
 The public API prefers Web standards (`Request`, `Response`, `fetch`, streams, `crypto`). Platform capabilities are granted explicitly, not through ambient Node modules.
 
-This repository has completed the **M5 Production v1** scope. Its release
+This repository has completed the **M5 Production v1** scope and the Phase 2
+developer-experience milestone. Its release
 contract includes stable TAP and Capability ABI compatibility, deterministic
 evidence and SBOMs, offline signatures, reproducible multi-architecture Linux
 archives, benchmark/security/fuzz gates, Postgres durable storage, redacted
@@ -20,6 +21,9 @@ SQLite event log for deterministic replay, signals, persisted wakeups, and
 explicit suspend/resume. `tysel dev` reloads HTTP and task workers, `tysel run`
 serves without watching, `tysel queue` submits one Queue message, `tysel mcp`
 serves MCP tools over stdio, and `tysel build` emits a single native executable.
+`tysel init`, `compat`, `test`, and `image` cover project creation,
+compatibility triage, isolated tests with source-mapped failures, and non-root
+container packaging. Start with the [documentation hub](docs/index.md).
 The full plan is in [roadmap.md](./roadmap.md).
 
 ## Layout
@@ -87,10 +91,14 @@ cargo run -p tysel-cli -- build --manifest examples/hello-service/tysel.toml
 
 ```bash
 cargo run -p tysel-cli -- check --manifest tysel.toml
+cargo run -p tysel-cli -- compat
+cargo run -p tysel-cli -- init ./my-service
+cargo run -p tysel-cli -- test --manifest tysel.toml
 cargo run -p tysel-cli -- dev --manifest tysel.toml
 cargo run -p tysel-cli -- run --manifest tysel.toml
 cargo run -p tysel-cli -- inspect --manifest tysel.toml
 cargo run -p tysel-cli -- build --manifest tysel.toml
+cargo run -p tysel-cli -- image --manifest tysel.toml --context-only
 ```
 
 `tysel check` loads the manifest, bundles the entry, and runs `tsc --noEmit` when a `tsconfig.json` and TypeScript are present. Missing TypeScript is skipped, not a failure.

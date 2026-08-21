@@ -1,0 +1,22 @@
+site_name: Tysel Documentation
+site_description: Build TypeScript services and durable agents as native executables.
+docs_dir: docs
+exclude_docs: |
+  website-plan.md
+  architecture/*acceptance.md
+theme:
+  name: readthedocs
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - CLI: cli.md
+  - Runtime API: api/runtime.md
+  - Capability matrix: capabilities/README.md
+  - npm compatibility: compatibility/README.md
+  - Production operations: operations/production.md
+  - Architecture: architecture/README.md
+markdown_extensions:
+  - tables
+  - fenced_code
+  - toc:
+      permalink: true
