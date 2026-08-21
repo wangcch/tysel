@@ -45,12 +45,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
 
-  component-host-matrix:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14]
-    runs-on: ${{ matrix.os }}
+  component-host-macos:
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -58,14 +54,15 @@ jobs:
       - run: cargo test -p tysel-engine-wasm --all-targets
 
   # Landlock, seccomp allowlist, and isolate workers are Linux-only.
-  # x86_64 coverage already comes from the rust job; re-run the sandbox
-  # crates on arm64 because seccomp syscall tables differ by architecture.
-  sandbox:
+  # x86_64 coverage comes from the rust job. One arm64 runner covers both
+  # the component host and architecture-specific sandbox syscall tables.
+  rust-arm64:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p tysel-engine-wasm --all-targets
       - run: cargo test -p tysel-isolate --all-targets
       - run: cargo test -p tysel-cap-fs --all-targets
 
@@ -95,10 +92,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: go test ./...
         working-directory: sdk/component-go
-      - run: go install github.com/bytecodealliance/componentize-go/cmd/componentize-go@v0.4.1
+      - run: go install github.com/bytecodealliance/componentize-go@v0.4.1
       - run: componentize-go -d ../../../wit/component -w task build -o echo.component.wasm
         working-directory: sdk/examples/go-echo
-      - run: cargo test -p tysel-engine-wasm --test sdk_fixtures
+      - run: >-
+          cargo test -p tysel-engine-wasm --test sdk_fixtures
+          go_sdk_fixture_matches_the_host_contract_with_restricted_wasi
+          -- --exact --ignored
         env:
           TYSEL_GO_COMPONENT_FIXTURE: sdk/examples/go-echo/echo.component.wasm
 
@@ -114,7 +114,9 @@ jobs:
           version: "1.247.0"
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: sdk/examples/rust-echo
+          workspaces: |
+            . -> target
+            sdk/examples/rust-echo -> target
       - run: >-
           cargo build --manifest-path sdk/examples/rust-echo/Cargo.toml
           --target wasm32-unknown-unknown --release
@@ -122,7 +124,10 @@ jobs:
           wasm-tools component new
           sdk/examples/rust-echo/target/wasm32-unknown-unknown/release/tysel_rust_echo_component.wasm
           -o sdk/examples/rust-echo/target/echo.component.wasm
-      - run: cargo test -p tysel-engine-wasm --test sdk_fixtures
+      - run: >-
+          cargo test -p tysel-engine-wasm --test sdk_fixtures
+          rust_sdk_fixture_matches_the_host_contract
+          -- --exact --ignored
         env:
           TYSEL_RUST_COMPONENT_FIXTURE: sdk/examples/rust-echo/target/echo.component.wasm
 

@@ -778,6 +778,54 @@ mod tests {
         )
     }
 
+    fn spinning_component_with_import() -> Vec<u8> {
+        component(
+            r#"
+(component
+  (type $host (func (param "input" string) (result (result string (error string)))))
+  (type $host-instance (instance (export "call" (func (type $host)))))
+  (import "tysel:test/host@0.4.0" (instance $host-import (type $host-instance)))
+  (alias export $host-import "call" (func $call))
+  (core module $memory-module
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 16))
+    (func (export "realloc")
+      (param $old-ptr i32) (param $old-len i32) (param $align i32) (param $new-len i32)
+      (result i32)
+      (local $ptr i32)
+      global.get $heap
+      local.tee $ptr
+      local.get $new-len
+      i32.add
+      global.set $heap
+      local.get $ptr))
+  (core instance $memory-instance (instantiate $memory-module))
+  (alias core export $memory-instance "memory" (core memory $memory))
+  (alias core export $memory-instance "realloc" (core func $realloc))
+  (core func $lowered-call
+    (canon lower (func $call) (memory $memory) (realloc $realloc)))
+  (core module $adapter
+    (import "host" "call" (func $host-call (param i32 i32 i32)))
+    (func (export "run") (param $ptr i32) (param $len i32) (result i32)
+      (loop $spin
+        local.get $ptr
+        local.get $len
+        i32.const 0
+        call $host-call
+        br $spin)
+      unreachable))
+  (core instance $host-core
+    (export "call" (func $lowered-call)))
+  (core instance $adapter-instance
+    (instantiate $adapter (with "host" (instance $host-core))))
+  (alias core export $adapter-instance "run" (core func $run-core))
+  (func $run (type $host)
+    (canon lift (core func $run-core) (memory $memory) (realloc $realloc)))
+  (export "run" (func $run)))
+"#,
+        )
+    }
+
     #[test]
     fn invokes_the_wit_json_string_abi() {
         let engine = WasmComponentEngine::new(ComponentEngineConfig::default()).unwrap();
@@ -975,37 +1023,39 @@ mod tests {
 
     #[test]
     fn epoch_deadline_bounds_guest_execution_time() {
+        use tysel_capability::CapabilityDescriptor;
+
         let engine = WasmComponentEngine::new(ComponentEngineConfig {
             fuel: MAX_COMPONENT_FUEL,
             max_execution_ms: 10,
             ..ComponentEngineConfig::default()
         })
         .unwrap();
-        let source = component(
-            r#"
-(component
-  (core module $module
-    (memory (export "memory") 1)
-    (global $heap (mut i32) (i32.const 16))
-    (func (export "realloc") (param i32 i32 i32 i32) (result i32)
-      global.get $heap)
-    (func (export "run") (param i32 i32) (result i32)
-      (loop $spin
-        br $spin)
-      unreachable))
-  (core instance $instance (instantiate $module))
-  (alias core export $instance "memory" (core memory $memory))
-  (alias core export $instance "realloc" (core func $realloc))
-  (alias core export $instance "run" (core func $run-core))
-  (type $run-type
-    (func (param "input" string) (result (result string (error string)))))
-  (func $run (type $run-type)
-    (canon lift (core func $run-core) (memory $memory) (realloc $realloc)))
-  (export "run" (func $run)))
-"#,
-        );
+        let source = spinning_component_with_import();
         let compiled = engine.compile(&source).unwrap();
-        let error = engine.invoke_json(&compiled, "null").unwrap_err();
+        let provider = StringCapabilityProvider::new(
+            CapabilityDescriptor::new(
+                "tysel:test/host@0.4.2".parse().unwrap(),
+                [TrustMode::IsolatedTask],
+            )
+            .unwrap(),
+            "call",
+            |_| {
+                std::thread::sleep(Duration::from_millis(1));
+                Ok("null".to_owned())
+            },
+        )
+        .unwrap();
+        let grants = [CapabilityId("tysel:test".into())].into_iter().collect();
+        let error = engine
+            .invoke_json_with_capabilities(
+                &compiled,
+                "null",
+                &[provider],
+                TrustMode::IsolatedTask,
+                &grants,
+            )
+            .unwrap_err();
         assert!(matches!(error, ComponentError::Invoke(_)));
         assert!(error.to_string().contains("interrupt"), "unexpected error: {error}");
     }
