@@ -315,3 +315,13 @@ fn stable_tap_contract_rejects_ambiguous_or_unknown_metadata() {
     report["futureSecurityFlag"] = serde_json::json!(true);
     assert!(serde_json::from_value::<TapCompatibilityReport>(report).is_err());
 }
+
+#[test]
+fn source_map_symbolicates_generated_stack_frames() {
+    let map =
+        SourceMap::parse(&identity_source_map("src/index.ts", "first\nsecond\n").unwrap()).unwrap();
+    let stack = "Error: failure\n    at fetch (app.js:2:1)";
+    let mapped = map.symbolicate_stack(stack);
+    assert!(mapped.contains("src/index.ts:2:1"), "{mapped}");
+    assert!(!mapped.contains("app.js:"), "{mapped}");
+}

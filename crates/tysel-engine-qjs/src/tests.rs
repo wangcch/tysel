@@ -51,6 +51,18 @@ fn promise_resolves_from_rust_async_echo() {
     assert_eq!(value, Value::String("hello".into()));
 }
 
+#[test]
+fn javascript_exceptions_preserve_message_and_stack() {
+    let error = eval(
+        r#"(async function namedFailure() { throw new Error("preserved failure"); })()"#,
+        config(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("preserved failure"), "{error}");
+    assert!(error.contains("namedFailure"), "{error}");
+}
+
 struct TestLlmProvider;
 
 impl LlmProvider for TestLlmProvider {

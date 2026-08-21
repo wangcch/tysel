@@ -2,7 +2,7 @@ use rquickjs::{Ctx, Function, Module, Object};
 use tokio::sync::{mpsc, oneshot};
 use tysel_engine::{EngineError, HttpHead, HttpRequest};
 
-use crate::isolate::js_err;
+use crate::isolate::{js_err, js_err_ctx};
 
 const BOOTSTRAP: &str = r##"
 (() => {
@@ -366,8 +366,9 @@ globalThis.__tysel_fetch = handler.fetch.bind(handler);
 "#;
 
 pub fn load_fetch_handler(ctx: Ctx<'_>, source: &str) -> Result<(), EngineError> {
-    Module::declare(ctx.clone(), "app.js", source).map_err(js_err)?;
-    let promise = Module::evaluate(ctx.clone(), "tysel-boot.js", BOOT_FETCH).map_err(js_err)?;
+    Module::declare(ctx.clone(), "app.js", source).map_err(|err| js_err_ctx(&ctx, err))?;
+    let promise = Module::evaluate(ctx.clone(), "tysel-boot.js", BOOT_FETCH)
+        .map_err(|err| js_err_ctx(&ctx, err))?;
     ctx.globals().set("__tysel_result", promise).map_err(js_err)?;
     Ok(())
 }
@@ -375,7 +376,7 @@ pub fn load_fetch_handler(ctx: Ctx<'_>, source: &str) -> Result<(), EngineError>
 pub fn begin_fetch(ctx: Ctx<'_>, request: &HttpRequest) -> Result<bool, EngineError> {
     let fetch: Function = ctx.globals().get("__tysel_fetch").map_err(js_err)?;
     let js_request = to_js_request(&ctx, request)?;
-    let result: rquickjs::Value = fetch.call((js_request,)).map_err(js_err)?;
+    let result: rquickjs::Value = fetch.call((js_request,)).map_err(|err| js_err_ctx(&ctx, err))?;
     if result.is_promise() {
         ctx.globals().set("__tysel_result", result).map_err(js_err)?;
         Ok(true)
@@ -390,7 +391,7 @@ pub fn take_response_into_globals(ctx: Ctx<'_>) -> Result<(), EngineError> {
     let value: rquickjs::Value = promise
         .result::<rquickjs::Value>()
         .ok_or_else(|| EngineError::Isolate("fetch promise still pending".into()))?
-        .map_err(js_err)?;
+        .map_err(|err| js_err_ctx(&ctx, err))?;
     ctx.globals().set("__tysel_response", value).map_err(js_err)?;
     Ok(())
 }

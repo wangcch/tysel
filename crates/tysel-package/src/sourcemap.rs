@@ -75,6 +75,43 @@ impl SourceMap {
             content,
         })
     }
+
+    /// Replace generated `app.js:line:column` frames with original source positions.
+    pub fn symbolicate_stack(&self, stack: &str) -> String {
+        stack
+            .lines()
+            .map(|line| {
+                let Some(marker) = line.find("app.js:") else { return line.to_owned() };
+                let coordinates = &line[marker + "app.js:".len()..];
+                let Some((generated_line, rest)) = parse_stack_number(coordinates) else {
+                    return line.to_owned();
+                };
+                let Some(rest) = rest.strip_prefix(':') else { return line.to_owned() };
+                let Some((generated_column, _)) = parse_stack_number(rest) else {
+                    return line.to_owned();
+                };
+                let Some(position) = self.original_position(generated_line, generated_column)
+                else {
+                    return line.to_owned();
+                };
+                let original = format!("{}:{}:{}", position.source, position.line, position.column);
+                let token_len = "app.js:".len()
+                    + generated_line.to_string().len()
+                    + 1
+                    + generated_column.to_string().len();
+                format!("{}{}{}", &line[..marker], original, &line[marker + token_len..])
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn parse_stack_number(value: &str) -> Option<(u32, &str)> {
+    let digits = value.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    Some((value[..digits].parse().ok()?, &value[digits..]))
 }
 
 pub fn identity_source_map(source_path: &str, source: &str) -> Result<Vec<u8>, PackageError> {

@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use tysel_capability::CapabilityId;
 use tysel_engine::IsolateConfig;
 use tysel_manifest::Manifest;
+use tysel_package::SourceMap;
 #[cfg(unix)]
 use tysel_runtime::ModuleTaskService;
 use tysel_runtime::{AppIsolate, DurablePlane, SharedPool, handle_stream, spawn_app_isolate};
@@ -28,6 +29,7 @@ struct Loaded {
     max_request_bytes: usize,
     addr: std::net::SocketAddr,
     websocket: bool,
+    source_map: Arc<SourceMap>,
     task: Option<TaskSpec>,
     durable: Option<DurableSpec>,
 }
@@ -187,8 +189,12 @@ pub async fn run_queue(
 
 async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> Result<()> {
     let loaded = load(&manifest_path, entry.as_deref())?;
-    let pool =
-        SharedPool::with_websocket(loaded.isolate, loaded.max_request_bytes, loaded.websocket);
+    let pool = SharedPool::with_debug_info(
+        loaded.isolate,
+        loaded.max_request_bytes,
+        loaded.websocket,
+        Some(loaded.source_map),
+    );
     let listener =
         TcpListener::bind(loaded.addr).await.with_context(|| format!("bind {}", loaded.addr))?;
     let mut task_generation = 1u64;
@@ -218,10 +224,11 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                                 match start_dev_durable(next.durable.clone()).await {
                                     Ok(next_durable) => {
                                         eprintln!("tysel reload");
-                                        pool.replace_with(
+                                        pool.replace_with_debug_info(
                                             next.isolate,
                                             next.max_request_bytes,
                                             next.websocket,
+                                            Some(next.source_map),
                                         );
                                         shutdown_task_service(task_service).await?;
                                         shutdown_durable(durable.take()).await?;
@@ -275,6 +282,8 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
     };
     let (bundle, source_map) = tysel_build::read_bundle(&entry)
         .with_context(|| format!("failed to bundle {}", entry.display()))?;
+    let parsed_source_map =
+        Arc::new(SourceMap::parse(&source_map).context("failed to parse generated source map")?);
     let tap = tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), bundle, source_map);
     tysel_engine_qjs::configure_sqlite_path(&tap.manifest.sqlite_path, Some(root));
     tysel_engine_qjs::configure_fs(
@@ -334,6 +343,7 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
         max_request_bytes: tap.manifest.max_request_bytes,
         addr,
         websocket,
+        source_map: parsed_source_map,
         task,
         durable: Some(DurableSpec {
             source,

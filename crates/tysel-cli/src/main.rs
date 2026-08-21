@@ -8,13 +8,18 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tysel_manifest::Manifest;
 
 mod build;
 mod check;
+mod compat;
 mod dev;
+mod image;
+mod init;
+mod node_scan;
 mod release;
+mod test_runner;
 
 #[derive(Parser)]
 #[command(
@@ -24,8 +29,17 @@ mod release;
     arg_required_else_help = true
 )]
 struct Cli {
+    /// Format fatal CLI errors for humans or automation.
+    #[arg(long, global = true, value_enum, default_value_t = ErrorFormat::Human)]
+    error_format: ErrorFormat,
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ErrorFormat {
+    Human,
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -69,8 +83,19 @@ enum Commands {
         #[arg(long, default_value = "tysel.toml")]
         manifest: PathBuf,
     },
-    /// Run application tests.
-    Test,
+    /// Run application tests in isolated QuickJS instances.
+    Test {
+        /// Test files or directories (defaults to tests/).
+        paths: Vec<PathBuf>,
+        #[arg(long, default_value = "tysel.toml")]
+        manifest: PathBuf,
+        /// Timeout for each test.
+        #[arg(long, default_value_t = 5000)]
+        timeout_ms: u64,
+        /// Emit a stable machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
     /// Bundle the app and emit a single native executable.
     Build {
         entry: Option<PathBuf>,
@@ -97,26 +122,71 @@ enum Commands {
         #[arg(long, default_value = "tysel.toml")]
         manifest: PathBuf,
     },
-    /// Report npm/Web API compatibility for the current lockfile.
-    Compat,
+    /// Report npm/Web API compatibility for the current project.
+    Compat {
+        #[arg(long, default_value = "tysel.toml")]
+        manifest: PathBuf,
+        /// Emit a stable machine-readable report.
+        #[arg(long)]
+        json: bool,
+        /// Exit unsuccessfully when unsupported packages are found.
+        #[arg(long)]
+        strict: bool,
+        /// With --strict, also reject packages not in the catalog.
+        #[arg(long, requires = "strict")]
+        deny_unknown: bool,
+    },
     /// Run the benchmark suite.
     Bench,
-    /// Build a container image around the single executable.
-    Image,
+    /// Build a container image around a Linux single executable.
+    Image {
+        entry: Option<PathBuf>,
+        #[arg(long, default_value = "tysel.toml")]
+        manifest: PathBuf,
+        /// Use an existing Linux executable instead of running `tysel build`.
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        #[arg(long)]
+        stub: Option<PathBuf>,
+        #[arg(long)]
+        tag: Option<String>,
+        #[arg(long, default_value = "dist/image")]
+        output_dir: PathBuf,
+        #[arg(long, default_value = "gcr.io/distroless/cc-debian13:nonroot")]
+        base_image: String,
+        /// Generate the Docker build context without invoking Docker.
+        #[arg(long, alias = "no-build")]
+        context_only: bool,
+        /// Replace generated app and Dockerfile files in the output directory.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> ExitCode {
-    match run() {
+    let cli = Cli::parse();
+    let error_format = cli.error_format;
+    match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("error: {err:#}");
+            match error_format {
+                ErrorFormat::Human => eprintln!("error: {err:#}"),
+                ErrorFormat::Json => eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "error": {
+                            "code": "TYSEL_CLI_ERROR",
+                            "message": format!("{err:#}"),
+                        }
+                    })
+                ),
+            }
             ExitCode::from(1)
         }
     }
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Inspect { manifest } => inspect(manifest.as_path()),
         Commands::Check { manifest } => check::run(manifest.as_path()),
@@ -152,6 +222,34 @@ fn run() -> Result<()> {
             build::run(manifest, entry, stub, output, target, profile, release)
         }
         Commands::Release { command } => release::run(command),
+        Commands::Init { path } => init::run(&path),
+        Commands::Test { paths, manifest, timeout_ms, json } => {
+            test_runner::run(&manifest, &paths, timeout_ms, json)
+        }
+        Commands::Image {
+            entry,
+            manifest,
+            binary,
+            stub,
+            tag,
+            output_dir,
+            base_image,
+            context_only,
+            force,
+        } => image::run(image::Options {
+            entry,
+            manifest,
+            binary,
+            stub,
+            tag,
+            output_dir,
+            base_image,
+            context_only,
+            force,
+        }),
+        Commands::Compat { manifest, json, strict, deny_unknown } => {
+            compat::run(&manifest, json, strict, deny_unknown)
+        }
         other => unimplemented_command(other),
     }
 }
@@ -165,12 +263,12 @@ fn inspect(path: &Path) -> Result<()> {
 
 fn unimplemented_command(command: Commands) -> Result<()> {
     let name = match command {
-        Commands::Init { .. } => "init",
-        Commands::Test => "test",
-        Commands::Compat => "compat",
         Commands::Bench => "bench",
-        Commands::Image => "image",
-        Commands::Inspect { .. }
+        Commands::Init { .. }
+        | Commands::Test { .. }
+        | Commands::Image { .. }
+        | Commands::Compat { .. }
+        | Commands::Inspect { .. }
         | Commands::Build { .. }
         | Commands::Check { .. }
         | Commands::Dev { .. }

@@ -240,6 +240,223 @@ postgres = ["postgres://user:pass@localhost/db"]
 }
 
 #[test]
+fn init_writes_a_hello_service_skeleton() {
+    let dir = temp_app("init-app");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe()).args(["init", dir.to_str().unwrap()]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(dir.join("src/index.ts").is_file());
+    assert!(dir.join("tests/app.test.ts").is_file());
+    assert!(!dir.join("tests/tysel-test.d.ts").exists());
+    let package: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("package.json")).unwrap()).unwrap();
+    assert_eq!(package["devDependencies"]["@tysel/test"], "0.0.1");
+    assert!(dir.join(".gitignore").is_file());
+    assert!(dir.join("tysel.toml").is_file());
+    let check = Command::new(cli_exe())
+        .args(["check", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(check.status.success(), "{}", String::from_utf8_lossy(&check.stderr));
+    let tests = Command::new(cli_exe())
+        .args(["test", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(tests.status.success(), "{}", String::from_utf8_lossy(&tests.stderr));
+    let test_stdout = String::from_utf8_lossy(&tests.stdout);
+    assert!(test_stdout.contains("1 passed, 0 failed"), "{test_stdout}");
+}
+
+#[test]
+fn init_preflights_conflicts_without_partial_writes() {
+    let dir = temp_app("init-conflict");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("tysel.toml"), "keep me\n").unwrap();
+
+    let output = Command::new(cli_exe()).args(["init", dir.to_str().unwrap()]).output().unwrap();
+    assert!(!output.status.success());
+    assert_eq!(fs::read_to_string(dir.join("tysel.toml")).unwrap(), "keep me\n");
+    assert!(!dir.join("src").exists());
+    assert!(!dir.join("package.json").exists());
+}
+
+#[test]
+fn check_rejects_node_builtin_imports() {
+    let dir = temp_app("check-node");
+    write_js_app(
+        &dir,
+        "import fs from \"fs\";\nexport default { async fetch() { return new Response(String(fs)); } };\n",
+    );
+    let output = Command::new(cli_exe())
+        .args(["check", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("fs") || text.contains("Node builtin"), "{text}");
+}
+
+#[test]
+fn compat_classifies_project_dependencies() {
+    let dir = temp_app("compat-deps");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    fs::write(
+        dir.join("package.json"),
+        r#"{
+  "name": "compat-deps",
+  "private": true,
+  "dependencies": { "hono": "4.0.0", "sharp": "0.33.0", "buffer": "6.0.0" }
+}"#,
+    )
+    .unwrap();
+    let output = Command::new(cli_exe()).current_dir(&dir).arg("compat").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("hono"), "{stdout}");
+    assert!(stdout.contains("sharp"), "{stdout}");
+    assert!(stdout.contains("Node native addon"), "{stdout}");
+    assert!(stdout.contains("Requires Shim\n  buffer"), "{stdout}");
+}
+
+#[test]
+fn compat_json_is_machine_readable_and_strict_controls_exit_status() {
+    let dir = temp_app("compat-json");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    fs::write(
+        dir.join("package.json"),
+        r#"{
+  "name": "compat-json",
+  "dependencies": { "sharp": "0.33.0", "mystery-package": "1.0.0" }
+}"#,
+    )
+    .unwrap();
+
+    let report =
+        Command::new(cli_exe()).current_dir(&dir).args(["compat", "--json"]).output().unwrap();
+    assert!(report.status.success(), "{}", String::from_utf8_lossy(&report.stderr));
+    let value: serde_json::Value = serde_json::from_slice(&report.stdout).unwrap();
+    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["summary"]["unsupported"], 1);
+    assert_eq!(value["summary"]["unknown"], 1);
+
+    let strict =
+        Command::new(cli_exe()).current_dir(&dir).args(["compat", "--strict"]).output().unwrap();
+    assert!(!strict.status.success());
+}
+
+#[test]
+fn test_command_reports_async_failures_as_json() {
+    let dir = temp_app("test-json");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    fs::create_dir_all(dir.join("tests")).unwrap();
+    fs::write(
+        dir.join("tests/example.test.ts"),
+        r#"test("passes asynchronously", async () => {
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(2 + 2, 4);
+});
+
+test("reports a failure", () => {
+  assert.deepEqual({ value: 1 }, { value: 2 });
+});
+
+test("interrupts a synchronous loop", () => {
+  while (true) {}
+});
+
+test("continues after a timeout", () => {
+  assert(true);
+});
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(cli_exe())
+        .args([
+            "test",
+            "--json",
+            "--timeout-ms",
+            "100",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 2);
+    assert_eq!(report["failed"], 2);
+    assert_eq!(report["files"][0]["tests"][1]["status"], "failed");
+    assert!(
+        report["files"][0]["tests"][1]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("example.test.ts:")),
+        "{report}"
+    );
+    assert!(
+        report["files"][0]["tests"][2]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("timed out after 100ms")),
+        "{report}"
+    );
+    assert_eq!(report["files"][0]["tests"][3]["status"], "passed");
+}
+
+#[test]
+fn test_command_enforces_manifest_capabilities() {
+    let dir = temp_app("test-capabilities");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    fs::create_dir_all(dir.join("tests")).unwrap();
+    fs::write(
+        dir.join("tests/capability.test.ts"),
+        r#"test("fetch is denied", async () => {
+  await fetch("http://192.0.2.1/");
+});
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(cli_exe())
+        .args(["test", "--json", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["failed"], 1);
+    assert!(
+        report["files"][0]["tests"][0]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("not permitted"))
+    );
+}
+
+#[test]
+fn fatal_cli_errors_support_json_output() {
+    let dir = temp_app("json-error");
+    let output = Command::new(cli_exe())
+        .args([
+            "--error-format",
+            "json",
+            "check",
+            "--manifest",
+            dir.join("missing.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "TYSEL_CLI_ERROR");
+    assert!(
+        error["error"]["message"].as_str().is_some_and(|message| message.contains("missing.toml"))
+    );
+}
+
+#[test]
 fn check_fails_on_invalid_typescript() {
     let dir = temp_app("check-syntax");
     write_js_app(&dir, "export default {\n");
@@ -613,6 +830,63 @@ request_timeout_ms = 2000
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+fn runtime_failures_use_the_structured_json_envelope() {
+    let dir = temp_app("runtime-json-error");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "source-map-error"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        r#"type Failure = { message: string };
+const failure: Failure = { message: "intentional failure" };
+export default {
+  async fetch() {
+    throw new Error(failure.message);
+  },
+};
+"#,
+    )
+    .unwrap();
+    let mut child = Command::new(cli_exe())
+        .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel run for source-map error");
+    let addr = wait_listen(child.stdout.take().expect("stdout"), Duration::from_secs(8));
+    let response = http_get(&addr);
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(response.contains("500 Internal Server Error"), "{response}");
+    assert!(response.contains("content-type: application/json"), "{response}");
+    let (head, encoded) = response.split_once("\r\n\r\n").expect("response body");
+    let body = if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        decode_chunked(encoded)
+    } else {
+        encoded.to_owned()
+    };
+    let error: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(error["error"]["code"], "RUNTIME_ERROR");
+    let message = error["error"]["message"].as_str().unwrap();
+    assert!(message.contains("intentional failure"), "{message}");
+    assert!(message.contains("src/index.ts:5"), "{message}");
+    assert!(!message.contains("app.js:"), "{message}");
+    assert!(error["error"]["requestId"].as_str().is_some_and(|id| id.len() == 16));
 }
 
 #[test]

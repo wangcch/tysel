@@ -203,6 +203,11 @@ pub fn read_bundle(entry: impl AsRef<Path>) -> anyhow::Result<(Vec<u8>, Vec<u8>)
     }
 }
 
+/// Parse runtime module specifiers without matching comments or string contents.
+pub fn module_specifiers(path: impl AsRef<Path>, source: &str) -> anyhow::Result<Vec<String>> {
+    bundle::module_specifiers(path.as_ref(), source)
+}
+
 fn set_executable(path: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {

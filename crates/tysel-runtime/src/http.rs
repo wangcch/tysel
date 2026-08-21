@@ -21,7 +21,7 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 use tysel_engine::{EngineError, HttpHead, HttpRequest, IsolateConfig};
 use tysel_engine_qjs::{IncomingHttp, IsolatePool, STREAM_WINDOW};
 use tysel_isolate::{IsolatedHttpPool, MAX_ISOLATED_HTTP_BODY, locate_worker};
-use tysel_package::default_max_request_bytes;
+use tysel_package::{SourceMap, default_max_request_bytes};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
@@ -120,7 +120,14 @@ async fn dispatch_isolated(
 
 #[derive(Clone)]
 pub struct SharedPool {
-    inner: Arc<RwLock<(AppIsolate, usize, bool)>>,
+    inner: Arc<RwLock<PoolState>>,
+}
+
+struct PoolState {
+    isolate: AppIsolate,
+    max_request_bytes: usize,
+    websocket: bool,
+    source_map: Option<Arc<SourceMap>>,
 }
 
 impl SharedPool {
@@ -133,7 +140,23 @@ impl SharedPool {
         max_request_bytes: usize,
         websocket: bool,
     ) -> Self {
-        Self { inner: Arc::new(RwLock::new((pool.into(), max_request_bytes, websocket))) }
+        Self::with_debug_info(pool, max_request_bytes, websocket, None)
+    }
+
+    pub fn with_debug_info(
+        pool: impl Into<AppIsolate>,
+        max_request_bytes: usize,
+        websocket: bool,
+        source_map: Option<Arc<SourceMap>>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(PoolState {
+                isolate: pool.into(),
+                max_request_bytes,
+                websocket,
+                source_map,
+            })),
+        }
     }
 
     pub fn replace(&self, pool: impl Into<AppIsolate>, max_request_bytes: usize) {
@@ -146,20 +169,33 @@ impl SharedPool {
         max_request_bytes: usize,
         websocket: bool,
     ) {
+        self.replace_with_debug_info(pool, max_request_bytes, websocket, None);
+    }
+
+    pub fn replace_with_debug_info(
+        &self,
+        pool: impl Into<AppIsolate>,
+        max_request_bytes: usize,
+        websocket: bool,
+        source_map: Option<Arc<SourceMap>>,
+    ) {
         let previous = {
             let mut guard = self.inner.write().expect("pool lock");
-            std::mem::replace(&mut *guard, (pool.into(), max_request_bytes, websocket))
+            std::mem::replace(
+                &mut *guard,
+                PoolState { isolate: pool.into(), max_request_bytes, websocket, source_map },
+            )
         };
         drop(previous);
     }
 
-    pub fn current(&self) -> (AppIsolate, usize) {
+    pub fn current(&self) -> (AppIsolate, usize, bool, Option<Arc<SourceMap>>) {
         let guard = self.inner.read().expect("pool lock");
-        (guard.0.clone(), guard.1)
+        (guard.isolate.clone(), guard.max_request_bytes, guard.websocket, guard.source_map.clone())
     }
 
     pub fn websocket(&self) -> bool {
-        self.inner.read().expect("pool lock").2
+        self.inner.read().expect("pool lock").websocket
     }
 }
 
@@ -194,10 +230,16 @@ pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
                 let path = request.uri().path().to_owned();
                 let started = Instant::now();
                 let request_id = tysel_observability::next_request_id();
-                let (isolate, max_request_bytes) = pool.current();
-                let response =
-                    dispatch(isolate, request, max_request_bytes, pool.websocket(), request_id)
-                        .await;
+                let (isolate, max_request_bytes, websocket, source_map) = pool.current();
+                let response = dispatch(
+                    isolate,
+                    request,
+                    max_request_bytes,
+                    websocket,
+                    request_id,
+                    source_map.as_deref(),
+                )
+                .await;
                 tysel_observability::log_http(
                     &method,
                     &path,
@@ -248,23 +290,50 @@ async fn dispatch(
     max_request_bytes: usize,
     websocket: bool,
     request_id: u64,
+    source_map: Option<&SourceMap>,
 ) -> Response<HttpBody> {
     match dispatch_inner(pool, request, max_request_bytes, websocket, request_id).await {
         Ok(response) => response,
-        Err(HttpError::BodyTooLarge(limit)) => Response::builder()
-            .status(StatusCode::PAYLOAD_TOO_LARGE)
-            .header(hyper::header::CONTENT_TYPE, "text/plain")
-            .body(HttpBody::once(format!("request body exceeds {limit} bytes").into_bytes()))
-            .unwrap_or_else(|_| Response::new(HttpBody::once(b"payload too large".to_vec()))),
+        Err(HttpError::BodyTooLarge(limit)) => json_error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "BODY_TOO_LARGE",
+            &format!("request body exceeds {limit} bytes"),
+            request_id,
+        ),
         Err(err) => {
-            let body = format!("{err}");
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header(hyper::header::CONTENT_TYPE, "text/plain")
-                .body(HttpBody::once(body.into_bytes()))
-                .unwrap_or_else(|_| Response::new(HttpBody::once(b"internal error".to_vec())))
+            let message = err.to_string();
+            let message = source_map
+                .map(|source_map| source_map.symbolicate_stack(&message))
+                .unwrap_or(message);
+            json_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RUNTIME_ERROR",
+                &message,
+                request_id,
+            )
         }
     }
+}
+
+fn json_error_response(
+    status: StatusCode,
+    code: &str,
+    message: &str,
+    request_id: u64,
+) -> Response<HttpBody> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "error": {
+            "code": code,
+            "message": message,
+            "requestId": format!("{request_id:016x}"),
+        }
+    }))
+    .unwrap_or_else(|_| b"{\"error\":{\"code\":\"INTERNAL_ERROR\"}}".to_vec());
+    Response::builder()
+        .status(status)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .body(HttpBody::once(body))
+        .unwrap_or_else(|_| Response::new(HttpBody::once(Vec::new())))
 }
 
 async fn dispatch_inner(

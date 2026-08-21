@@ -37,6 +37,18 @@ pub fn run(manifest_path: &Path) -> Result<()> {
         eprint!("{output}");
         return Err(anyhow!("TypeScript check failed"));
     }
+    if !is_component {
+        let specifiers = crate::node_scan::scan_file(&entry)?;
+        if specifiers.is_empty() {
+            println!("  node      ok");
+        } else {
+            println!("  node      fail");
+            for specifier in &specifiers {
+                eprintln!("unsupported Node builtin '{specifier}'");
+            }
+            return Err(anyhow!("Node builtins are not available in Tysel"));
+        }
+    }
     Ok(())
 }
 

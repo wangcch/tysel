@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use oxc::allocator::Allocator;
+use oxc::ast::AstKind;
 use oxc::ast::ast::{
     BindingPattern, Declaration, ExportDefaultDeclarationKind, ImportDeclaration,
     ImportDeclarationSpecifier, ImportOrExportKind, Statement,
 };
 use oxc::parser::Parser;
+use oxc::semantic::SemanticBuilder;
 use oxc::span::{GetSpan, Span};
 use oxc_resolver::{ResolveError, ResolveOptions, Resolver};
 use tysel_package::{SourceMap, SourceMapWriter};
@@ -177,6 +179,22 @@ fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
             specifiers.push(specifier);
         }
     }
+    let semantic = SemanticBuilder::new().with_build_nodes(true).build(&parsed.program);
+    if !semantic.diagnostics.is_empty() {
+        return Err(anyhow!(transpile::format_diagnostics(
+            "semantic",
+            path,
+            &semantic.diagnostics
+        )));
+    }
+    for node in semantic.semantic.nodes() {
+        let AstKind::CallExpression(call) = node.kind() else { continue };
+        let Some(literal) = call.common_js_require() else { continue };
+        let specifier = literal.value.as_str().to_owned();
+        if seen.insert(specifier.clone()) {
+            specifiers.push(specifier);
+        }
+    }
     Ok(Analysis {
         has_module_syntax: parsed.module_record.has_module_syntax,
         specifiers,
@@ -187,6 +205,10 @@ fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
             .map(|item| item.span)
             .collect(),
     })
+}
+
+pub fn module_specifiers(path: &Path, source: &str) -> Result<Vec<String>> {
+    Ok(analyze_source(path, source)?.specifiers)
 }
 
 fn rewrite_esm(

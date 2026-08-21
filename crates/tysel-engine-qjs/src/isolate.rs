@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
-use rquickjs::{Context, Ctx, Module, Promise, Runtime};
+use rquickjs::{CaughtError, Context, Ctx, Module, Promise, Runtime};
 use tysel_engine::{EngineError, InterruptReason, IsolateConfig, Value};
 
 use crate::cpu::CpuBudget;
@@ -312,7 +312,7 @@ fn start_script(
     };
     let evaluated = ctx
         .eval::<rquickjs::Value, _>(script)
-        .map_err(|err| map_eval_error(err, cancel, request_deadline, cpu))?;
+        .map_err(|err| map_eval_error(&ctx, err, cancel, request_deadline, cpu))?;
     if evaluated.is_promise() {
         ctx.globals().set("__tysel_result", evaluated).map_err(js_err)?;
         Ok(None)
@@ -390,7 +390,7 @@ pub(crate) fn wait_until_settled(
         drain_jobs(runtime)?;
         if context.with(|ctx| promise_is_settled(&ctx))? {
             return context.with(|ctx| match take_raw(&ctx) {
-                Some(Err(err)) => Err(map_eval_error(err, cancel, request_deadline, cpu)),
+                Some(Err(err)) => Err(map_eval_error(&ctx, err, cancel, request_deadline, cpu)),
                 _ => Ok(()),
             });
         }
@@ -451,7 +451,7 @@ fn take_settled(
     let promise: Promise = ctx.globals().get("__tysel_result").map_err(js_err)?;
     match promise.result::<rquickjs::Value>() {
         Some(Ok(value)) => from_js(ctx, value).map(Some),
-        Some(Err(err)) => Err(map_eval_error(err, cancel, request_deadline, cpu)),
+        Some(Err(err)) => Err(map_eval_error(ctx, err, cancel, request_deadline, cpu)),
         None => Ok(None),
     }
 }
@@ -461,7 +461,13 @@ pub(crate) fn drain_jobs(runtime: &Runtime) -> Result<(), EngineError> {
         match runtime.execute_pending_job() {
             Ok(true) => {}
             Ok(false) => return Ok(()),
-            Err(err) => return Err(EngineError::Isolate(err.to_string())),
+            Err(err) => {
+                return err.0.with(|ctx| {
+                    let value = ctx.catch();
+                    let error = ctx.throw(value);
+                    Err(js_err_ctx(&ctx, error))
+                });
+            }
         }
     }
 }
@@ -512,6 +518,7 @@ pub(crate) fn from_json(value: serde_json::Value) -> Value {
 }
 
 pub(crate) fn map_eval_error(
+    ctx: &Ctx<'_>,
     err: rquickjs::Error,
     cancel: &IsolateCancel,
     request_deadline: Instant,
@@ -523,7 +530,7 @@ pub(crate) fn map_eval_error(
     if Instant::now() >= request_deadline || cpu.exhausted() {
         return EngineError::Interrupted(InterruptReason::Timeout);
     }
-    let message = err.to_string();
+    let message = js_error_message(ctx, err);
     if message.contains("request body exceeds limit") {
         return EngineError::BodyTooLarge;
     }
@@ -533,6 +540,25 @@ pub(crate) fn map_eval_error(
         return EngineError::Interrupted(InterruptReason::MemoryLimit);
     }
     EngineError::Isolate(message)
+}
+
+pub(crate) fn js_err_ctx(ctx: &Ctx<'_>, err: rquickjs::Error) -> EngineError {
+    EngineError::Isolate(js_error_message(ctx, err))
+}
+
+fn js_error_message(ctx: &Ctx<'_>, err: rquickjs::Error) -> String {
+    match CaughtError::from_error(ctx, err) {
+        CaughtError::Exception(exception) => {
+            let message = exception.message().unwrap_or_else(|| "JavaScript exception".into());
+            match exception.stack().filter(|stack| !stack.trim().is_empty()) {
+                Some(stack) if stack.contains(&message) => stack,
+                Some(stack) => format!("{message}\n{stack}"),
+                None => message.to_owned(),
+            }
+        }
+        CaughtError::Value(value) => format!("JavaScript threw {}", value.type_name()),
+        CaughtError::Error(error) => error.to_string(),
+    }
 }
 
 pub(crate) fn js_err(err: impl std::fmt::Display) -> EngineError {

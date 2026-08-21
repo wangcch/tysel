@@ -406,6 +406,129 @@ fn build_rejects_a_cross_compile_target() {
 }
 
 #[test]
+fn image_generates_a_nonroot_distroless_context() {
+    let dir = temp_js_app("image-context");
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "image-app"
+entry = "src/index.js"
+profile = "service"
+
+[server]
+listen = "0.0.0.0:8080"
+"#,
+    )
+    .unwrap();
+    let binary = dir.join("linux-app");
+    fs::write(&binary, fake_linux_elf(62)).unwrap();
+    let context = dir.join("dist/container");
+
+    let output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            context.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(fs::read(context.join("tysel-app")).unwrap(), fake_linux_elf(62));
+    let dockerfile = fs::read_to_string(context.join("Dockerfile")).unwrap();
+    assert!(dockerfile.contains("FROM gcr.io/distroless/cc-debian13:nonroot"));
+    assert!(dockerfile.contains("USER 65532:65532"));
+    assert!(dockerfile.contains("EXPOSE 8080"));
+    assert!(dockerfile.contains("ENTRYPOINT [\"/app/tysel-app\"]"));
+
+    let repeated = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            context.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!repeated.status.success());
+    assert!(String::from_utf8_lossy(&repeated.stderr).contains("refusing to overwrite"));
+}
+
+#[test]
+fn image_rejects_loopback_listeners() {
+    let dir = temp_js_app("image-loopback");
+    let binary = dir.join("linux-app");
+    fs::write(&binary, fake_linux_elf(62)).unwrap();
+    let output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            dir.join("dist/container").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("listen on 0.0.0.0"));
+}
+
+#[test]
+fn image_rejects_truncated_elf_and_non_wildcard_listeners() {
+    let dir = temp_js_app("image-invalid-elf");
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "image-app"
+entry = "src/index.js"
+profile = "service"
+
+[server]
+listen = "192.0.2.10:8080"
+"#,
+    )
+    .unwrap();
+    let binary = dir.join("linux-app");
+    fs::write(&binary, b"\x7fELF").unwrap();
+    let manifest_path = dir.join("tysel.toml");
+    let output_dir = dir.join("dist/container");
+    let arguments = [
+        "image",
+        "--context-only",
+        "--manifest",
+        manifest_path.to_str().unwrap(),
+        "--binary",
+        binary.to_str().unwrap(),
+        "--output-dir",
+        output_dir.to_str().unwrap(),
+    ];
+    let listener = Command::new(cli_exe()).args(arguments).output().unwrap();
+    assert!(!listener.status.success());
+    assert!(String::from_utf8_lossy(&listener.stderr).contains("0.0.0.0 or [::]"));
+
+    let manifest = fs::read_to_string(dir.join("tysel.toml"))
+        .unwrap()
+        .replace("192.0.2.10:8080", "0.0.0.0:8080");
+    fs::write(dir.join("tysel.toml"), manifest).unwrap();
+    let elf = Command::new(cli_exe()).args(arguments).output().unwrap();
+    assert!(!elf.status.success());
+    assert!(String::from_utf8_lossy(&elf.stderr).contains("not a Linux ELF executable"));
+}
+
+#[test]
 fn build_rejects_a_mismatched_profile() {
     let dir = temp_js_app("build-profile");
     let stub = dir.join("tysel-service");
@@ -529,6 +652,19 @@ fn cli_exe() -> PathBuf {
     }
     assert!(candidate.is_file(), "missing tysel at {}", candidate.display());
     candidate
+}
+
+fn fake_linux_elf(machine: u16) -> Vec<u8> {
+    let mut bytes = vec![0_u8; 64];
+    bytes[..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    bytes[16..18].copy_from_slice(&3_u16.to_le_bytes());
+    bytes[18..20].copy_from_slice(&machine.to_le_bytes());
+    bytes[52..54].copy_from_slice(&64_u16.to_le_bytes());
+    bytes[54..56].copy_from_slice(&56_u16.to_le_bytes());
+    bytes
 }
 
 fn sidecar(output: &std::path::Path, suffix: &str) -> PathBuf {
