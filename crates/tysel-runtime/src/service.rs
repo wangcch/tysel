@@ -43,6 +43,8 @@ pub enum StubError {
     TaskService(#[from] ModuleTaskServiceError),
     #[error(transparent)]
     LlmCapability(#[from] tysel_cap_llm::LlmError),
+    #[error(transparent)]
+    Observability(#[from] tysel_observability::OtlpInitError),
     #[error("LLM configuration: {0}")]
     Llm(String),
     #[error("invalid listen address '{0}'")]
@@ -162,6 +164,8 @@ pub async fn run_stub() -> Result<(), StubError> {
 }
 
 pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
+    tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);
+    let _otlp = tysel_observability::configure_otlp(&tap.manifest.application_id)?;
     if !tap.components.is_empty() {
         if !tap.bundle.is_empty() {
             return Err(StubError::ComponentPackage(
@@ -198,7 +202,6 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     configure_llm_from_env(tap.manifest.request_timeout_ms)?;
     tysel_engine_qjs::configure_fetch_hosts(tap.manifest.fetch_hosts.clone());
     tysel_engine_qjs::configure_execution_profile(&tap.manifest.execution_profile);
-    tysel_observability::configure_http_log(&tap.manifest.application_id, tap.manifest.json_logs);
     let pool = spawn_app_isolate(
         &tap.manifest.execution_profile,
         &bundle,

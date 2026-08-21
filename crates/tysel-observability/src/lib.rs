@@ -1,13 +1,19 @@
 //! Structured logs, metrics, traces, and capability spans.
 //!
 //! JSON logs emit one object per HTTP request and one object per audited
-//! capability call. Shared `rid` values correlate the two. Metrics and traces
-//! stay out of this crate until later milestones.
+//! capability call. Shared `rid` values correlate the two. OTLP traces and
+//! metrics use a strict low-cardinality attribute allowlist.
+
+mod otlp;
+
+pub use otlp::{OtlpGuard, OtlpInitError, configure_otlp, shutdown_otlp};
 
 use std::io::{self, Write};
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const MAX_METADATA_LABEL_BYTES: usize = 64;
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
@@ -42,6 +48,7 @@ impl CapabilityLogger {
         elapsed: Duration,
         request_id: u64,
     ) {
+        otlp::record_capability(&self.app, capability, operation, result, elapsed, request_id);
         if let Some(line) = self.format(capability, operation, result, elapsed, request_id) {
             write_line(&line);
         }
@@ -82,10 +89,13 @@ pub fn json_log_state() -> (String, bool) {
 }
 
 pub fn log_http(method: &str, path: &str, status: u16, elapsed: Duration, request_id: u64) {
-    let Some(app) = enabled_app() else {
+    let Some((app, enabled)) = configured_log() else {
         return;
     };
-    write_line(&format_http(&app, method, path, status, elapsed, request_id));
+    otlp::record_http(&app, method, status, elapsed, request_id);
+    if enabled {
+        write_line(&format_http(&app, method, path, status, elapsed, request_id));
+    }
 }
 
 /// Record one capability call. SQL, paths, URLs, and secret values stay out.
@@ -96,18 +106,18 @@ pub fn log_capability(
     elapsed: Duration,
     request_id: u64,
 ) {
-    let Some(app) = enabled_app() else {
+    let Some((app, enabled)) = configured_log() else {
         return;
     };
-    write_line(&format_capability(&app, capability, operation, result, elapsed, request_id));
+    otlp::record_capability(&app, capability, operation, result, elapsed, request_id);
+    if enabled {
+        write_line(&format_capability(&app, capability, operation, result, elapsed, request_id));
+    }
 }
 
-fn enabled_app() -> Option<String> {
+fn configured_log() -> Option<(String, bool)> {
     let guard = JSON_LOG.read().expect("json log lock");
-    match guard.as_ref() {
-        Some(config) if config.enabled => Some(config.app.clone()),
-        _ => None,
-    }
+    guard.as_ref().map(|config| (config.app.clone(), config.enabled))
 }
 
 fn write_line(line: &str) {
@@ -150,13 +160,49 @@ pub fn format_capability(
     let mut value = serde_json::json!({
         "ts": ts,
         "app": app,
-        "capability": capability,
-        "operation": operation,
-        "result": result,
+        "capability": safe_capability_label(capability),
+        "operation": safe_operation_label(operation),
+        "result": safe_result_label(result),
         "ms": ms,
     });
     insert_rid(&mut value, request_id);
     value.to_string()
+}
+
+fn safe_metadata_label(value: &str) -> String {
+    if value.is_empty()
+        || value.len() > MAX_METADATA_LABEL_BYTES
+        || value.contains("://")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        "redacted".into()
+    } else {
+        value.into()
+    }
+}
+
+fn allowed_label(value: &str, allowed: &[&str]) -> String {
+    if allowed.contains(&value) { value.to_owned() } else { "redacted".into() }
+}
+
+fn safe_capability_label(value: &str) -> String {
+    allowed_label(
+        value,
+        &["durable", "fetch", "fs", "llm", "postgres", "secrets", "sqlite", "websocket"],
+    )
+}
+
+fn safe_operation_label(value: &str) -> String {
+    allowed_label(
+        value,
+        &["claim", "close", "exec", "generate", "query", "read", "ref", "request", "send", "write"],
+    )
+}
+
+fn safe_result_label(value: &str) -> String {
+    allowed_label(value, &["denied", "error", "ok"])
 }
 
 fn insert_rid(value: &mut serde_json::Value, request_id: u64) {
@@ -225,6 +271,29 @@ mod tests {
         assert!(value.get("sql").is_none());
         assert!(value.get("path").is_none());
         assert!(value.get("url").is_none());
+
+        let malicious = format_capability(
+            "hello-service",
+            "https://secret.example",
+            "query users",
+            "Bearer token",
+            Duration::ZERO,
+            0,
+        );
+        assert!(!malicious.contains("secret.example"));
+        assert!(!malicious.contains("Bearer token"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&format_capability(
+                "hello-service",
+                "supersecrettoken",
+                "password123",
+                "credential456",
+                Duration::ZERO,
+                0,
+            ))
+            .unwrap()["capability"],
+            "redacted"
+        );
     }
 
     #[test]

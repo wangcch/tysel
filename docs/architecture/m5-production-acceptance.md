@@ -220,3 +220,32 @@ claim ownership and completion, signal suspension/wakeup/consumption, and the
 persistent module catalog. Without that variable the live test is skipped so
 offline development remains deterministic; the release workflow always
 provides its Postgres service.
+
+## M5.8 OTLP export and metadata redaction
+
+Packaged services enable OTLP/HTTP protobuf export only when the deployment
+sets `OTEL_EXPORTER_OTLP_ENDPOINT` or a signal-specific
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`.
+`OTEL_SDK_DISABLED=true` overrides stale endpoint configuration. Endpoints must
+use HTTP or HTTPS, are bounded to 2 KiB, and reject URL userinfo, query strings,
+and fragments; authentication belongs in the standard OTLP headers variables.
+HTTPS uses the platform certificate store through the existing native-TLS
+stack. No endpoint or authentication value enters TAP, application logs,
+durable history, span attributes, or initialization errors.
+
+The exporter emits `http.server.request` and `tysel.capability` spans plus four
+metrics: `tysel.http.server.requests`, `tysel.http.server.duration`,
+`tysel.capability.calls`, and `tysel.capability.duration`. Export is independent
+of stderr JSON logging, and a process guard flushes both providers during clean
+shutdown. The only HTTP dimensions are service name, sanitized method, numeric
+status, and status class. Raw path, query, URL, headers, body, peer address, and
+secret values are excluded. Capability, operation, and result labels use exact
+allowlists; unknown values become `redacted`, including values that otherwise
+look like valid alphanumeric labels. Metrics omit request IDs to avoid
+high-cardinality series; spans may contain the process-local correlation ID.
+
+The OTLP integration test runs a child runtime against a loopback fake
+collector, receives real protobuf trace and metric exports, verifies both
+signals are present, and scans the encoded payload for paths, SQL, URLs, and
+bearer-token fixtures. Unit tests separately cover explicit signal activation,
+SDK disable precedence, endpoint validation, and fail-closed label handling.
