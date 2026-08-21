@@ -130,10 +130,11 @@ private seed into those records.
 
 ## Durable Postgres backup and restore
 
-Postgres is the production durable backend for library integrations using
-`PostgresStore::connect_from_env`. The packaged service CLI does not
-automatically start a durable Postgres dispatcher; the embedding service owns
-dispatcher lifecycle and health checks.
+Postgres is the production durable backend. Set `TYSEL_DURABLE_POSTGRES_URL` on
+the host; the packaged service and `tysel run` start `DurablePoller` when the
+application exports `durable` handlers or the store already has programs. The
+URL is never read from a manifest or TAP. Health checks should confirm the
+service printed `tysel durable on` and that due wakeups complete after restart.
 
 Use the database platform's encrypted backups and point-in-time recovery. A
 backup must include all Tysel durable tables, metadata, programs, events,

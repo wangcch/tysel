@@ -23,6 +23,7 @@ use tysel_engine_wasm::{
 use tysel_package::Tap;
 
 use crate::http::{AppIsolate, HttpError, serve_with_websocket, spawn_app_isolate};
+use crate::{DurablePlane, DurablePlaneError};
 #[cfg(unix)]
 use crate::{ModuleTaskService, ModuleTaskServiceError};
 
@@ -58,6 +59,8 @@ pub enum StubError {
     ComponentPolicy(String),
     #[error("invalid Component filesystem policy: {0}")]
     ComponentFilesystemPolicy(String),
+    #[error(transparent)]
+    Durable(#[from] DurablePlaneError),
 }
 
 /// Deployment-owned authority for a packaged Component. An empty policy is
@@ -252,35 +255,63 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
             Some(service)
         }
     };
+    let durable = start_durable_plane(
+        &tap.manifest.execution_profile,
+        &tap.manifest.sqlite_path,
+        None,
+        &bundle,
+        config,
+    )?;
+    if durable.is_some() {
+        println!("tysel durable on");
+    }
     println!("tysel listen {bound}");
     io::stdout().flush()?;
     #[cfg(unix)]
     if let Some(service) = task_service {
         tokio::select! {
             result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => {
+                let durable_shutdown = shutdown_durable(durable.as_ref()).await;
                 service.shutdown().await?;
+                durable_shutdown?;
                 result?;
             }
             error = service.failed() => {
+                let durable_shutdown = shutdown_durable(durable.as_ref()).await;
                 service.shutdown().await?;
+                durable_shutdown?;
                 return Err(error.into());
             }
             signal = shutdown_signal() => {
+                let durable_shutdown = shutdown_durable(durable.as_ref()).await;
                 let shutdown = service.shutdown().await;
                 signal?;
+                durable_shutdown?;
                 shutdown?;
             }
         }
     } else {
         tokio::select! {
-            result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => result?,
-            signal = shutdown_signal() => signal?,
+            result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => {
+                shutdown_durable(durable.as_ref()).await?;
+                result?;
+            }
+            signal = shutdown_signal() => {
+                shutdown_durable(durable.as_ref()).await?;
+                signal?;
+            }
         }
     }
     #[cfg(not(unix))]
     tokio::select! {
-        result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => result?,
-        signal = shutdown_signal() => signal?,
+        result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => {
+            shutdown_durable(durable.as_ref()).await?;
+            result?;
+        }
+        signal = shutdown_signal() => {
+            shutdown_durable(durable.as_ref()).await?;
+            signal?;
+        }
     }
     Ok(())
 }
@@ -299,6 +330,36 @@ pub fn run_component_tap_with_policy(
     stdout.write_all(output.as_bytes())?;
     stdout.write_all(b"\n")?;
     stdout.flush()?;
+    Ok(())
+}
+
+fn start_durable_plane(
+    execution_profile: &str,
+    sqlite_path: &str,
+    root: Option<&std::path::Path>,
+    bundle: &str,
+    config: IsolateConfig,
+) -> Result<Option<std::sync::Arc<DurablePlane>>, StubError> {
+    if execution_profile.eq_ignore_ascii_case("isolated") {
+        return Ok(None);
+    }
+    if !DurablePlane::requested(sqlite_path, root, bundle, config)? {
+        return Ok(None);
+    }
+    let Some(store) = DurablePlane::open_store(sqlite_path, root)? else {
+        return Ok(None);
+    };
+    if !DurablePlane::should_start(store.as_ref(), bundle, config)? {
+        return Ok(None);
+    }
+    let owner = format!("tysel-service-{}", std::process::id());
+    Ok(Some(DurablePlane::start(store, bundle.to_owned(), config, owner)?))
+}
+
+async fn shutdown_durable(plane: Option<&std::sync::Arc<DurablePlane>>) -> Result<(), StubError> {
+    if let Some(plane) = plane {
+        plane.shutdown().await?;
+    }
     Ok(())
 }
 

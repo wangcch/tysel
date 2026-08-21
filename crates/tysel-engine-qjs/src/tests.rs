@@ -23,8 +23,8 @@ use tysel_engine::{EngineError, HttpRequest, InterruptReason, IsolateConfig, Val
 use tysel_task::TaskId;
 
 use crate::{
-    DurableSession, IncomingHttp, IsolateCancel, IsolatePool, STREAM_WINDOW, eval,
-    eval_cancellable, eval_durable, eval_durable_module,
+    DurableSession, IncomingHttp, IsolateCancel, IsolatePool, STREAM_WINDOW, encode_durable_export,
+    eval, eval_cancellable, eval_durable, eval_durable_module, inspect_durable_exports,
 };
 
 fn config() -> IsolateConfig {
@@ -164,6 +164,44 @@ fn durable_module_receives_context_and_json_input() {
             ("attempt".into(), Value::Number(2.0)),
         ])
     );
+}
+
+#[test]
+fn durable_named_export_resolves_from_app_table() {
+    let store = Arc::new(SqliteStore::in_memory().unwrap());
+    let source = encode_durable_export(
+        "agent",
+        r#"
+        export default {
+            durable: {
+                async agent(ctx, input) {
+                    const recorded = await ctx.step("input", () => input.value);
+                    return { recorded };
+                }
+            }
+        };
+        "#,
+    );
+    let names = inspect_durable_exports(
+        r#"
+        export default {
+            durable: {
+                async agent(ctx, input) { return input; }
+            }
+        };
+        "#,
+        config(),
+    )
+    .expect("inspect durable");
+    assert_eq!(names, vec!["agent".to_string()]);
+    let value = eval_durable_module(
+        &source,
+        r#"{"value":"named"}"#,
+        config(),
+        DurableSession::new(store, TaskId(118)).unwrap(),
+    )
+    .expect("named durable");
+    assert_eq!(value, Value::Record(vec![("recorded".into(), Value::String("named".into()))]));
 }
 
 #[test]

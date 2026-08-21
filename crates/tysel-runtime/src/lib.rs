@@ -4,6 +4,7 @@
 //! runtime stub that memory-maps an embedded TAP trailer.
 
 mod durable;
+mod durable_plane;
 mod durable_poll;
 mod http;
 mod service;
@@ -15,6 +16,7 @@ mod task_service;
 pub use durable::{
     DispatchError, DurableDispatcher, DurableRun, DurableRunError, DurableRunStatus,
 };
+pub use durable_plane::{DurablePlane, DurablePlaneError};
 pub use durable_poll::{
     DurablePoller, DurableProgramCatalog, DurableProgramRegistry, PollerError, PollerShutdown,
     ProgramRegistryError,

@@ -3,6 +3,8 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -329,6 +331,95 @@ fn run_serves_hello_until_killed() {
     let _ = child.wait();
     assert!(body.contains("200"), "{body}");
     assert!(body.contains("\"ok\":true") || body.contains("\"ok\": true"), "{body}");
+}
+
+#[test]
+fn durable_agent_resumes_after_restart_without_repeating_effects() {
+    let (llm_addr, llm_calls, llm_stop) = spawn_fake_llm();
+    let dir = temp_app("durable-agent");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("data")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "durable-agent"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+
+[permissions]
+secrets = ["OPENAI_API_KEY"]
+
+[limits]
+request_timeout_ms = 5000
+
+[durable]
+store = "sqlite"
+path = "./data/tysel.db"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        include_str!("../../../examples/durable-agent/src/index.ts"),
+    )
+    .unwrap();
+    fs::write(dir.join(".env"), "OPENAI_API_KEY=test-key\n").unwrap();
+
+    let mut first = spawn_durable_agent(&dir, &llm_addr);
+    let first_addr = wait_listen(first.stdout.take().expect("stdout"), Duration::from_secs(8));
+    let started = http_json(
+        &first_addr,
+        "POST",
+        "/runs",
+        Some(r#"{"customerId":"customer-1","prompt":"Summarize this account"}"#),
+    );
+    let run_id = started["runId"].as_str().expect("runId").to_owned();
+    assert_eq!(started["status"], "awaiting_approval");
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1);
+    first.kill().unwrap();
+    first.wait().unwrap();
+
+    let mut second = spawn_durable_agent(&dir, &llm_addr);
+    let second_addr = wait_listen(second.stdout.take().expect("stdout"), Duration::from_secs(8));
+    let waiting = http_json(&second_addr, "GET", &format!("/runs/{run_id}"), None);
+    assert_eq!(waiting["status"], "awaiting_approval");
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1, "LLM effect replayed after restart");
+    let queued = http_json(
+        &second_addr,
+        "POST",
+        &format!("/runs/{run_id}/approval"),
+        Some(r#"{"approved":true}"#),
+    );
+    assert_eq!(queued["status"], "approval_queued");
+
+    let started_wait = std::time::Instant::now();
+    let completed = loop {
+        let run = http_json(&second_addr, "GET", &format!("/runs/{run_id}"), None);
+        if run["status"] == "completed" {
+            break run;
+        }
+        assert!(started_wait.elapsed() < Duration::from_secs(5), "run did not complete: {run}");
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(completed["result"]["approved"], true);
+    assert_eq!(completed["saveCount"], 1);
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1, "LLM effect ran more than once");
+    second.kill().unwrap();
+    second.wait().unwrap();
+
+    let mut third = spawn_durable_agent(&dir, &llm_addr);
+    let third_addr = wait_listen(third.stdout.take().expect("stdout"), Duration::from_secs(8));
+    let replayed = http_json(&third_addr, "GET", &format!("/runs/{run_id}"), None);
+    assert_eq!(replayed["status"], "completed");
+    assert_eq!(replayed["saveCount"], 1, "save-result effect replayed after restart");
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1);
+    third.kill().unwrap();
+    third.wait().unwrap();
+    llm_stop.store(true, Ordering::SeqCst);
 }
 
 #[test]
@@ -797,6 +888,85 @@ fn spawn_header_echo() -> (String, std::sync::Arc<std::sync::Mutex<String>>) {
         }
     });
     (format!("127.0.0.1:{}", addr.port()), seen)
+}
+
+fn spawn_fake_llm() -> (String, Arc<AtomicUsize>, Arc<AtomicBool>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fake LLM");
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let server_calls = calls.clone();
+    let server_stop = stop.clone();
+    thread::spawn(move || {
+        while !server_stop.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut request = [0u8; 8192];
+                    let _ = stream.read(&mut request);
+                    server_calls.fetch_add(1, Ordering::SeqCst);
+                    let body = r#"{"id":"demo-llm-1","output_text":"Account looks healthy","usage":{"input_tokens":4,"output_tokens":3}}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    (format!("127.0.0.1:{}", addr.port()), calls, stop)
+}
+
+fn spawn_durable_agent(dir: &std::path::Path, llm_addr: &str) -> std::process::Child {
+    Command::new(cli_exe())
+        .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .env("TYSEL_LLM_ENDPOINT", format!("http://{llm_addr}/v1/responses"))
+        .env("TYSEL_LLM_MODEL", "demo-model")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn durable agent")
+}
+
+fn http_json(addr: &str, method: &str, path: &str, body: Option<&str>) -> serde_json::Value {
+    let body = body.unwrap_or("");
+    let mut stream = TcpStream::connect(addr).expect("connect");
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let (head, body) = response.split_once("\r\n\r\n").expect("HTTP response");
+    assert!(head.contains(" 200 ") || head.contains(" 202 "), "{response}");
+    let body = if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        decode_chunked(body)
+    } else {
+        body.to_owned()
+    };
+    serde_json::from_str(&body).unwrap_or_else(|error| panic!("invalid JSON {error}: {response}"))
+}
+
+fn decode_chunked(mut encoded: &str) -> String {
+    let mut decoded = Vec::new();
+    loop {
+        let (size, rest) = encoded.split_once("\r\n").expect("chunk size");
+        let size = usize::from_str_radix(size.trim(), 16).expect("hex chunk size");
+        if size == 0 {
+            break;
+        }
+        let bytes = rest.as_bytes();
+        assert!(bytes.len() >= size + 2, "truncated HTTP chunk");
+        decoded.extend_from_slice(&bytes[..size]);
+        encoded = std::str::from_utf8(&bytes[size + 2..]).expect("chunked UTF-8");
+    }
+    String::from_utf8(decoded).expect("HTTP JSON UTF-8")
 }
 
 fn http_get(addr: &str) -> String {

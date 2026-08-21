@@ -272,6 +272,7 @@ fn run_with_reactor(
         let _ = host::drop_host(&ctx);
         let _ = ctx.globals().remove("__tysel_result");
         let _ = ctx.globals().remove("__tysel_task_input_json");
+        let _ = ctx.globals().remove("__tysel_durable_export");
         let _ = ctx.globals().remove("__tysel_task_value_json");
         Ok::<_, EngineError>(())
     });
@@ -298,7 +299,9 @@ fn start_script(
         let Evaluation::DurableModule { source, input_json } = evaluation else {
             unreachable!();
         };
+        let (source, export_name) = split_durable_export(source);
         ctx.globals().set("__tysel_task_input_json", input_json).map_err(js_err)?;
+        ctx.globals().set("__tysel_durable_export", export_name.unwrap_or("")).map_err(js_err)?;
         Module::declare(ctx.clone(), "tysel-task-input.js", DURABLE_INPUT_MODULE)
             .map_err(js_err)?;
         Module::declare(ctx.clone(), "app.js", source).map_err(js_err)?;
@@ -324,13 +327,48 @@ delete globalThis.__tysel_task_input_json;
 export default input;
 "#;
 
+pub(crate) const DURABLE_EXPORT_PREFIX: &str = "/*tysel-durable-export:";
+
+pub(crate) fn split_durable_export(source: &str) -> (&str, Option<&str>) {
+    let Some(rest) = source.strip_prefix(DURABLE_EXPORT_PREFIX) else {
+        return (source, None);
+    };
+    let Some(end) = rest.find("*/") else {
+        return (source, None);
+    };
+    let name = rest[..end].trim();
+    let body = rest[end + 2..].trim_start_matches(['\r', '\n']);
+    if name.is_empty() { (source, None) } else { (body, Some(name)) }
+}
+
+pub fn encode_durable_export(name: &str, source: &str) -> String {
+    format!("{DURABLE_EXPORT_PREFIX}{name}*/\n{source}")
+}
+
 const BOOT_DURABLE_TASK: &str = r#"
 import input from "tysel-task-input.js";
 import task from "app.js";
-if (typeof task !== "function") {
-  throw new TypeError("durable task module must export a default function");
+const exportName = String(globalThis.__tysel_durable_export || "");
+delete globalThis.__tysel_durable_export;
+function resolve(exported) {
+  if (typeof exported === "function") {
+    if (exportName && exportName !== "default") {
+      throw new TypeError("durable task module exports a default function, not " + exportName);
+    }
+    return exported;
+  }
+  const table = exported && exported.durable;
+  if (!table || typeof table !== "object" || Array.isArray(table)) {
+    throw new TypeError("durable task module must export a default function or durable map");
+  }
+  const name = exportName || Object.keys(table).sort()[0];
+  const run = name ? table[name] : undefined;
+  if (typeof run !== "function") {
+    throw new TypeError("durable export is missing");
+  }
+  return run;
 }
-const value = await task(globalThis.tysel.durable, input);
+const value = await resolve(task)(globalThis.tysel.durable, input);
 const encoded = JSON.stringify(value);
 if (encoded === undefined) {
   throw new TypeError("durable task result must be JSON serializable");

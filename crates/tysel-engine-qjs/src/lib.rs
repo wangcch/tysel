@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+mod control;
 mod cpu;
 mod durable;
 mod fetch;
@@ -19,11 +20,12 @@ mod secrets;
 mod task_module;
 mod trust;
 
+pub use control::{DurableControl, configure as configure_durable_control};
 pub use durable::DurableSession;
 pub use fetch_policy::configure as configure_fetch_hosts;
 pub use isolate::{
-    IsolateCancel, eval, eval_cancellable, eval_durable, eval_durable_module, eval_with_reactor,
-    eval_with_reactor_deadline,
+    IsolateCancel, encode_durable_export, eval, eval_cancellable, eval_durable,
+    eval_durable_module, eval_with_reactor, eval_with_reactor_deadline,
 };
 pub use llm::configure as configure_llm;
 pub use pool::{IncomingHttp, IsolatePool};
@@ -32,7 +34,8 @@ pub use secrets::{
     configure as configure_secrets, load_declared, parse_dotenv, resolve as resolve_secret,
 };
 pub use task_module::{
-    ModuleTaskDefinition, ModuleTaskKind, inspect_task_module, invoke_task_module,
+    ModuleTaskDefinition, ModuleTaskKind, inspect_durable_exports, inspect_task_module,
+    invoke_task_module,
 };
 pub use trust::configure as configure_policy;
 

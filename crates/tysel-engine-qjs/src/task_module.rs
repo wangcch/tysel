@@ -54,11 +54,13 @@ impl ModuleTaskDefinition {
 
 enum TaskModuleOperation {
     Inspect,
+    InspectDurable,
     Invoke { task_name: String, input_json: String, request_id: String, deadline_ms: u64 },
 }
 
 enum TaskModuleOutput {
     Definitions(Vec<ModuleTaskDefinition>),
+    DurableExports(Vec<String>),
     Value(Value),
 }
 
@@ -71,7 +73,19 @@ pub fn inspect_task_module(
     validate_source(source)?;
     match run_on_worker(source, config, TaskModuleOperation::Inspect)? {
         TaskModuleOutput::Definitions(definitions) => Ok(definitions),
-        TaskModuleOutput::Value(_) => unreachable!(),
+        TaskModuleOutput::Value(_) | TaskModuleOutput::DurableExports(_) => unreachable!(),
+    }
+}
+
+/// Names of durable functions exported as `default` or `default.durable`.
+pub fn inspect_durable_exports(
+    source: &str,
+    config: IsolateConfig,
+) -> Result<Vec<String>, EngineError> {
+    validate_source(source)?;
+    match run_on_worker(source, config, TaskModuleOperation::InspectDurable)? {
+        TaskModuleOutput::DurableExports(names) => Ok(names),
+        TaskModuleOutput::Definitions(_) | TaskModuleOutput::Value(_) => unreachable!(),
     }
 }
 
@@ -106,7 +120,7 @@ pub fn invoke_task_module(
     };
     match run_on_worker(source, config, operation)? {
         TaskModuleOutput::Value(value) => Ok(value),
-        TaskModuleOutput::Definitions(_) => unreachable!(),
+        TaskModuleOutput::Definitions(_) | TaskModuleOutput::DurableExports(_) => unreachable!(),
     }
 }
 
@@ -170,6 +184,7 @@ fn run_task_module(
         Module::declare(ctx.clone(), "app.js", source).map_err(isolate::js_err)?;
         let boot = match operation {
             TaskModuleOperation::Inspect => BOOT_INSPECT,
+            TaskModuleOperation::InspectDurable => BOOT_INSPECT_DURABLE,
             TaskModuleOperation::Invoke { .. } => BOOT_INVOKE,
         };
         let promise =
@@ -191,6 +206,11 @@ fn run_task_module(
             let json: String =
                 ctx.globals().get("__tysel_task_manifest_json").map_err(isolate::js_err)?;
             decode_definitions(&json).map(TaskModuleOutput::Definitions)
+        }
+        TaskModuleOperation::InspectDurable => {
+            let json: String =
+                ctx.globals().get("__tysel_durable_exports_json").map_err(isolate::js_err)?;
+            decode_durable_exports(&json).map(TaskModuleOutput::DurableExports)
         }
         TaskModuleOperation::Invoke { .. } => {
             let json: String =
@@ -215,6 +235,7 @@ fn run_task_module(
             "__tysel_task_request_id",
             "__tysel_task_deadline_ms",
             "__tysel_task_manifest_json",
+            "__tysel_durable_exports_json",
             "__tysel_task_value_json",
         ] {
             let _ = ctx.globals().remove(name);
@@ -299,6 +320,22 @@ fn validate_field(label: &str, value: &str) -> Result<(), EngineError> {
     Ok(())
 }
 
+fn decode_durable_exports(json: &str) -> Result<Vec<String>, EngineError> {
+    if json.len() > MAX_TASK_METADATA_BYTES {
+        return Err(EngineError::Isolate(format!(
+            "durable export metadata exceeds {MAX_TASK_METADATA_BYTES} bytes"
+        )));
+    }
+    let names: Vec<String> = serde_json::from_str(json)
+        .map_err(|error| EngineError::Isolate(format!("invalid durable exports: {error}")))?;
+    if names.len() > MAX_MODULE_TASKS {
+        return Err(EngineError::Isolate(format!(
+            "durable export count exceeds {MAX_MODULE_TASKS}"
+        )));
+    }
+    Ok(names)
+}
+
 const BOOT_INSPECT: &str = r#"
 import app from "app.js";
 const registry = app && app.tasks;
@@ -331,6 +368,19 @@ if (registry == null) {
   }
   globalThis.__tysel_task_manifest_json = JSON.stringify(definitions);
 }
+"#;
+
+const BOOT_INSPECT_DURABLE: &str = r#"
+import app from "app.js";
+const names = [];
+if (typeof app === "function") {
+  names.push("default");
+} else if (app && app.durable && typeof app.durable === "object" && !Array.isArray(app.durable)) {
+  for (const name of Object.keys(app.durable).sort()) {
+    if (typeof app.durable[name] === "function") names.push(name);
+  }
+}
+globalThis.__tysel_durable_exports_json = JSON.stringify(names);
 "#;
 
 const BOOT_INVOKE: &str = r#"

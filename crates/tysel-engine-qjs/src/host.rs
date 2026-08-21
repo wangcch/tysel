@@ -131,6 +131,20 @@ fn install_inner(
         })?,
     )?;
     tysel.set(
+        "_durableStart",
+        Function::new(ctx.clone(), |ctx, name: String, input_json: String| {
+            crate::control::start_named(&name, &input_json)
+                .map_err(|err| Exception::throw_type(&ctx, &err))
+        })?,
+    )?;
+    tysel.set(
+        "_durableSendSignal",
+        Function::new(ctx.clone(), |ctx, task_id: String, name: String, payload_json: String| {
+            crate::control::send_signal(&task_id, &name, &payload_json)
+                .map_err(|err| Exception::throw_type(&ctx, &err))
+        })?,
+    )?;
+    tysel.set(
         "_wsRead",
         Function::new(ctx.clone(), move |ctx| {
             submit(ctx, &io_ws_read, |id| IoRequest::WsRead { id })
@@ -361,6 +375,17 @@ fn install_inner(
     if durable_enabled {
         ctx.eval::<(), _>(DURABLE_API)?;
     }
+    ctx.eval::<(), _>(
+        r#"
+        if (!globalThis.tysel.durable) globalThis.tysel.durable = {};
+        globalThis.tysel.durable.start = function(name, input) {
+          return JSON.parse(tysel._durableStart(String(name), JSON.stringify(input === undefined ? null : input)));
+        };
+        globalThis.tysel.durable.sendSignal = function(taskId, name, payload) {
+          tysel._durableSendSignal(String(taskId), String(name), JSON.stringify(payload === undefined ? null : payload));
+        };
+        "#,
+    )?;
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
@@ -12,7 +13,7 @@ use tysel_engine::IsolateConfig;
 use tysel_manifest::Manifest;
 #[cfg(unix)]
 use tysel_runtime::ModuleTaskService;
-use tysel_runtime::{AppIsolate, SharedPool, handle_stream, spawn_app_isolate};
+use tysel_runtime::{AppIsolate, DurablePlane, SharedPool, handle_stream, spawn_app_isolate};
 use tysel_task_rpc::TaskOutcome;
 
 const IGNORED_DIRS: &[&str] = &["node_modules", "target", "dist", ".git", "data"];
@@ -28,6 +29,16 @@ struct Loaded {
     addr: std::net::SocketAddr,
     websocket: bool,
     task: Option<TaskSpec>,
+    durable: Option<DurableSpec>,
+}
+
+#[derive(Clone)]
+struct DurableSpec {
+    source: String,
+    config: IsolateConfig,
+    sqlite_path: String,
+    execution_profile: String,
+    root: PathBuf,
 }
 
 #[derive(Clone)]
@@ -182,7 +193,11 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
         TcpListener::bind(loaded.addr).await.with_context(|| format!("bind {}", loaded.addr))?;
     let mut task_generation = 1u64;
     let mut task_service = start_task_service(loaded.task, task_generation).await?;
+    let mut durable = start_dev_durable(loaded.durable).await?;
     let bound = listener.local_addr()?;
+    if durable.is_some() {
+        println!("tysel durable on");
+    }
     println!("tysel listen {bound}");
     io::stdout().flush()?;
     if reload {
@@ -191,6 +206,7 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => break,
                 error = task_service_failure(task_service.as_ref()) => {
+                    shutdown_durable(durable.take()).await?;
                     shutdown_task_service(task_service).await?;
                     return Err(error);
                 }
@@ -199,14 +215,21 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                         task_generation = task_generation.saturating_add(1);
                         match start_task_service(next.task.clone(), task_generation).await {
                             Ok(next_tasks) => {
-                                eprintln!("tysel reload");
-                                pool.replace_with(
-                                    next.isolate,
-                                    next.max_request_bytes,
-                                    next.websocket,
-                                );
-                                shutdown_task_service(task_service).await?;
-                                task_service = next_tasks;
+                                match start_dev_durable(next.durable.clone()).await {
+                                    Ok(next_durable) => {
+                                        eprintln!("tysel reload");
+                                        pool.replace_with(
+                                            next.isolate,
+                                            next.max_request_bytes,
+                                            next.websocket,
+                                        );
+                                        shutdown_task_service(task_service).await?;
+                                        shutdown_durable(durable.take()).await?;
+                                        task_service = next_tasks;
+                                        durable = next_durable;
+                                    }
+                                    Err(err) => eprintln!("error: {err:#}"),
+                                }
                             }
                             Err(err) => eprintln!("error: {err:#}"),
                         }
@@ -219,6 +242,7 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                 }
             }
         }
+        shutdown_durable(durable.take()).await?;
         shutdown_task_service(task_service).await?;
         return Ok(());
     }
@@ -226,6 +250,7 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => break,
             error = task_service_failure(task_service.as_ref()) => {
+                shutdown_durable(durable.take()).await?;
                 shutdown_task_service(task_service).await?;
                 return Err(error);
             }
@@ -235,6 +260,7 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
             }
         }
     }
+    shutdown_durable(durable.take()).await?;
     shutdown_task_service(task_service).await?;
     Ok(())
 }
@@ -298,7 +324,7 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
         || !tysel_engine_qjs::inspect_task_module(&source, config)?.is_empty();
     let task = has_tasks.then(|| TaskSpec {
         application_id: tap.manifest.application_id.clone(),
-        source,
+        source: source.clone(),
         config,
         execution_profile: tap.manifest.execution_profile.clone(),
         secret_names: tap.manifest.secret_names.clone(),
@@ -309,6 +335,13 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
         addr,
         websocket,
         task,
+        durable: Some(DurableSpec {
+            source,
+            config,
+            sqlite_path: tap.manifest.sqlite_path.clone(),
+            execution_profile: tap.manifest.execution_profile.clone(),
+            root: root.to_path_buf(),
+        }),
     })
 }
 
@@ -364,6 +397,33 @@ async fn shutdown_task_service(service: Option<ModuleTaskService>) -> Result<()>
 
 #[cfg(not(unix))]
 async fn shutdown_task_service(_service: Option<()>) -> Result<()> {
+    Ok(())
+}
+
+async fn start_dev_durable(spec: Option<DurableSpec>) -> Result<Option<Arc<DurablePlane>>> {
+    let Some(spec) = spec else {
+        return Ok(None);
+    };
+    if spec.execution_profile.eq_ignore_ascii_case("isolated") {
+        return Ok(None);
+    }
+    if !DurablePlane::requested(&spec.sqlite_path, Some(&spec.root), &spec.source, spec.config)? {
+        return Ok(None);
+    }
+    let Some(store) = DurablePlane::open_store(&spec.sqlite_path, Some(&spec.root))? else {
+        return Ok(None);
+    };
+    if !DurablePlane::should_start(store.as_ref(), &spec.source, spec.config)? {
+        return Ok(None);
+    }
+    let owner = format!("tysel-dev-{}", std::process::id());
+    Ok(Some(DurablePlane::start(store, spec.source, spec.config, owner)?))
+}
+
+async fn shutdown_durable(plane: Option<Arc<DurablePlane>>) -> Result<()> {
+    if let Some(plane) = plane {
+        plane.shutdown().await?;
+    }
     Ok(())
 }
 

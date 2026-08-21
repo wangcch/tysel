@@ -65,6 +65,17 @@ export default {
 };
 ```
 
+## Durable Agent demo
+
+The [Durable Agent Golden Path](examples/durable-agent/README.md) calls a real
+OpenAI-compatible LLM, suspends for human approval, survives a process restart,
+and saves the approved result exactly once. With the provider environment set,
+run the complete demonstration with:
+
+```bash
+bash examples/durable-agent/demo.sh
+```
+
 `tysel build` copies a `tysel-service` stub and appends a TAP trailer. It looks for the stub in `--stub`, `TYSEL_STUB`, next to the `tysel` binary, `target/release` or `target/debug`, then `PATH`. `--target` must match this host; cross-compilation is not implemented. `--release` searches for a release stub. The command type-checks when TypeScript is present, then prints bundle size, capabilities, and the output path.
 
 ```bash
@@ -122,8 +133,14 @@ resumes registered work after restart without repopulating process memory.
 Programs with persisted task state cannot be unregistered or rebound to different
 source. The cancellable polling loop reads only due persistent programs on a
 blocking worker, uses up to 16 execution workers, only registered task ids are
-claimed, and registered program text has a 64MiB aggregate limit. The service CLI
-does not start this polling loop yet.
+claimed, and registered program text has a 64MiB aggregate limit.
+`tysel dev`, `tysel run`, and a packaged service start this loop when the
+application exports `durable` handlers or the store already has programs.
+Set `TYSEL_DURABLE_POSTGRES_URL` for the production store, or
+`TYSEL_DURABLE_SQLITE_PATH` for an explicit SQLite event log; otherwise the
+event log is `durable-events.db` beside the capability SQLite file.
+A fetch handler starts work with `tysel.durable.start(name, input)` and
+wakes it with `tysel.durable.sendSignal(taskId, name, payload)`.
 The SQLite durable log carries an explicit schema version. Unversioned databases
 from earlier builds are upgraded transactionally to version 1; databases written
 by a newer runtime are rejected before their schema is changed.
