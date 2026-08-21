@@ -1,9 +1,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::{BodyExt, Full};
 use hyper::Request;
@@ -12,9 +11,9 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tysel_engine::{InterruptReason, Value};
 use tysel_policy::Cap;
 
@@ -219,21 +218,43 @@ impl SendSlot {
     }
 }
 
-type ClientSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
-type ClientSink = SplitSink<ClientSocket, Message>;
-type ClientStream = SplitStream<ClientSocket>;
+enum ClientWebSocketCommand {
+    Read { reply: oneshot::Sender<Result<Value, String>> },
+    Send { data: String, reply: oneshot::Sender<Result<(), String>> },
+    Close { reply: oneshot::Sender<Result<(), String>> },
+}
 
-#[derive(Clone, Default)]
+#[derive(Default)]
+struct ClientWebSocketState {
+    connecting: bool,
+    commands: Option<mpsc::UnboundedSender<ClientWebSocketCommand>>,
+}
+
+#[derive(Clone)]
 pub struct ClientWebSocketSlot {
-    connect_guard: Arc<Mutex<()>>,
-    sink: Arc<Mutex<Option<ClientSink>>>,
-    stream: Arc<Mutex<Option<ClientStream>>>,
+    generation: Arc<AtomicU64>,
+    state: Arc<StdMutex<ClientWebSocketState>>,
+    cleared: watch::Sender<u64>,
+}
+
+impl Default for ClientWebSocketSlot {
+    fn default() -> Self {
+        let (cleared, _) = watch::channel(0);
+        Self {
+            generation: Arc::new(AtomicU64::new(0)),
+            state: Arc::new(StdMutex::new(ClientWebSocketState::default())),
+            cleared,
+        }
+    }
 }
 
 impl ClientWebSocketSlot {
     pub fn clear(&self) {
-        *self.sink.blocking_lock() = None;
-        *self.stream.blocking_lock() = None;
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+        let _ = self.cleared.send(generation);
+        let mut state = self.state.lock().expect("client websocket state");
+        state.connecting = false;
+        state.commands = None;
     }
 
     async fn connect(
@@ -242,7 +263,8 @@ impl ClientWebSocketSlot {
         cancel: &Arc<AtomicBool>,
         deadline: Instant,
     ) -> Result<(), String> {
-        let _connect_guard = self.connect_guard.lock().await;
+        let generation = self.generation.load(Ordering::SeqCst);
+        let mut cleared = self.cleared.subscribe();
         let uri: hyper::Uri =
             url.parse().map_err(|err: hyper::http::uri::InvalidUri| err.to_string())?;
         match uri.scheme_str() {
@@ -251,17 +273,47 @@ impl ClientWebSocketSlot {
         }
         let host = uri.host().ok_or("missing host")?;
         crate::fetch_policy::host_permitted(host)?;
-        if self.sink.lock().await.is_some() {
-            return Err("an outbound WebSocket is already connected".into());
+        {
+            let mut state = self.state.lock().expect("client websocket state");
+            if state.connecting || state.commands.is_some() {
+                return Err("an outbound WebSocket is already connected".into());
+            }
+            state.connecting = true;
         }
-        let (socket, _) = tokio::select! {
+        let connected = tokio::select! {
             biased;
-            _ = cancelled(cancel, deadline) => return Err(interrupt_err(cancel, deadline)),
-            result = connect_async(url) => result.map_err(|err| err.to_string())?,
+            _ = cleared.changed() => Err("outbound WebSocket request ended".to_string()),
+            _ = cancelled(cancel, deadline) => Err(interrupt_err(cancel, deadline)),
+            result = connect_async(url) => result.map_err(|err| err.to_string()),
         };
-        let (sink, stream) = socket.split();
-        *self.sink.lock().await = Some(sink);
-        *self.stream.lock().await = Some(stream);
+        let (socket, _) = match connected {
+            Ok(socket) => socket,
+            Err(error) => {
+                let mut state = self.state.lock().expect("client websocket state");
+                if self.generation.load(Ordering::SeqCst) == generation {
+                    state.connecting = false;
+                }
+                return Err(error);
+            }
+        };
+        let (commands, receiver) = mpsc::unbounded_channel();
+        {
+            let mut state = self.state.lock().expect("client websocket state");
+            if self.generation.load(Ordering::SeqCst) != generation {
+                state.connecting = false;
+                return Err("outbound WebSocket request ended".into());
+            }
+            state.connecting = false;
+            state.commands = Some(commands);
+        }
+        io_handle().spawn(run_client_websocket(
+            socket,
+            receiver,
+            cleared,
+            self.state.clone(),
+            self.generation.clone(),
+            generation,
+        ));
         Ok(())
     }
 
@@ -271,42 +323,149 @@ impl ClientWebSocketSlot {
         cancel: &Arc<AtomicBool>,
         deadline: Instant,
     ) -> Result<(), String> {
-        let mut sink = self.sink.lock().await;
-        let sink = sink.as_mut().ok_or("outbound WebSocket is not connected")?;
+        let commands = self.commands()?;
+        let (reply, result) = oneshot::channel();
+        commands
+            .send(ClientWebSocketCommand::Send { data, reply })
+            .map_err(|_| "outbound WebSocket is closed".to_string())?;
         tokio::select! {
             biased;
             _ = cancelled(cancel, deadline) => Err(interrupt_err(cancel, deadline)),
-            result = sink.send(Message::Text(data.into())) => result.map_err(|err| err.to_string()),
+            result = result => result.map_err(|_| "outbound WebSocket is closed".to_string())?,
         }
     }
 
     async fn read(&self, cancel: &Arc<AtomicBool>, deadline: Instant) -> Result<Value, String> {
-        let mut stream = self.stream.lock().await;
-        let stream = stream.as_mut().ok_or("outbound WebSocket is not connected")?;
-        loop {
-            let message = tokio::select! {
-                biased;
-                _ = cancelled(cancel, deadline) => return Err(interrupt_err(cancel, deadline)),
-                result = stream.next() => result,
-            };
-            match message {
-                Some(Ok(Message::Text(text))) => return Ok(Value::String(text.to_string())),
-                Some(Ok(Message::Binary(bytes))) => return Ok(Value::Bytes(bytes.to_vec())),
-                Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
-                Some(Ok(Message::Close(_))) | None => return Ok(Value::Null),
-                Some(Err(err)) => return Err(err.to_string()),
-            }
+        let commands = self.commands()?;
+        let (reply, result) = oneshot::channel();
+        commands
+            .send(ClientWebSocketCommand::Read { reply })
+            .map_err(|_| "outbound WebSocket is closed".to_string())?;
+        tokio::select! {
+            biased;
+            _ = cancelled(cancel, deadline) => Err(interrupt_err(cancel, deadline)),
+            result = result => result.map_err(|_| "outbound WebSocket is closed".to_string())?,
         }
     }
 
-    async fn close(&self) -> Result<(), String> {
-        let mut sink = self.sink.lock().await;
-        if let Some(mut socket) = sink.take() {
-            socket.close().await.map_err(|err| err.to_string())?;
+    async fn close(&self, cancel: &Arc<AtomicBool>, deadline: Instant) -> Result<(), String> {
+        let commands = self.commands()?;
+        let (reply, result) = oneshot::channel();
+        commands
+            .send(ClientWebSocketCommand::Close { reply })
+            .map_err(|_| "outbound WebSocket is closed".to_string())?;
+        tokio::select! {
+            biased;
+            _ = cancelled(cancel, deadline) => Err(interrupt_err(cancel, deadline)),
+            result = result => result.map_err(|_| "outbound WebSocket is closed".to_string())?,
         }
-        *self.stream.lock().await = None;
-        Ok(())
     }
+
+    fn commands(&self) -> Result<mpsc::UnboundedSender<ClientWebSocketCommand>, String> {
+        self.state
+            .lock()
+            .expect("client websocket state")
+            .commands
+            .clone()
+            .ok_or_else(|| "outbound WebSocket is not connected".into())
+    }
+}
+
+async fn run_client_websocket(
+    mut socket: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>,
+    mut commands: mpsc::UnboundedReceiver<ClientWebSocketCommand>,
+    mut cleared: watch::Receiver<u64>,
+    state: Arc<StdMutex<ClientWebSocketState>>,
+    current_generation: Arc<AtomicU64>,
+    generation: u64,
+) {
+    let mut pending_read: Option<oneshot::Sender<Result<Value, String>>> = None;
+    loop {
+        tokio::select! {
+            biased;
+            _ = cleared.changed() => break,
+            command = commands.recv() => match command {
+                Some(ClientWebSocketCommand::Read { reply }) => {
+                    if pending_read.is_some() {
+                        let _ = reply.send(Err("outbound WebSocket read is already pending".into()));
+                    } else {
+                        pending_read = Some(reply);
+                    }
+                }
+                Some(ClientWebSocketCommand::Send { data, reply }) => {
+                    let result = tokio::select! {
+                        _ = cleared.changed() => Err("outbound WebSocket request ended".into()),
+                        result = socket.send(Message::Text(data.into())) => result.map_err(|err| err.to_string()),
+                    };
+                    let _ = reply.send(result);
+                }
+                Some(ClientWebSocketCommand::Close { reply }) => {
+                    let result = tokio::select! {
+                        _ = cleared.changed() => Err("outbound WebSocket request ended".into()),
+                        result = socket.close(None) => result.map_err(|err| err.to_string()),
+                    };
+                    if let Some(read) = pending_read.take() {
+                        let _ = read.send(Ok(websocket_close_value(1000, "", result.is_ok())));
+                    }
+                    let _ = reply.send(result);
+                    break;
+                }
+                None => break,
+            },
+            incoming = socket.next(), if pending_read.is_some() => {
+                match incoming {
+                    Some(Ok(Message::Text(text))) => {
+                        let reply = pending_read.take().expect("pending websocket read");
+                        let _ = reply.send(Ok(Value::Record(vec![
+                            ("type".into(), Value::String("text".into())),
+                            ("data".into(), Value::String(text.to_string())),
+                        ])));
+                    }
+                    Some(Ok(Message::Binary(bytes))) => {
+                        let reply = pending_read.take().expect("pending websocket read");
+                        let _ = reply.send(Ok(Value::Record(vec![
+                            ("type".into(), Value::String("binary".into())),
+                            ("data".into(), Value::Bytes(bytes.to_vec())),
+                        ])));
+                    }
+                    Some(Ok(Message::Close(frame))) => {
+                        let (code, reason) = frame
+                            .map(|frame| (u16::from(frame.code), frame.reason.to_string()))
+                            .unwrap_or((1005, String::new()));
+                        let reply = pending_read.take().expect("pending websocket read");
+                        let _ = reply.send(Ok(websocket_close_value(code, &reason, true)));
+                        break;
+                    }
+                    Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
+                    Some(Err(error)) => {
+                        let reply = pending_read.take().expect("pending websocket read");
+                        let _ = reply.send(Err(error.to_string()));
+                        break;
+                    }
+                    None => {
+                        let reply = pending_read.take().expect("pending websocket read");
+                        let _ = reply.send(Ok(websocket_close_value(1006, "", false)));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if let Some(reply) = pending_read {
+        let _ = reply.send(Err("outbound WebSocket request ended".into()));
+    }
+    if current_generation.load(Ordering::SeqCst) == generation {
+        state.lock().expect("client websocket state").commands = None;
+    }
+}
+
+fn websocket_close_value(code: u16, reason: &str, was_clean: bool) -> Value {
+    Value::Record(vec![
+        ("type".into(), Value::String("close".into())),
+        ("code".into(), Value::Number(code.into())),
+        ("reason".into(), Value::String(reason.into())),
+        ("wasClean".into(), Value::Bool(was_clean)),
+    ])
 }
 
 #[derive(Clone)]
@@ -512,9 +671,10 @@ async fn execute(
             id,
             result: slots.client_ws.send(data, &cancel, deadline).await.map(|()| Value::Null),
         },
-        IoRequest::WsClientClose { id } => {
-            IoCompletion { id, result: slots.client_ws.close().await.map(|()| Value::Null) }
-        }
+        IoRequest::WsClientClose { id } => IoCompletion {
+            id,
+            result: slots.client_ws.close(&cancel, deadline).await.map(|()| Value::Null),
+        },
         IoRequest::SqliteExec { id, sql, params_json } => {
             IoCompletion { id, result: sqlite_op(sql, params_json, false, cancel, deadline).await }
         }

@@ -210,6 +210,12 @@ fn run_worker(
             let _ = ctx.globals().remove("__tysel_result");
             let _ = ctx.globals().remove("__tysel_ws_done");
             let _ = ctx.globals().set("__tysel_ws_accepted", false);
+            let generation = ctx
+                .globals()
+                .get::<_, u64>("__tysel_request_generation")
+                .unwrap_or(0)
+                .saturating_add(1);
+            let _ = ctx.globals().set("__tysel_request_generation", generation);
             Ok::<_, EngineError>(())
         });
         let _ = job_result;

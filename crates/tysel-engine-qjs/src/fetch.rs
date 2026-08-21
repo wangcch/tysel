@@ -365,17 +365,35 @@ const BOOTSTRAP: &str = r##"
         if (String(algo.name).toUpperCase() !== "HMAC") throw new DOMException("only HMAC keys are supported", "NotSupportedError");
         const hash = normalizeCryptoHash(algo.hash || "SHA-256");
         const usages = Array.from(keyUsages || [], String);
+        if (usages.length === 0) {
+          throw new DOMException("secret keys require at least one usage", "SyntaxError");
+        }
         if (usages.some((usage) => usage !== "sign" && usage !== "verify")) {
           throw new DOMException("HMAC keys only support sign and verify usages", "SyntaxError");
         }
         const bytes = new Uint8Array(toCryptoBytes(keyData));
+        const sourceLength = bytes.byteLength * 8;
+        if (sourceLength === 0) throw new DOMException("HMAC key data cannot be empty", "DataError");
+        let length = sourceLength;
+        if (algo.length !== undefined) {
+          length = Number(algo.length);
+          if (!Number.isInteger(length) || length < 0 || length > 0xffffffff) {
+            throw new TypeError("HMAC key length must be an unsigned integer");
+          }
+          if (length > sourceLength || length <= sourceLength - 8) {
+            throw new DOMException("HMAC key length is inconsistent with key data", "DataError");
+          }
+          if (length % 8 !== 0) {
+            bytes[bytes.length - 1] &= (0xff << (8 - (length % 8))) & 0xff;
+          }
+        }
         // Ask the native implementation to validate the hash before returning a key.
         tysel._digest(hash, new Uint8Array(0));
         const key = new CryptoKey(
           cryptoKeyToken,
           "secret",
           Boolean(extractable),
-          { name: "HMAC", hash: Object.freeze({ name: hash }), length: bytes.byteLength * 8 },
+          { name: "HMAC", hash: Object.freeze({ name: hash }), length },
           usages,
         );
         cryptoKeys.set(key, { hash, bytes });

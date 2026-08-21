@@ -872,7 +872,14 @@ fn crypto_subtle_enforces_hmac_key_usages() {
           try { await crypto.subtle.sign("HMAC", verifying, data); } catch (error) { denied = error.name; }
           let invalid = "";
           try { await crypto.subtle.importKey("raw", raw, "HMAC", false, ["encrypt"]); } catch (error) { invalid = error.name; }
-          return JSON.stringify({ altered, denied, invalid, cryptoKey: signing instanceof CryptoKey });
+          let emptyUsage = "";
+          try { await crypto.subtle.importKey("raw", raw, "HMAC", false, []); } catch (error) { emptyUsage = error.name; }
+          let emptyKey = "";
+          try { await crypto.subtle.importKey("raw", new Uint8Array(), "HMAC", false, ["sign"]); } catch (error) { emptyKey = error.name; }
+          let badLength = "";
+          try { await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256", length: 8 }, false, ["sign"]); } catch (error) { badLength = error.name; }
+          const sized = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256", length: 48 }, false, ["sign"]);
+          return JSON.stringify({ altered, denied, invalid, emptyUsage, emptyKey, badLength, length: sized.algorithm.length, cryptoKey: signing instanceof CryptoKey });
         })()"#,
         config(),
     )
@@ -880,7 +887,7 @@ fn crypto_subtle_enforces_hmac_key_usages() {
     assert_eq!(
         value,
         Value::String(
-            r#"{"altered":false,"denied":"InvalidAccessError","invalid":"SyntaxError","cryptoKey":true}"#.into()
+            r#"{"altered":false,"denied":"InvalidAccessError","invalid":"SyntaxError","emptyUsage":"SyntaxError","emptyKey":"DataError","badLength":"DataError","length":48,"cryptoKey":true}"#.into()
         )
     );
 }
@@ -1573,6 +1580,104 @@ async fn outbound_websocket_echoes_text() {
         .expect("join")
         .expect("outbound websocket");
     assert_eq!(value, Value::String("ping".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn outbound_websocket_is_cancelled_before_isolate_reuse() {
+    use futures_util::{SinkExt, StreamExt};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind websocket");
+    let addr = listener.local_addr().expect("websocket address");
+    tokio::spawn(async move {
+        let (first, _) = listener.accept().await.expect("accept first websocket");
+        let mut first = tokio_tungstenite::accept_async(first).await.expect("first handshake");
+        tokio::spawn(async move {
+            let _ = first.next().await;
+        });
+        let (second, _) = listener.accept().await.expect("accept second websocket");
+        let mut second = tokio_tungstenite::accept_async(second).await.expect("second handshake");
+        if let Some(Ok(message)) = second.next().await {
+            second.send(message).await.expect("echo second websocket message");
+        }
+    });
+    let source = format!(
+        r#"
+export default {{
+  async fetch(request) {{
+    const socket = new WebSocket("ws://{addr}/echo");
+    await socket.opened;
+    if (new URL(request.url).pathname === "/open") return new Response("opened");
+    return new Response(await new Promise((resolve, reject) => {{
+      socket.onmessage = (event) => resolve(event.data);
+      socket.onerror = (event) => reject(event.error);
+      socket.send("second");
+    }}));
+  }},
+}}
+"#
+    );
+    let pool = IsolatePool::spawn(1, &source, config()).expect("spawn isolate");
+    let started = Instant::now();
+    let (_, mut first_body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/open".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 1,
+        })
+        .await
+        .expect("first request");
+    while first_body.recv().await.is_some() {}
+    let (_, mut second_body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/echo".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 2,
+        })
+        .await
+        .expect("second request");
+    let mut bytes = Vec::new();
+    while let Some(chunk) = second_body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes, b"second");
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn outbound_websocket_preserves_remote_close_details() {
+    use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+    use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind websocket");
+    let addr = listener.local_addr().expect("websocket address");
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept websocket");
+        let mut socket = tokio_tungstenite::accept_async(stream).await.expect("handshake");
+        socket
+            .close(Some(CloseFrame { code: CloseCode::Away, reason: "restart".into() }))
+            .await
+            .expect("close websocket");
+    });
+    let source = format!(
+        r#"(async () => new Promise((resolve, reject) => {{
+            const socket = new WebSocket("ws://{addr}/close");
+            socket.onclose = (event) => resolve(JSON.stringify({{
+              code: event.code,
+              reason: event.reason,
+              wasClean: event.wasClean,
+            }}));
+            socket.onerror = (event) => reject(event.error);
+        }}))()"#
+    );
+    let value = tokio::task::spawn_blocking(move || eval(&source, config()))
+        .await
+        .expect("join")
+        .expect("remote close");
+    assert_eq!(value, Value::String(r#"{"code":1001,"reason":"restart","wasClean":true}"#.into()));
 }
 
 fn serve_bytes(body: Bytes) -> SocketAddr {

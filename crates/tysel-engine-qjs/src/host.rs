@@ -396,6 +396,9 @@ fn install_inner(
           })();
           return socket;
         };
+        if (!Number.isInteger(globalThis.__tysel_request_generation)) {
+          globalThis.__tysel_request_generation = 0;
+        }
         class WebSocket {
           static CONNECTING = 0;
           static OPEN = 1;
@@ -403,6 +406,7 @@ fn install_inner(
           static CLOSED = 3;
           constructor(url) {
             this.url = String(url);
+            this._generation = globalThis.__tysel_request_generation;
             this.readyState = WebSocket.CONNECTING;
             this.binaryType = "arraybuffer";
             this.onopen = null;
@@ -411,11 +415,13 @@ fn install_inner(
             this.onclose = null;
             this._listeners = { open: [], message: [], error: [], close: [] };
             this.opened = tysel._wsConnect(this.url).then(() => {
+              if (this._generation !== globalThis.__tysel_request_generation) return this;
               this.readyState = WebSocket.OPEN;
               this._dispatch("open", { type: "open", target: this });
               this._readLoop();
               return this;
             }, (error) => {
+              if (this._generation !== globalThis.__tysel_request_generation) return this;
               this.readyState = WebSocket.CLOSED;
               this._dispatch("error", { type: "error", error, target: this });
               this._dispatch("close", { type: "close", code: 1006, reason: String(error), wasClean: false, target: this });
@@ -439,6 +445,7 @@ fn install_inner(
             await tysel._wsClientClose();
           }
           _dispatch(type, event) {
+            if (this._generation !== globalThis.__tysel_request_generation) return;
             const handler = this[`on${type}`];
             if (typeof handler === "function") handler.call(this, event);
             for (const listener of this._listeners[type]) listener.call(this, event);
@@ -446,15 +453,27 @@ fn install_inner(
           async _readLoop() {
             try {
               while (this.readyState === WebSocket.OPEN) {
-                let data = await tysel._wsClientRead();
-                if (data == null) break;
+                const frame = await tysel._wsClientRead();
+                if (this._generation !== globalThis.__tysel_request_generation) return;
+                if (frame.type === "close") {
+                  this.readyState = WebSocket.CLOSED;
+                  this._dispatch("close", {
+                    type: "close",
+                    code: frame.code,
+                    reason: frame.reason,
+                    wasClean: frame.wasClean,
+                    target: this,
+                  });
+                  return;
+                }
+                let data = frame.data;
                 if (Array.isArray(data)) data = Uint8Array.from(data).buffer;
                 this._dispatch("message", { type: "message", data, target: this });
               }
-              const wasClean = this.readyState !== WebSocket.OPEN;
               this.readyState = WebSocket.CLOSED;
-              this._dispatch("close", { type: "close", code: 1000, reason: "", wasClean, target: this });
+              this._dispatch("close", { type: "close", code: 1000, reason: "", wasClean: true, target: this });
             } catch (error) {
+              if (this._generation !== globalThis.__tysel_request_generation) return;
               this.readyState = WebSocket.CLOSED;
               this._dispatch("error", { type: "error", error, target: this });
               this._dispatch("close", { type: "close", code: 1006, reason: String(error), wasClean: false, target: this });
