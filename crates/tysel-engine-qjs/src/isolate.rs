@@ -321,11 +321,7 @@ fn start_script(
     }
 }
 
-const DURABLE_INPUT_MODULE: &str = r#"
-const input = JSON.parse(globalThis.__tysel_task_input_json);
-delete globalThis.__tysel_task_input_json;
-export default input;
-"#;
+const DURABLE_INPUT_MODULE: &str = include_str!("../../../runtime-js/bootstrap/durable-input.js");
 
 pub(crate) const DURABLE_EXPORT_PREFIX: &str = "/*tysel-durable-export:";
 
@@ -345,36 +341,7 @@ pub fn encode_durable_export(name: &str, source: &str) -> String {
     format!("{DURABLE_EXPORT_PREFIX}{name}*/\n{source}")
 }
 
-const BOOT_DURABLE_TASK: &str = r#"
-import input from "tysel-task-input.js";
-import task from "app.js";
-const exportName = String(globalThis.__tysel_durable_export || "");
-delete globalThis.__tysel_durable_export;
-function resolve(exported) {
-  if (typeof exported === "function") {
-    if (exportName && exportName !== "default") {
-      throw new TypeError("durable task module exports a default function, not " + exportName);
-    }
-    return exported;
-  }
-  const table = exported && exported.durable;
-  if (!table || typeof table !== "object" || Array.isArray(table)) {
-    throw new TypeError("durable task module must export a default function or durable map");
-  }
-  const name = exportName || Object.keys(table).sort()[0];
-  const run = name ? table[name] : undefined;
-  if (typeof run !== "function") {
-    throw new TypeError("durable export is missing");
-  }
-  return run;
-}
-const value = await resolve(task)(globalThis.tysel.durable, input);
-const encoded = JSON.stringify(value);
-if (encoded === undefined) {
-  throw new TypeError("durable task result must be JSON serializable");
-}
-globalThis.__tysel_task_value_json = encoded;
-"#;
+const BOOT_DURABLE_TASK: &str = include_str!("../../../runtime-js/bootstrap/durable-task.js");
 
 pub(crate) fn wait_until_settled(
     runtime: &Runtime,
@@ -412,8 +379,10 @@ pub(crate) fn wait_until_settled(
             Ok(IoCompletion { id, result }) => {
                 cpu.resume();
                 let too_large = matches!(&result, Err(message) if message.contains("request body exceeds limit"));
-                context.with(|ctx| host::settle(&ctx, id, result).map_err(js_err))?;
-                if too_large {
+                reactor.io.finish(id);
+                let was_pending =
+                    context.with(|ctx| host::settle(&ctx, id, result).map_err(js_err))?;
+                if too_large && was_pending {
                     return Err(EngineError::BodyTooLarge);
                 }
             }

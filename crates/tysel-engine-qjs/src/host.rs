@@ -7,6 +7,8 @@ use crate::DurableSession;
 use crate::queue::{IoHandle, IoRequest, OpId};
 
 const PENDING: &str = "__tysel_pending";
+const CAPABILITY_API: &str = include_str!("../../../runtime-js/capability-client/runtime.js");
+const DURABLE_CONTROL_API: &str = include_str!("../../../runtime-js/durable/control.js");
 
 pub fn install(ctx: Ctx<'_>, io: IoHandle, isolate_id: u32) -> rquickjs::Result<()> {
     install_inner(ctx, io, isolate_id, None)
@@ -38,6 +40,8 @@ fn install_inner(
     let io_body = io.clone();
     let io_http_start = io.clone();
     let io_http_read = io.clone();
+    let io_http_cancel_body = io.clone();
+    let io_cancel = io.clone();
     let io_ws_read = io.clone();
     let io_ws_send = io.clone();
     let io_ws_close = io.clone();
@@ -81,7 +85,7 @@ fn install_inner(
         Function::new(
             ctx.clone(),
             move |ctx, url: String, method: String, headers_json: String, body: String| {
-                submit(ctx, &io_http_start, |id| IoRequest::HttpGet {
+                submit_cancellable(ctx, &io_http_start, |id| IoRequest::HttpGet {
                     id,
                     url,
                     method,
@@ -93,10 +97,18 @@ fn install_inner(
     )?;
     tysel.set(
         "_httpRead",
-        Function::new(ctx.clone(), move |ctx| {
-            submit(ctx, &io_http_read, |id| IoRequest::HttpRead { id })
+        Function::new(ctx.clone(), move |ctx, body_id: u64| {
+            submit_cancellable(ctx, &io_http_read, |id| IoRequest::HttpRead { id, body_id })
         })?,
     )?;
+    tysel.set(
+        "_httpCancelBody",
+        Function::new(ctx.clone(), move |body_id: u64| {
+            io_http_cancel_body.outbound.clear(body_id);
+        })?,
+    )?;
+    tysel
+        .set("_cancelOp", Function::new(ctx.clone(), move |id: u64| io_cancel.cancel(OpId(id)))?)?;
     tysel.set(
         "envKeys",
         Function::new(ctx.clone(), || {
@@ -340,441 +352,15 @@ fn install_inner(
         )?;
     }
     ctx.globals().set("tysel", tysel)?;
-    ctx.eval::<(), _>(
-        r#"
-        globalThis.fetch = async function(input, init) {
-          init = init || {};
-          const url = typeof input === "string" ? input : input.url;
-          const method = String(init.method || (input && input.method) || "GET").toUpperCase();
-          const headers = new Headers(init.headers || (input && input.headers));
-          const pairs = [];
-          headers.forEach((value, key) => pairs.push([key, value]));
-          let body = "";
-          if (init.body != null) body = String(init.body);
-          else if (input && typeof input !== "string" && input.body != null) body = String(input.body);
-          const started = await tysel._httpStart(String(url), method, JSON.stringify(pairs), body);
-          let headerPairs = [];
-          try { headerPairs = JSON.parse(started.headers || "[]"); } catch (_) {}
-          const response = new Response(null, { status: started.status, headers: headerPairs });
-          response._stream = true;
-          return response;
-        };
-        globalThis.tysel.httpGet = function(url) {
-          return fetch(url);
-        };
-        globalThis.tysel.acceptWebSocket = function() {
-          if (globalThis.__tysel_ws_accepted) {
-            throw new Error("websocket already accepted");
-          }
-          globalThis.__tysel_ws_accepted = true;
-          const listeners = { message: [], close: [], error: [] };
-          const socket = {
-            readyState: 1,
-            send(data) {
-              return tysel._wsSend(data == null ? "" : String(data));
-            },
-            close() {
-              this.readyState = 2;
-              return tysel._wsClose();
-            },
-            addEventListener(type, fn) {
-              if (listeners[type]) listeners[type].push(fn);
-            },
-          };
-          globalThis.__tysel_ws_done = (async () => {
-            try {
-              for (;;) {
-                const chunk = await tysel._wsRead();
-                if (chunk == null) break;
-                const event = { type: "message", data: chunk };
-                for (const fn of listeners.message) fn(event);
-              }
-            } finally {
-              socket.readyState = 3;
-              for (const fn of listeners.close) fn({ type: "close" });
-            }
-          })();
-          return socket;
-        };
-        if (!Number.isInteger(globalThis.__tysel_request_generation)) {
-          globalThis.__tysel_request_generation = 0;
-        }
-        class WebSocket {
-          static CONNECTING = 0;
-          static OPEN = 1;
-          static CLOSING = 2;
-          static CLOSED = 3;
-          constructor(url) {
-            this.url = String(url);
-            this._generation = globalThis.__tysel_request_generation;
-            this.readyState = WebSocket.CONNECTING;
-            this.binaryType = "arraybuffer";
-            this.onopen = null;
-            this.onmessage = null;
-            this.onerror = null;
-            this.onclose = null;
-            this._listeners = { open: [], message: [], error: [], close: [] };
-            this.opened = tysel._wsConnect(this.url).then(() => {
-              if (this._generation !== globalThis.__tysel_request_generation) return this;
-              this.readyState = WebSocket.OPEN;
-              this._dispatch("open", { type: "open", target: this });
-              this._readLoop();
-              return this;
-            }, (error) => {
-              if (this._generation !== globalThis.__tysel_request_generation) return this;
-              this.readyState = WebSocket.CLOSED;
-              this._dispatch("error", { type: "error", error, target: this });
-              this._dispatch("close", { type: "close", code: 1006, reason: String(error), wasClean: false, target: this });
-              throw error;
-            });
-          }
-          addEventListener(type, listener) {
-            if (this._listeners[type] && typeof listener === "function") this._listeners[type].push(listener);
-          }
-          removeEventListener(type, listener) {
-            if (!this._listeners[type]) return;
-            this._listeners[type] = this._listeners[type].filter((item) => item !== listener);
-          }
-          send(data) {
-            if (this.readyState !== WebSocket.OPEN) throw new DOMException("WebSocket is not open", "InvalidStateError");
-            return tysel._wsClientSend(data == null ? "" : String(data));
-          }
-          async close() {
-            if (this.readyState === WebSocket.CLOSED || this.readyState === WebSocket.CLOSING) return;
-            this.readyState = WebSocket.CLOSING;
-            await tysel._wsClientClose();
-          }
-          _dispatch(type, event) {
-            if (this._generation !== globalThis.__tysel_request_generation) return;
-            const handler = this[`on${type}`];
-            if (typeof handler === "function") handler.call(this, event);
-            for (const listener of this._listeners[type]) listener.call(this, event);
-          }
-          async _readLoop() {
-            try {
-              while (this.readyState === WebSocket.OPEN) {
-                const frame = await tysel._wsClientRead();
-                if (this._generation !== globalThis.__tysel_request_generation) return;
-                if (frame.type === "close") {
-                  this.readyState = WebSocket.CLOSED;
-                  this._dispatch("close", {
-                    type: "close",
-                    code: frame.code,
-                    reason: frame.reason,
-                    wasClean: frame.wasClean,
-                    target: this,
-                  });
-                  return;
-                }
-                let data = frame.data;
-                if (Array.isArray(data)) data = Uint8Array.from(data).buffer;
-                this._dispatch("message", { type: "message", data, target: this });
-              }
-              this.readyState = WebSocket.CLOSED;
-              this._dispatch("close", { type: "close", code: 1000, reason: "", wasClean: true, target: this });
-            } catch (error) {
-              if (this._generation !== globalThis.__tysel_request_generation) return;
-              this.readyState = WebSocket.CLOSED;
-              this._dispatch("error", { type: "error", error, target: this });
-              this._dispatch("close", { type: "close", code: 1006, reason: String(error), wasClean: false, target: this });
-            }
-          }
-        }
-        globalThis.WebSocket = WebSocket;
-        globalThis.tysel.sqlite = {
-          exec(sql, params) {
-            return tysel._sqliteExec(String(sql), JSON.stringify(params == null ? [] : params));
-          },
-          query(sql, params) {
-            return tysel._sqliteQuery(String(sql), JSON.stringify(params == null ? [] : params));
-          },
-        };
-        globalThis.tysel.postgres = {
-          exec(sql, params) {
-            return tysel._pgExec(String(sql), JSON.stringify(params == null ? [] : params));
-          },
-          query(sql, params) {
-            return tysel._pgQuery(String(sql), JSON.stringify(params == null ? [] : params));
-          },
-        };
-        globalThis.tysel.fs = {
-          read(path) {
-            return tysel._fsRead(String(path));
-          },
-          write(path, data) {
-            return tysel._fsWrite(String(path), data == null ? "" : String(data));
-          },
-        };
-        globalThis.tysel.secrets = {
-          ref(name) {
-            return tysel.secretRef(String(name));
-          },
-        };
-        globalThis.tysel.llm = {
-          generate(options) {
-            if (options === null || typeof options !== "object" || Array.isArray(options)) {
-              throw new TypeError("llm.generate options must be an object");
-            }
-            return tysel._llmGenerate(JSON.stringify(options));
-          },
-        };
-        "#,
-    )?;
+    ctx.eval::<(), _>(CAPABILITY_API)?;
     if durable_enabled {
         ctx.eval::<(), _>(DURABLE_API)?;
     }
-    ctx.eval::<(), _>(
-        r#"
-        if (!globalThis.tysel.durable) globalThis.tysel.durable = {};
-        globalThis.tysel.durable.start = function(name, input) {
-          return JSON.parse(tysel._durableStart(String(name), JSON.stringify(input === undefined ? null : input)));
-        };
-        globalThis.tysel.durable.sendSignal = function(taskId, name, payload) {
-          tysel._durableSendSignal(String(taskId), String(name), JSON.stringify(payload === undefined ? null : payload));
-        };
-        "#,
-    )?;
+    ctx.eval::<(), _>(DURABLE_CONTROL_API)?;
     Ok(())
 }
 
-const DURABLE_API: &str = r#"
-(() => {
-  let active = false;
-  let retryIndex = 0;
-
-  function lookup(kind, key) {
-    return JSON.parse(tysel._durableLookup(kind, key));
-  }
-
-  function encode(value) {
-    const encoded = JSON.stringify(value);
-    if (encoded === undefined) {
-      throw new TypeError("durable values must be JSON serializable");
-    }
-    return encoded;
-  }
-
-  function enter() {
-    if (active) {
-      throw new Error("durable boundaries must be awaited sequentially");
-    }
-    active = true;
-  }
-
-  function durationMs(value) {
-    if (typeof value === "number") {
-      if (!Number.isFinite(value) || value < 0) throw new TypeError("invalid durable duration");
-      return Math.floor(value);
-    }
-    const match = /^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)\s*$/.exec(String(value));
-    if (!match) throw new TypeError("invalid durable duration");
-    const scales = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 };
-    const millis = Number(match[1]) * scales[match[2]];
-    if (!Number.isSafeInteger(Math.floor(millis))) throw new TypeError("durable duration is too large");
-    return Math.floor(millis);
-  }
-
-  function retryPolicy(value) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-      throw new TypeError("durable retry policy must be an object");
-    }
-    const maxAttempts = value.maxAttempts === undefined ? 3 : Number(value.maxAttempts);
-    if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100) {
-      throw new TypeError("durable retry maxAttempts must be an integer from 1 to 100");
-    }
-    const delayMs = value.delay === undefined ? 0 : durationMs(value.delay);
-    const factor = value.factor === undefined ? 2 : Number(value.factor);
-    if (!Number.isFinite(factor) || factor < 1 || factor > 100) {
-      throw new TypeError("durable retry factor must be from 1 to 100");
-    }
-    const maxDelayMs = value.maxDelay === undefined ? null : durationMs(value.maxDelay);
-    return { maxAttempts, delayMs, factor, maxDelayMs };
-  }
-
-  function retryDelayMs(policy, attempt) {
-    const scaled = Math.floor(policy.delayMs * Math.pow(policy.factor, attempt - 1));
-    const millis = policy.maxDelayMs === null ? scaled : Math.min(scaled, policy.maxDelayMs);
-    if (!Number.isSafeInteger(millis)) {
-      throw new TypeError("durable retry delay is too large");
-    }
-    return millis;
-  }
-
-  function retryFailure(error) {
-    let name = "Error";
-    let message = "retry callback failed";
-    try {
-      if (error && typeof error.name === "string") name = error.name;
-      message = error && typeof error.message === "string" ? error.message : String(error);
-    } catch (_) {}
-    return { name: name.slice(0, 256), message: message.slice(0, 4096) };
-  }
-
-  function throwRetryFailure(failure) {
-    if (!failure || typeof failure.name !== "string" || typeof failure.message !== "string") {
-      throw new Error("invalid durable retry history");
-    }
-    const error = new Error(failure.message);
-    error.name = failure.name;
-    throw error;
-  }
-
-  function retryLookupOrRecord(key, payload) {
-    enter();
-    try {
-      const replay = lookup("retry", key);
-      if (replay.found) return replay.payload;
-      if (payload !== undefined) {
-        tysel._durableRecord("retry", key, encode(payload), Date.now());
-      }
-      return undefined;
-    } finally {
-      active = false;
-    }
-  }
-
-  function findRetryOutcome(key) {
-    enter();
-    try {
-      return JSON.parse(tysel._durableFindRetryOutcome(key));
-    } finally {
-      active = false;
-    }
-  }
-
-  function applyRetryOutcome(outcome) {
-    if (!outcome || typeof outcome.ok !== "boolean") {
-      throw new Error("invalid durable retry outcome");
-    }
-    if (outcome.ok) return outcome.value;
-    throwRetryFailure(outcome.failure);
-  }
-
-  async function boundary(kind, name, fn) {
-    if (typeof fn !== "function") throw new TypeError("durable boundary requires a function");
-    enter();
-    try {
-      const replay = lookup(kind, String(name));
-      if (replay.found) return replay.payload;
-      const value = await fn();
-      tysel._durableRecord(kind, String(name), encode(value), Date.now());
-      return value;
-    } finally {
-      active = false;
-    }
-  }
-
-  const durable = {
-    step(name, fn) {
-      return boundary("step", name, fn);
-    },
-    effect(name, fn) {
-      return boundary("effect", name, fn);
-    },
-    now() {
-      enter();
-      try {
-        const replay = lookup("now", "now");
-        if (replay.found) return new Date(replay.payload);
-        const value = Date.now();
-        tysel._durableRecord("now", "now", encode(value), value);
-        return new Date(value);
-      } finally {
-        active = false;
-      }
-    },
-    random() {
-      enter();
-      try {
-        const replay = lookup("random", "random");
-        if (replay.found) return replay.payload;
-        const value = Math.random();
-        tysel._durableRecord("random", "random", encode(value), Date.now());
-        return value;
-      } finally {
-        active = false;
-      }
-    },
-    async sleep(duration) {
-      const millis = durationMs(duration);
-      const key = "sleep:" + millis;
-      enter();
-      try {
-        const replay = lookup("sleep", key);
-        if (replay.found) {
-          tysel._durableCompleteSleep();
-          return;
-        }
-        const now = Date.now();
-        const wakeAt = now + millis;
-        if (!Number.isSafeInteger(wakeAt)) throw new TypeError("durable wakeup is too large");
-        tysel._durableRecordSleep(key, encode({ durationMs: millis }), now, wakeAt);
-        await tysel.sleep(millis);
-        tysel._durableCompleteSleep();
-      } finally {
-        active = false;
-      }
-    },
-    async waitForSignal(name) {
-      const key = String(name);
-      if (!key) throw new TypeError("durable signal name cannot be empty");
-      enter();
-      try {
-        const replay = lookup("signal", key);
-        if (replay.found) return replay.payload;
-        const signal = JSON.parse(tysel._durablePollSignal(key));
-        if (signal.found) return signal.payload;
-        await new Promise(() => {});
-      } finally {
-        active = false;
-      }
-    },
-    async retry(policyValue, fn) {
-      if (typeof fn !== "function") throw new TypeError("durable retry requires a function");
-      const policy = retryPolicy(policyValue);
-      const retryId = retryIndex++;
-      const scope = [
-        "retry",
-        retryId,
-        policy.maxAttempts,
-        policy.delayMs,
-        policy.factor,
-        policy.maxDelayMs === null ? "none" : policy.maxDelayMs,
-      ].join(":");
-      for (let attempt = 1; attempt <= policy.maxAttempts; attempt++) {
-        retryLookupOrRecord(scope + ":start:" + attempt, { attempt });
-        const outcomeKey = scope + ":outcome:" + attempt;
-        const replayedOutcome = findRetryOutcome(outcomeKey);
-        if (replayedOutcome.found) {
-          const outcome = replayedOutcome.payload;
-          if (outcome && outcome.ok === true) return applyRetryOutcome(outcome);
-          if (attempt === policy.maxAttempts) return applyRetryOutcome(outcome);
-          const delayMs = retryDelayMs(policy, attempt);
-          if (delayMs > 0) await durable.sleep(delayMs);
-          continue;
-        }
-        let failed = false;
-        let failure;
-        let value;
-        try {
-          value = await fn(attempt);
-        } catch (error) {
-          failed = true;
-          failure = retryFailure(error);
-        }
-        const outcome = failed ? { ok: false, failure } : { ok: true, value };
-        retryLookupOrRecord(outcomeKey, outcome);
-        if (!failed) return applyRetryOutcome(outcome);
-        if (attempt === policy.maxAttempts) throwRetryFailure(failure);
-        const delayMs = retryDelayMs(policy, attempt);
-        if (delayMs > 0) await durable.sleep(delayMs);
-      }
-      throw new Error("durable retry exhausted unexpectedly");
-    },
-  };
-  globalThis.tysel.durable = durable;
-})();
-"#;
+const DURABLE_API: &str = include_str!("../../../runtime-js/durable/runtime.js");
 
 fn durable_millis(ctx: &Ctx<'_>, value: f64, label: &str) -> rquickjs::Result<u64> {
     if !value.is_finite() || value < 0.0 || value > i64::MAX as f64 {
@@ -788,20 +374,40 @@ fn submit<'js>(
     io: &IoHandle,
     request: impl FnOnce(OpId) -> IoRequest,
 ) -> rquickjs::Result<Promise<'js>> {
+    submit_operation(ctx, io, request).map(|(promise, _)| promise)
+}
+
+fn submit_cancellable<'js>(
+    ctx: Ctx<'js>,
+    io: &IoHandle,
+    request: impl FnOnce(OpId) -> IoRequest,
+) -> rquickjs::Result<Object<'js>> {
+    let (promise, id) = submit_operation(ctx.clone(), io, request)?;
+    let operation = Object::new(ctx)?;
+    operation.set("id", id.0)?;
+    operation.set("promise", promise)?;
+    Ok(operation)
+}
+
+fn submit_operation<'js>(
+    ctx: Ctx<'js>,
+    io: &IoHandle,
+    request: impl FnOnce(OpId) -> IoRequest,
+) -> rquickjs::Result<(Promise<'js>, OpId)> {
     let (promise, resolve, reject) = Promise::new(&ctx)?;
     let id = io.submit(request);
     let entry = Object::new(ctx.clone())?;
     entry.set("resolve", resolve)?;
     entry.set("reject", reject)?;
     pending(&ctx)?.set(id.0.to_string(), entry)?;
-    Ok(promise)
+    Ok((promise, id))
 }
 
-pub fn settle(ctx: &Ctx<'_>, id: OpId, result: Result<Value, String>) -> rquickjs::Result<()> {
+pub fn settle(ctx: &Ctx<'_>, id: OpId, result: Result<Value, String>) -> rquickjs::Result<bool> {
     let pending = pending(ctx)?;
     let key = id.0.to_string();
     let Some(entry): Option<Object> = pending.get(&key)? else {
-        return Ok(());
+        return Ok(false);
     };
     pending.remove(&key)?;
     match result {
@@ -822,7 +428,7 @@ pub fn settle(ctx: &Ctx<'_>, id: OpId, result: Result<Value, String>) -> rquickj
             }
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 pub fn reject_all(ctx: &Ctx<'_>, reason: InterruptReason) -> rquickjs::Result<()> {
@@ -836,6 +442,19 @@ pub fn reject_all(ctx: &Ctx<'_>, reason: InterruptReason) -> rquickjs::Result<()
         if let Ok(reject) = entry.get::<_, Function>("reject") {
             let _ = reject.call::<(String,), ()>((format!("{reason:?}"),));
         }
+    }
+    Ok(())
+}
+
+/// Forget host promises owned by a request that has already returned.
+///
+/// They are intentionally not rejected: running their rejection handlers on
+/// the next event-loop turn would let callbacks from the old request mutate a
+/// reused isolate while it is serving a new request.
+pub fn discard_operations(ctx: &Ctx<'_>, ids: &[OpId]) -> rquickjs::Result<()> {
+    let pending = pending(ctx)?;
+    for id in ids {
+        pending.remove(id.0.to_string())?;
     }
     Ok(())
 }

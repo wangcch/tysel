@@ -1,3 +1,5 @@
+import type {} from "@tysel/types";
+
 type Probe = {
   capability: "fetch" | "filesystem";
   denied: boolean;
@@ -31,5 +33,3 @@ export default {
     }
   },
 };
-
-declare const tysel: { fs: { read: (path: string) => Promise<string> } };

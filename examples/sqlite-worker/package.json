@@ -7,6 +7,7 @@
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
+    "@tysel/types": "workspace:*",
     "typescript": "7.0.2"
   }
 }

@@ -1,3 +1,5 @@
+import type {} from "@tysel/types";
+
 interface AgentInput {
   runId: string;
   customerId: string;
@@ -183,16 +185,4 @@ export default {
     });
   },
   durable: { agent },
-};
-
-declare const tysel: {
-  sqlite: {
-    exec: (sql: string, params?: unknown[]) => Promise<number>;
-    query: (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
-  };
-  llm: { generate: (options: Record<string, unknown>) => Promise<unknown> };
-  durable: {
-    start: (name: string, input?: unknown) => { status: string; taskId: string };
-    sendSignal: (taskId: string, name: string, payload?: unknown) => void;
-  };
 };

@@ -336,78 +336,11 @@ fn decode_durable_exports(json: &str) -> Result<Vec<String>, EngineError> {
     Ok(names)
 }
 
-const BOOT_INSPECT: &str = r#"
-import app from "app.js";
-const registry = app && app.tasks;
-if (registry == null) {
-  globalThis.__tysel_task_manifest_json = "[]";
-} else {
-  if (typeof registry !== "object" || Array.isArray(registry)) {
-    throw new TypeError("module tasks must be an object");
-  }
-  const definitions = [];
-  for (const name of Object.keys(registry).sort()) {
-    const task = registry[name];
-    if (task == null || typeof task !== "object" || typeof task.handler !== "function") {
-      throw new TypeError("task " + name + " must define a handler");
-    }
-    if (task.kind === "cron") {
-      definitions.push({ name, kind: "cron", expression: String(task.expression || "") });
-    } else if (task.kind === "queue") {
-      definitions.push({ name, kind: "queue", queue: String(task.name || "") });
-    } else if (task.kind === "mcp") {
-      definitions.push({
-        name,
-        kind: "mcp",
-        description: String(task.description || ""),
-        input: task.input == null ? {} : task.input,
-      });
-    } else {
-      throw new TypeError("task " + name + " has an unsupported kind");
-    }
-  }
-  globalThis.__tysel_task_manifest_json = JSON.stringify(definitions);
-}
-"#;
+const BOOT_INSPECT: &str = include_str!("../../../runtime-js/bootstrap/task-inspect.js");
 
-const BOOT_INSPECT_DURABLE: &str = r#"
-import app from "app.js";
-const names = [];
-if (typeof app === "function") {
-  names.push("default");
-} else if (app && app.durable && typeof app.durable === "object" && !Array.isArray(app.durable)) {
-  for (const name of Object.keys(app.durable).sort()) {
-    if (typeof app.durable[name] === "function") names.push(name);
-  }
-}
-globalThis.__tysel_durable_exports_json = JSON.stringify(names);
-"#;
+const BOOT_INSPECT_DURABLE: &str = include_str!("../../../runtime-js/bootstrap/durable-inspect.js");
 
-const BOOT_INVOKE: &str = r#"
-import app from "app.js";
-const registry = app && app.tasks;
-const name = globalThis.__tysel_task_name;
-const task = registry && registry[name];
-if (task == null || typeof task.handler !== "function") {
-  throw new TypeError("unknown module task: " + name);
-}
-if (task.kind !== "cron" && task.kind !== "queue" && task.kind !== "mcp") {
-  throw new TypeError("task " + name + " has an unsupported kind");
-}
-const input = JSON.parse(globalThis.__tysel_task_input_json);
-const context = Object.freeze({
-  requestId: globalThis.__tysel_task_request_id,
-  deadlineMs: globalThis.__tysel_task_deadline_ms,
-});
-const value = task.kind === "cron"
-  ? await task.handler.call(task, context)
-  : await task.handler.call(task, input, context);
-const encoded = JSON.stringify(value === undefined ? null : value);
-if (encoded === undefined) {
-  throw new TypeError("task result must be JSON serializable");
-}
-globalThis.__tysel_task_value_json = encoded;
-"#;
+const BOOT_INVOKE: &str = include_str!("../../../runtime-js/bootstrap/task-invoke.js");
 
 #[cfg(test)]
 mod tests {

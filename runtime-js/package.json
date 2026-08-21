@@ -8,11 +8,15 @@
   "exports": {
     "./bootstrap": "./bootstrap/index.ts",
     "./web-api": "./web-api/index.ts",
+    "./web-api/compatibility": "./web-api/compatibility.json",
     "./capability-client": "./capability-client/index.ts",
-    "./durable": "./durable/index.ts"
+    "./durable": "./durable/index.ts",
+    "./compatibility": "./compatibility.json"
   },
   "scripts": {
-    "check": "tsc --noEmit -p tsconfig.json",
+    "build:runtime": "node scripts/build-runtime.mjs",
+    "check:runtime": "node scripts/build-runtime.mjs --check",
+    "check": "tsc --noEmit -p tsconfig.json && node scripts/build-runtime.mjs --check && node --check web-api/source/*.js && node --check capability-client/source/*.js && node --check web-api/runtime.js && node --check capability-client/runtime.js && node --check durable/runtime.js && node --check durable/control.js && node --check bootstrap/*.js",
     "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {

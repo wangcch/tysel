@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -190,34 +191,23 @@ fn run_worker(
         let _: Function = ctx.globals().get("__tysel_fetch").map_err(isolate::js_err)?;
         Ok::<_, EngineError>(())
     })?;
+    teardown_scope(&context, &reactor, 0, Duration::from_secs(5))?;
     let _ = ready.send(Ok(()));
 
     while let Some(job) = jobs.blocking_recv() {
+        let request_id = job.request.request_id;
         let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
         let request_deadline =
             Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
         *budgets.lock().expect("budgets") = Budgets { cpu: cpu.clone(), request: request_deadline };
         let job_result =
             handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, &cpu);
-        reactor.io.inbound.clear();
-        reactor.io.ws_in.clear();
-        reactor.io.ws_out.clear();
-        reactor.io.client_ws.clear();
-        reactor.io.bind_request(0);
-        let _ = context.with(|ctx| {
-            let _ = host::reset_timers(&ctx);
-            let _ = ctx.globals().remove("__tysel_response");
-            let _ = ctx.globals().remove("__tysel_result");
-            let _ = ctx.globals().remove("__tysel_ws_done");
-            let _ = ctx.globals().set("__tysel_ws_accepted", false);
-            let generation = ctx
-                .globals()
-                .get::<_, u64>("__tysel_request_generation")
-                .unwrap_or(0)
-                .saturating_add(1);
-            let _ = ctx.globals().set("__tysel_request_generation", generation);
-            Ok::<_, EngineError>(())
-        });
+        teardown_scope(
+            &context,
+            &reactor,
+            request_id,
+            Duration::from_millis(config.request_timeout_ms.max(100)),
+        )?;
         let _ = job_result;
     }
 
@@ -230,6 +220,60 @@ fn run_worker(
     drop(context);
     runtime.set_interrupt_handler(None);
     runtime.run_gc();
+    Ok(())
+}
+
+fn teardown_scope(
+    context: &Context,
+    reactor: &queue::Reactor,
+    request_id: u64,
+    quiesce_timeout: Duration,
+) -> Result<(), EngineError> {
+    reactor.io.bind_request(0);
+    let abandoned = reactor.io.cancel_request(request_id);
+    let _ = context.with(|ctx| host::discard_operations(&ctx, &abandoned));
+    reactor.io.inbound.clear();
+    reactor.io.outbound.clear_all();
+    reactor.io.ws_in.clear();
+    reactor.io.ws_out.clear();
+    reactor.io.client_ws.clear();
+    let _ = context.with(|ctx| {
+        let _ = host::reset_timers(&ctx);
+        let _ = ctx.globals().remove("__tysel_response");
+        let _ = ctx.globals().remove("__tysel_result");
+        let _ = ctx.globals().remove("__tysel_ws_done");
+        let _ = ctx.globals().set("__tysel_ws_accepted", false);
+        let generation = ctx
+            .globals()
+            .get::<_, u64>("__tysel_request_generation")
+            .unwrap_or(0)
+            .saturating_add(1);
+        let _ = ctx.globals().set("__tysel_request_generation", generation);
+        Ok::<_, EngineError>(())
+    });
+    let mut remaining = abandoned.into_iter().collect::<HashSet<_>>();
+    let deadline = Instant::now() + quiesce_timeout;
+    while !remaining.is_empty() {
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        if timeout.is_zero() {
+            return Err(EngineError::Isolate(format!(
+                "{} native operations did not quiesce after request {request_id}",
+                remaining.len()
+            )));
+        }
+        match reactor.completions.recv_timeout(timeout.min(Duration::from_millis(10))) {
+            Ok(queue::IoCompletion { id, .. }) => {
+                reactor.io.finish(id);
+                remaining.remove(&id);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(EngineError::Isolate(
+                    "io reactor stopped while quiescing request operations".into(),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

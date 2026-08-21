@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -52,7 +53,7 @@ pub enum IoRequest {
     SecretRef { id: OpId, name: String },
     ReadBody { id: OpId },
     HttpGet { id: OpId, url: String, method: String, headers_json: String, body: String },
-    HttpRead { id: OpId },
+    HttpRead { id: OpId, body_id: u64 },
     WsRead { id: OpId },
     WsSend { id: OpId, data: String },
     WsClose { id: OpId },
@@ -77,7 +78,7 @@ impl IoRequest {
             | Self::SecretRef { id, .. }
             | Self::ReadBody { id }
             | Self::HttpGet { id, .. }
-            | Self::HttpRead { id }
+            | Self::HttpRead { id, .. }
             | Self::WsRead { id }
             | Self::WsSend { id, .. }
             | Self::WsClose { id }
@@ -149,9 +150,114 @@ pub struct IoCompletion {
     pub result: Result<Value, String>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct StreamSlot {
     inner: Arc<Mutex<Option<BodyRx>>>,
+    generation: Arc<AtomicU64>,
+}
+
+impl Default for StreamSlot {
+    fn default() -> Self {
+        Self { inner: Arc::new(Mutex::new(None)), generation: Arc::new(AtomicU64::new(0)) }
+    }
+}
+
+#[derive(Clone)]
+pub struct StreamRegistry {
+    inner: Arc<Mutex<StreamRegistryState>>,
+    next_id: Arc<AtomicU64>,
+}
+
+#[derive(Default)]
+struct StreamRegistryState {
+    streams: HashMap<u64, BodyRx>,
+    in_flight: HashSet<u64>,
+    cancelled: HashSet<u64>,
+    generation: u64,
+}
+
+impl Default for StreamRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(StreamRegistryState::default())),
+            next_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
+}
+
+impl StreamRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&self, id: u64) {
+        let mut state = self.inner.blocking_lock();
+        if state.streams.remove(&id).is_none() && state.in_flight.contains(&id) {
+            state.cancelled.insert(id);
+        }
+    }
+
+    pub fn clear_all(&self) {
+        let mut state = self.inner.blocking_lock();
+        state.generation = state.generation.saturating_add(1);
+        state.streams.clear();
+        state.cancelled.clear();
+    }
+
+    async fn install(&self, rx: BodyRx) -> u64 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.inner.lock().await.streams.insert(id, rx);
+        id
+    }
+
+    async fn read(
+        &self,
+        id: u64,
+        cancel: &AtomicBool,
+        deadline: Instant,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let (generation, mut rx) = {
+            let mut state = self.inner.lock().await;
+            let rx = state
+                .streams
+                .remove(&id)
+                .ok_or_else(|| "unknown or consumed response body".to_string())?;
+            state.in_flight.insert(id);
+            (state.generation, rx)
+        };
+        let received = tokio::select! {
+            biased;
+            () = cancelled(cancel, deadline) => None,
+            received = rx.recv() => Some(received),
+        };
+        let mut state = self.inner.lock().await;
+        state.in_flight.remove(&id);
+        let interrupted = received.is_none();
+        let explicitly_cancelled = state.cancelled.remove(&id);
+        let invalidated = interrupted || state.generation != generation || explicitly_cancelled;
+        if invalidated {
+            return Err(if interrupted {
+                interrupt_err(cancel, deadline)
+            } else {
+                io_err(InterruptReason::Cancelled)
+            });
+        }
+        match received.expect("non-interrupted response body read") {
+            Some(Ok(chunk)) => {
+                state.streams.insert(id, rx);
+                Ok(Some(chunk))
+            }
+            Some(Err(err)) => Err(err),
+            None => Ok(None),
+        }
+    }
+
+    async fn clear_async(&self, id: u64) {
+        let mut state = self.inner.lock().await;
+        if state.streams.remove(&id).is_none() && state.in_flight.contains(&id) {
+            state.cancelled.insert(id);
+        }
+    }
 }
 
 impl StreamSlot {
@@ -160,29 +266,46 @@ impl StreamSlot {
     }
 
     pub fn install(&self, rx: BodyRx) {
-        *self.inner.blocking_lock() = Some(rx);
+        let mut slot = self.inner.blocking_lock();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        *slot = Some(rx);
     }
 
     pub fn clear(&self) {
-        *self.inner.blocking_lock() = None;
+        let mut slot = self.inner.blocking_lock();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        *slot = None;
     }
 
-    async fn install_async(&self, rx: BodyRx) {
-        *self.inner.lock().await = Some(rx);
-    }
-
-    async fn read(&self) -> Result<Option<Vec<u8>>, String> {
-        let mut guard = self.inner.lock().await;
-        let Some(rx) = guard.as_mut() else {
-            return Ok(None);
+    async fn read(
+        &self,
+        cancel: &AtomicBool,
+        deadline: Instant,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let (generation, mut rx) = {
+            let mut slot = self.inner.lock().await;
+            let generation = self.generation.load(Ordering::SeqCst);
+            let Some(rx) = slot.take() else {
+                return Ok(None);
+            };
+            (generation, rx)
         };
-        match rx.recv().await {
-            Some(Ok(chunk)) => Ok(Some(chunk)),
-            Some(Err(err)) => Err(err),
-            None => {
-                *guard = None;
-                Ok(None)
+        let received = tokio::select! {
+            biased;
+            () = cancelled(cancel, deadline) => return Err(interrupt_err(cancel, deadline)),
+            received = rx.recv() => received,
+        };
+        match received {
+            Some(Ok(chunk)) => {
+                let mut slot = self.inner.lock().await;
+                if self.generation.load(Ordering::SeqCst) != generation {
+                    return Err(io_err(InterruptReason::Cancelled));
+                }
+                *slot = Some(rx);
+                Ok(Some(chunk))
             }
+            Some(Err(err)) => Err(err),
+            None => Ok(None),
         }
     }
 }
@@ -205,12 +328,21 @@ impl SendSlot {
         *self.inner.blocking_lock() = None;
     }
 
-    async fn send(&self, bytes: Vec<u8>) -> Result<(), String> {
+    async fn send(
+        &self,
+        bytes: Vec<u8>,
+        cancel: &AtomicBool,
+        deadline: Instant,
+    ) -> Result<(), String> {
         let tx = {
             let guard = self.inner.lock().await;
             guard.clone().ok_or_else(|| "websocket is not connected".to_string())?
         };
-        tx.send(bytes).await.map_err(|_| "websocket closed".into())
+        tokio::select! {
+            biased;
+            () = cancelled(cancel, deadline) => Err(interrupt_err(cancel, deadline)),
+            result = tx.send(bytes) => result.map_err(|_| "websocket closed".into()),
+        }
     }
 
     async fn close(&self) {
@@ -473,11 +605,18 @@ pub struct IoHandle {
     tx: UnboundedSender<IoWork>,
     next_id: Arc<AtomicU64>,
     request_id: Arc<AtomicU64>,
+    operation_cancels: Arc<StdMutex<HashMap<OpId, OperationControl>>>,
     pub inbound: StreamSlot,
-    pub outbound: StreamSlot,
+    pub outbound: StreamRegistry,
     pub ws_in: StreamSlot,
     pub ws_out: SendSlot,
     pub client_ws: ClientWebSocketSlot,
+}
+
+#[derive(Clone)]
+struct OperationControl {
+    request_id: u64,
+    cancel: Arc<AtomicBool>,
 }
 
 /// One host I/O op plus the HTTP request id that submitted it.
@@ -494,8 +633,43 @@ impl IoHandle {
     pub fn submit(&self, request: impl FnOnce(OpId) -> IoRequest) -> OpId {
         let id = OpId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let request_id = self.request_id.load(Ordering::Relaxed);
-        let _ = self.tx.send(IoWork { request: request(id), request_id });
+        self.operation_cancels
+            .lock()
+            .expect("operation cancellation registry")
+            .insert(id, OperationControl { request_id, cancel: Arc::new(AtomicBool::new(false)) });
+        if self.tx.send(IoWork { request: request(id), request_id }).is_err() {
+            self.finish(id);
+        }
         id
+    }
+
+    pub fn cancel(&self, id: OpId) -> bool {
+        let cancels = self.operation_cancels.lock().expect("operation cancellation registry");
+        let Some(operation) = cancels.get(&id) else {
+            return false;
+        };
+        operation.cancel.store(true, Ordering::SeqCst);
+        true
+    }
+
+    /// Cancel every operation owned by one completed HTTP request.
+    ///
+    /// Entries remain registered until their completion is consumed so work
+    /// that has already been queued still observes the cancellation flag.
+    pub fn cancel_request(&self, request_id: u64) -> Vec<OpId> {
+        let operations = self.operation_cancels.lock().expect("operation cancellation registry");
+        operations
+            .iter()
+            .filter(|(_, operation)| operation.request_id == request_id)
+            .map(|(id, operation)| {
+                operation.cancel.store(true, Ordering::SeqCst);
+                *id
+            })
+            .collect()
+    }
+
+    pub fn finish(&self, id: OpId) {
+        self.operation_cancels.lock().expect("operation cancellation registry").remove(&id);
     }
 }
 
@@ -506,10 +680,11 @@ pub struct Reactor {
 
 pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
     let inbound = StreamSlot::new();
-    let outbound = StreamSlot::new();
+    let outbound = StreamRegistry::new();
     let ws_in = StreamSlot::new();
     let ws_out = SendSlot::new();
     let client_ws = ClientWebSocketSlot::default();
+    let operation_cancels = Arc::new(StdMutex::new(HashMap::new()));
     let (req_tx, req_rx) = unbounded_channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let inbound_task = inbound.clone();
@@ -517,6 +692,7 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
     let ws_in_task = ws_in.clone();
     let ws_out_task = ws_out.clone();
     let client_ws_task = client_ws.clone();
+    let operation_cancels_task = operation_cancels.clone();
     io_handle().spawn(async move {
         run_reactor(
             req_rx,
@@ -530,6 +706,7 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
                 ws_out: ws_out_task,
                 client_ws: client_ws_task,
             },
+            operation_cancels_task,
         )
         .await;
     });
@@ -539,6 +716,7 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
             tx: req_tx,
             next_id: Arc::new(AtomicU64::new(1)),
             request_id: Arc::new(AtomicU64::new(0)),
+            operation_cancels,
             inbound,
             outbound,
             ws_in,
@@ -558,14 +736,16 @@ pub fn open_bridge() -> (Reactor, UnboundedReceiver<IoWork>, std::sync::mpsc::Se
 {
     let (req_tx, req_rx) = unbounded_channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let operation_cancels = Arc::new(StdMutex::new(HashMap::new()));
     (
         Reactor {
             io: IoHandle {
                 tx: req_tx,
                 next_id: Arc::new(AtomicU64::new(1)),
                 request_id: Arc::new(AtomicU64::new(0)),
+                operation_cancels,
                 inbound: StreamSlot::new(),
-                outbound: StreamSlot::new(),
+                outbound: StreamRegistry::new(),
                 ws_in: StreamSlot::new(),
                 ws_out: SendSlot::new(),
                 client_ws: ClientWebSocketSlot::default(),
@@ -579,7 +759,7 @@ pub fn open_bridge() -> (Reactor, UnboundedReceiver<IoWork>, std::sync::mpsc::Se
 
 struct IoSlots {
     inbound: StreamSlot,
-    outbound: StreamSlot,
+    outbound: StreamRegistry,
     ws_in: StreamSlot,
     ws_out: SendSlot,
     client_ws: ClientWebSocketSlot,
@@ -591,10 +771,18 @@ async fn run_reactor(
     cancel: Arc<AtomicBool>,
     deadline: Instant,
     slots: IoSlots,
+    operation_cancels: Arc<StdMutex<HashMap<OpId, OperationControl>>>,
 ) {
     while let Some(work) = requests.recv().await {
+        let operation_id = work.request.id();
+        let operation_cancel = operation_cancels
+            .lock()
+            .expect("operation cancellation registry")
+            .get(&operation_id)
+            .map(|operation| operation.cancel.clone())
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
         let completions = completions.clone();
-        let cancel = cancel.clone();
+        let isolate_cancel = cancel.clone();
         let slots = IoSlots {
             inbound: slots.inbound.clone(),
             outbound: slots.outbound.clone(),
@@ -603,7 +791,16 @@ async fn run_reactor(
             client_ws: slots.client_ws.clone(),
         };
         tokio::spawn(async move {
-            let completion = execute(work.request, work.request_id, cancel, deadline, slots).await;
+            let execution =
+                execute(work.request, work.request_id, operation_cancel.clone(), deadline, slots);
+            tokio::pin!(execution);
+            let completion = tokio::select! {
+                completion = &mut execution => completion,
+                () = cancellation_flagged(&isolate_cancel) => {
+                    operation_cancel.store(true, Ordering::SeqCst);
+                    execution.await
+                }
+            };
             let _ = completions.send(completion);
         });
     }
@@ -634,10 +831,14 @@ async fn execute(
         IoRequest::SecretRef { id, name } => {
             IoCompletion { id, result: crate::secrets::refer(&name) }
         }
-        IoRequest::ReadBody { id } => IoCompletion { id, result: read_chunk(&slots.inbound).await },
-        IoRequest::HttpRead { id } => {
-            IoCompletion { id, result: read_chunk(&slots.outbound).await }
+        IoRequest::ReadBody { id } => {
+            IoCompletion { id, result: read_chunk(&slots.inbound, &cancel, deadline).await }
         }
+        IoRequest::HttpRead { id, body_id } => IoCompletion {
+            id,
+            result: read_http_chunk_interruptible(&slots.outbound, body_id, &cancel, deadline)
+                .await,
+        },
         IoRequest::HttpGet { id, url, method, headers_json, body } => IoCompletion {
             id,
             result: outbound_fetch(
@@ -651,10 +852,16 @@ async fn execute(
             )
             .await,
         },
-        IoRequest::WsRead { id } => IoCompletion { id, result: read_chunk(&slots.ws_in).await },
+        IoRequest::WsRead { id } => {
+            IoCompletion { id, result: read_chunk(&slots.ws_in, &cancel, deadline).await }
+        }
         IoRequest::WsSend { id, data } => IoCompletion {
             id,
-            result: slots.ws_out.send(data.into_bytes()).await.map(|()| Value::Null),
+            result: slots
+                .ws_out
+                .send(data.into_bytes(), &cancel, deadline)
+                .await
+                .map(|()| Value::Null),
         },
         IoRequest::WsClose { id } => {
             slots.ws_out.close().await;
@@ -796,7 +1003,10 @@ where
     tokio::select! {
         biased;
         result = &mut task => result.map_err(|err| err.to_string())?,
-        _ = cancelled(&cancel, deadline) => Err(interrupt_err(&cancel, deadline)),
+        _ = cancelled(&cancel, deadline) => {
+            let _ = task.await;
+            Err(interrupt_err(&cancel, deadline))
+        },
     }
 }
 
@@ -839,12 +1049,29 @@ where
     }
 }
 
-async fn read_chunk(slot: &StreamSlot) -> Result<Value, String> {
-    match slot.read().await {
+async fn read_chunk(
+    slot: &StreamSlot,
+    cancel: &AtomicBool,
+    deadline: Instant,
+) -> Result<Value, String> {
+    match slot.read(cancel, deadline).await {
         Ok(Some(bytes)) => Ok(Value::String(String::from_utf8_lossy(&bytes).into_owned())),
         Ok(None) => Ok(Value::Null),
         Err(err) => Err(err),
     }
+}
+
+async fn read_http_chunk_interruptible(
+    streams: &StreamRegistry,
+    body_id: u64,
+    cancel: &AtomicBool,
+    deadline: Instant,
+) -> Result<Value, String> {
+    streams.read(body_id, cancel, deadline).await.map(|chunk| {
+        chunk.map_or(Value::Null, |bytes| {
+            Value::String(String::from_utf8_lossy(&bytes).into_owned())
+        })
+    })
 }
 
 const MAX_REDIRECTS: u8 = 20;
@@ -862,7 +1089,7 @@ async fn outbound_fetch(
     body: &str,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
-    outbound: StreamSlot,
+    outbound: StreamRegistry,
 ) -> Result<Value, String> {
     let mut method = normalize_method(method)?;
     let mut headers = crate::fetch_policy::expand_headers_json(headers_json)?;
@@ -893,7 +1120,14 @@ async fn outbound_fetch(
         let code = status.as_u16();
         let headers_json = response_headers_json(hop.response.headers());
         let (tx, rx) = mpsc::channel(STREAM_WINDOW);
-        outbound.install_async(rx).await;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(interrupt_err(&cancel, deadline));
+        }
+        let body_id = outbound.install(rx).await;
+        if cancel.load(Ordering::SeqCst) {
+            outbound.clear_async(body_id).await;
+            return Err(interrupt_err(&cancel, deadline));
+        }
         io_handle().spawn(async move {
             let _keep_alive = hop.sender;
             pump_http_body(hop.response.into_body(), tx, cancel, deadline).await;
@@ -901,6 +1135,7 @@ async fn outbound_fetch(
         return Ok(Value::Record(vec![
             ("status".into(), Value::Number(f64::from(code))),
             ("headers".into(), Value::String(headers_json)),
+            ("bodyId".into(), Value::Number(body_id as f64)),
         ]));
     }
     Err("too many redirects".into())
@@ -1093,6 +1328,12 @@ pub(crate) async fn cancelled(cancel: &AtomicBool, deadline: Instant) {
     }
 }
 
+async fn cancellation_flagged(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
 fn interrupt_err(cancel: &AtomicBool, deadline: Instant) -> String {
     if cancel.load(Ordering::SeqCst) {
         io_err(InterruptReason::Cancelled)
@@ -1120,6 +1361,7 @@ async fn pump_http_body(
         }
         let frame = tokio::select! {
             biased;
+            () = tx.closed() => return,
             _ = cancelled(&cancel, deadline) => {
                 let _ = tx.send(Err(interrupt_err(&cancel, deadline))).await;
                 return;
@@ -1143,5 +1385,144 @@ async fn pump_http_body(
             }
             None => return,
         }
+    }
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+
+    fn active_operation() -> (Arc<AtomicBool>, Instant) {
+        (Arc::new(AtomicBool::new(false)), Instant::now() + Duration::from_secs(1))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clear_all_invalidates_an_in_flight_read() {
+        let streams = StreamRegistry::new();
+        let (tx, rx) = mpsc::channel(1);
+        let body_id = streams.install(rx).await;
+        let read_streams = streams.clone();
+        let (cancel, deadline) = active_operation();
+        let read = tokio::spawn(async move { read_streams.read(body_id, &cancel, deadline).await });
+        loop {
+            if streams.inner.lock().await.in_flight.contains(&body_id) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        tokio::task::block_in_place(|| streams.clear_all());
+        tx.send(Ok(b"late".to_vec())).await.expect("late chunk");
+        let error = read.await.expect("join").expect_err("cleared read");
+        assert!(error.contains("Cancelled"), "unexpected error: {error}");
+        let state = streams.inner.lock().await;
+        assert!(state.streams.is_empty());
+        assert!(state.in_flight.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clear_invalidates_only_the_selected_in_flight_read() {
+        let streams = StreamRegistry::new();
+        let (first_tx, first_rx) = mpsc::channel(1);
+        let (second_tx, second_rx) = mpsc::channel(1);
+        let first_id = streams.install(first_rx).await;
+        let second_id = streams.install(second_rx).await;
+        let read_streams = streams.clone();
+        let (cancel, deadline) = active_operation();
+        let first_read =
+            tokio::spawn(async move { read_streams.read(first_id, &cancel, deadline).await });
+        loop {
+            if streams.inner.lock().await.in_flight.contains(&first_id) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        tokio::task::block_in_place(|| streams.clear(first_id));
+        first_tx.send(Ok(b"late".to_vec())).await.expect("late first chunk");
+        second_tx.send(Ok(b"kept".to_vec())).await.expect("second chunk");
+        let error = first_read.await.expect("join").expect_err("cleared read");
+        assert!(error.contains("Cancelled"), "unexpected error: {error}");
+        let (cancel, deadline) = active_operation();
+        assert_eq!(
+            streams.read(second_id, &cancel, deadline).await.expect("second read"),
+            Some(b"kept".to_vec())
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelling_a_read_cleans_its_in_flight_state() {
+        let streams = StreamRegistry::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let body_id = streams.install(rx).await;
+        let read_streams = streams.clone();
+        let (cancel, deadline) = active_operation();
+        let read_cancel = cancel.clone();
+        let read =
+            tokio::spawn(async move { read_streams.read(body_id, &read_cancel, deadline).await });
+        loop {
+            if streams.inner.lock().await.in_flight.contains(&body_id) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        tokio::task::block_in_place(|| streams.clear(body_id));
+        cancel.store(true, Ordering::SeqCst);
+        let error = read.await.expect("join").expect_err("cancelled read");
+        assert!(error.contains("Cancelled"), "unexpected error: {error}");
+        let state = streams.inner.lock().await;
+        assert!(state.streams.is_empty());
+        assert!(state.in_flight.is_empty());
+        assert!(state.cancelled.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelling_a_backpressured_websocket_send_releases_the_sender() {
+        let slot = SendSlot::new();
+        let (tx, _rx) = mpsc::channel(1);
+        tokio::task::block_in_place(|| slot.install(tx));
+        let (cancel, deadline) = active_operation();
+        slot.send(b"first".to_vec(), &cancel, deadline).await.expect("fill channel");
+        let send_slot = slot.clone();
+        let send_cancel = cancel.clone();
+        let send = tokio::spawn(async move {
+            send_slot.send(b"blocked".to_vec(), &send_cancel, deadline).await
+        });
+        tokio::task::yield_now().await;
+
+        cancel.store(true, Ordering::SeqCst);
+        let error = send.await.expect("join").expect_err("cancelled send");
+        assert!(error.contains("Cancelled"), "unexpected error: {error}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelling_blocking_work_waits_for_it_to_quiesce() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let side_effect = Arc::new(AtomicBool::new(false));
+        let work_effect = side_effect.clone();
+        let work_cancel = cancel.clone();
+        let work = tokio::spawn(async move {
+            run_blocking(work_cancel, Instant::now() + Duration::from_secs(1), move || {
+                started_tx.send(()).expect("started");
+                release_rx.recv().expect("released");
+                work_effect.store(true, Ordering::SeqCst);
+                Ok::<_, String>(())
+            })
+            .await
+        });
+        tokio::task::block_in_place(|| {
+            started_rx.recv_timeout(Duration::from_secs(1)).expect("blocking work started")
+        });
+
+        cancel.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!work.is_finished(), "cancellation detached blocking work");
+        release_tx.send(()).expect("release work");
+        let error = work.await.expect("join").expect_err("cancelled work");
+        assert!(error.contains("Cancelled"), "unexpected error: {error}");
+        assert!(side_effect.load(Ordering::SeqCst));
     }
 }

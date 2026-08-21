@@ -16,5 +16,11 @@ The main system boundaries are:
 - Tasks: Cron, Queue, MCP, TaskRPC, and durable execution
 - Operations: structured logs, OTLP export, release evidence, and recovery procedures
 
+The [JavaScript runtime convergence contract](javascript-runtime-convergence.md)
+defines ownership between `runtime-js`, QuickJS bindings, engine-neutral APIs,
+and application packages.
+The [JavaScript runtime compatibility matrix](javascript-runtime-compatibility.md)
+lists the supported server-side Web API subset and explicit exclusions.
+
 Production deployment and incident procedures are in the
 [Production operations runbook](../operations/production.md).

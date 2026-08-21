@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "profile": "tysel-server-web-subset",
+  "stability": "stable",
+  "apis": [
+    {
+      "name": "URL and URLSearchParams",
+      "status": "partial",
+      "supported": [
+        "absolute and relative authority-based URLs",
+        "dot-segment path normalization",
+        "live search and searchParams mutation",
+        "iterable and record URLSearchParams initialization"
+      ],
+      "unsupported": ["full WHATWG parsing", "IDNA", "username/password properties", "file and blob URLs"]
+    },
+    {
+      "name": "Headers",
+      "status": "partial",
+      "supported": ["record, Headers, and pair initialization", "get/set/append/delete/has", "stable iteration"],
+      "unsupported": ["browser header guards", "Set-Cookie splitting", "full HTTP token validation"]
+    },
+    {
+      "name": "Request and Response",
+      "status": "partial",
+      "supported": ["string bodies", "single-use json/text/arrayBuffer consumption", "bodyUsed", "buffered request and response clone", "streamed host request and response bodies"],
+      "unsupported": ["public ReadableStream bodies", "formData/blob helpers", "stream teeing and streamed response clone", "browser cache/credentials/mode semantics"]
+    },
+    {
+      "name": "TextEncoder and TextDecoder",
+      "status": "partial",
+      "supported": ["UTF-8 encode and decode"],
+      "unsupported": ["legacy encodings", "streaming decode options"]
+    },
+    {
+      "name": "Timers",
+      "status": "supported",
+      "supported": ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "isolate reset cleanup"],
+      "unsupported": []
+    },
+    {
+      "name": "Event and EventTarget",
+      "status": "partial",
+      "supported": ["function and object listeners", "listener deduplication and removal", "once and AbortSignal options", "preventDefault and immediate propagation stop"],
+      "unsupported": ["DOM event trees", "capture and bubble phases", "browser exception reporting"]
+    },
+    {
+      "name": "AbortController and AbortSignal",
+      "status": "partial",
+      "supported": ["abort reason", "throwIfAborted", "AbortSignal.abort", "AbortSignal.timeout", "fetch and response-body cancellation"],
+      "unsupported": ["AbortSignal.any"]
+    },
+    {
+      "name": "Crypto",
+      "status": "partial",
+      "supported": ["getRandomValues", "SHA-256/384/512 digest", "raw HMAC import/sign/verify"],
+      "unsupported": ["randomUUID", "key export", "encryption", "asymmetric algorithms"]
+    },
+    {
+      "name": "fetch",
+      "status": "partial",
+      "supported": ["HTTP methods allowed by host policy", "headers and buffered request bodies", "redirect policy", "streamed response consumption", "AbortSignal cancellation"],
+      "unsupported": ["streaming request bodies", "multipart/form data", "browser cache/credentials/mode semantics"]
+    },
+    {
+      "name": "WebSocket",
+      "status": "partial",
+      "supported": ["outbound and accepted sockets", "text messages", "open/message/error/close listeners", "once and listener removal", "native cleanup on isolate reuse"],
+      "unsupported": ["subprotocol negotiation", "extensions", "Blob messages", "bufferedAmount"]
+    }
+  ]
+}

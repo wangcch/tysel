@@ -1,3 +1,7 @@
+import type { DurableContext } from "@tysel/runtime-js/durable";
+
+export type { DurableContext, DurableRetryPolicy } from "@tysel/runtime-js/durable";
+
 export interface RequestContext {
   readonly requestId: string;
   readonly deadlineMs: number;
@@ -33,19 +37,6 @@ export interface AppDefinition {
   fetch?: FetchHandler;
   tasks?: Record<string, AppTask>;
   durable?: Record<string, (ctx: DurableContext, input: unknown) => Promise<unknown>>;
-}
-
-export interface DurableContext {
-  step<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
-  effect<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
-  sleep(duration: string): Promise<void>;
-  waitForSignal<T = unknown>(name: string): Promise<T>;
-  retry<T>(
-    policy: { maxAttempts?: number; delay?: string; factor?: number; maxDelay?: string },
-    fn: (attempt: number) => Promise<T> | T,
-  ): Promise<T>;
-  now(): Date;
-  random(): number;
 }
 
 export interface DurableStartResult {

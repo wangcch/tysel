@@ -23,9 +23,21 @@ use tysel_engine::{EngineError, HttpRequest, InterruptReason, IsolateConfig, Val
 use tysel_task::TaskId;
 
 use crate::{
-    DurableSession, IncomingHttp, IsolateCancel, IsolatePool, STREAM_WINDOW, encode_durable_export,
-    eval, eval_cancellable, eval_durable, eval_durable_module, inspect_durable_exports,
+    DurableSession, IncomingHttp, IsolateCancel, IsolatePool, QUICKJS_ADAPTER_ID, STREAM_WINDOW,
+    encode_durable_export, eval, eval_cancellable, eval_durable, eval_durable_module,
+    inspect_durable_exports, runtime_compatibility,
 };
+
+#[test]
+fn runtime_compatibility_matches_packaging_contracts() {
+    let compatibility = runtime_compatibility().expect("runtime compatibility manifest");
+
+    assert_eq!(compatibility.schema_version, 2);
+    assert_eq!(compatibility.runtime_js_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(compatibility.quickjs_adapter, QUICKJS_ADAPTER_ID);
+    assert_eq!(compatibility.web_api.profile, "tysel-server-web-subset");
+    assert_eq!(compatibility.web_api.compatibility_schema_version, 1);
+}
 
 fn config() -> IsolateConfig {
     IsolateConfig {
@@ -807,6 +819,348 @@ fn text_decoder_rejects_non_utf8() {
 }
 
 #[test]
+fn web_api_collections_and_body_helpers_follow_supported_contracts() {
+    let value = eval(
+        r##"(async () => {
+            const headers = new Headers([
+              ["X-Z", "last"],
+              ["x-a", "first"],
+              ["X-Z", "again"],
+            ]);
+            headers.set("x-middle", "value");
+            headers.delete("X-MIDDLE");
+
+            const params = new URLSearchParams("q=hello+world&q=again&drop=1");
+            params.delete("drop");
+            params.append("a", "space value");
+            params.sort();
+
+            const url = new URL("/v1/items?q=1#result", "https://example.com/base");
+            const relative = new URL("../next/./item?q=2#done", "https://example.com/a/b/c");
+            const queryOnly = new URL("?q=3", "https://example.com/a/b?old=1#old");
+            const hashOnly = new URL("#new", "https://example.com/a/b?old=1#old");
+            const emptyReference = new URL("", "https://example.com/a/b?old=1#old");
+            const ipv6 = new URL("http://[::1]:8080/a/../b");
+            const linked = new URL("https://example.com/start?first=1");
+            const stableParams = linked.searchParams;
+            linked.searchParams.append("name", "a ~ b");
+            const afterParams = linked.href;
+            linked.search = "?next=2&next=3";
+            linked.searchParams.set("next", "final");
+            linked.pathname = "v2/../items";
+            linked.hash = "result";
+            linked.port = "8443";
+            const request = new Request(url.href, {
+              method: "post",
+              headers,
+              body: JSON.stringify({ id: 7 }),
+            });
+            const clone = request.clone();
+            const response = Response.json(await clone.json(), { status: 201 });
+            let invalidJson = "";
+            try { Response.json(undefined); } catch (error) { invalidJson = error.name; }
+            const buffered = new Response("hello");
+            const bufferedClone = buffered.clone();
+            const bufferedText = await buffered.text();
+            let repeatedBody = "";
+            let consumedClone = "";
+            try { await buffered.text(); } catch (error) { repeatedBody = error.name; }
+            try { buffered.clone(); } catch (error) { consumedClone = error.name; }
+            const cloneBytes = Array.from(new Uint8Array(await bufferedClone.arrayBuffer()));
+
+            return JSON.stringify({
+              headers: Array.from(headers),
+              all: params.getAll("q"),
+              params: params.toString(),
+              url: [url.protocol, url.host, url.pathname, url.search, url.hash],
+              resolved: [relative.href, queryOnly.href, hashOnly.href, emptyReference.href],
+              ipv6: [ipv6.hostname, ipv6.port, ipv6.pathname],
+              linked: [
+                afterParams,
+                linked.href,
+                stableParams === linked.searchParams,
+                linked.searchParams.size,
+                linked.searchParams.getAll("next"),
+              ],
+              request: [clone.method, clone.headers.get("x-z")],
+              body: [buffered.bodyUsed, bufferedText, repeatedBody, consumedClone, cloneBytes],
+              response: [response.status, response.ok, response.headers.get("content-type"), await response.json(), invalidJson],
+            });
+        })()"##,
+        config(),
+    )
+    .expect("web API conformance");
+    assert_eq!(
+        value,
+        Value::String(
+            r##"{"headers":[["x-a","first"],["x-z","last, again"]],"all":["hello world","again"],"params":"a=space+value&q=hello+world&q=again","url":["https:","example.com","/v1/items","?q=1","#result"],"resolved":["https://example.com/a/next/item?q=2#done","https://example.com/a/b?q=3","https://example.com/a/b?old=1#new","https://example.com/a/b?old=1"],"ipv6":["[::1]","8080","/b"],"linked":["https://example.com/start?first=1&name=a+%7E+b","https://example.com:8443/items?next=final#result",true,1,["final"]],"request":["POST","last, again"],"body":[true,"hello","TypeError","TypeError",[104,101,108,108,111]],"response":[201,true,"application/json",{"id":7},"TypeError"]}"##.into()
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn isolate_reuse_discards_fire_and_forget_callbacks() {
+    let delayed = serve_delayed(Duration::from_millis(40));
+    let source = r#"
+globalThis.requestState = "clean";
+export default {
+  async fetch(request) {
+    if (new URL(request.url).pathname === "/open") {
+      fetch("http://__DELAYED__/").then(() => { globalThis.requestState = "leaked"; });
+      return new Response("opened");
+    }
+    await tysel.sleep(80);
+    return new Response(globalThis.requestState);
+  },
+}
+"#
+    .replace("__DELAYED__", &delayed.to_string());
+    let pool = IsolatePool::spawn(1, &source, config()).expect("spawn isolate");
+    let (_, mut first_body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/open".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 41,
+        })
+        .await
+        .expect("first request");
+    while first_body.recv().await.is_some() {}
+
+    let (_, mut second_body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/reuse".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 42,
+        })
+        .await
+        .expect("second request");
+    let mut bytes = Vec::new();
+    while let Some(chunk) = second_body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes, b"clean");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn module_initialization_async_work_is_cancelled_before_first_request() {
+    let source = r#"
+globalThis.moduleState = "clean";
+setTimeout(() => { globalThis.moduleState = "leaked"; }, 20);
+tysel.sleep(20).then(() => { globalThis.moduleState = "leaked"; });
+export default {
+  async fetch() {
+    await tysel.sleep(60);
+    return new Response(globalThis.moduleState);
+  },
+}
+"#;
+    let pool = IsolatePool::spawn(1, source, config()).expect("spawn isolate");
+    let (_, mut body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 45,
+        })
+        .await
+        .expect("first request");
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes, b"clean");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn isolate_reuse_cancels_abandoned_request_body_reads() {
+    let source = r#"
+export default {
+  fetch(request) {
+    if (new URL(request.url).pathname === "/open") {
+      request.text();
+      return new Response("opened");
+    }
+    return new Response("reused");
+  },
+}
+"#;
+    let pool = IsolatePool::spawn(1, source, config()).expect("spawn isolate");
+    let (_body_tx, body_rx) = tokio::sync::mpsc::channel(STREAM_WINDOW);
+    let (_, mut first_body) = pool
+        .dispatch_incoming(IncomingHttp {
+            method: "POST".into(),
+            url: "http://tysel.local/open".into(),
+            headers: vec![],
+            body: body_rx,
+            ws_in: None,
+            ws_out: None,
+            request_id: 51,
+        })
+        .await
+        .expect("first request");
+    while first_body.recv().await.is_some() {}
+
+    let second = tokio::time::timeout(
+        Duration::from_millis(500),
+        pool.dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/reuse".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 52,
+        }),
+    )
+    .await
+    .expect("worker teardown must not wait for the abandoned body sender")
+    .expect("second request");
+    let (_, mut second_body) = second;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = second_body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes, b"reused");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_body_limit_completion_does_not_poison_reused_isolate() {
+    let source = r#"
+export default {
+  async fetch(request) {
+    if (new URL(request.url).pathname === "/open") {
+      request.text();
+      const stop = Date.now() + 20;
+      while (Date.now() < stop) {}
+      return new Response("opened");
+    }
+    await tysel.sleep(20);
+    return new Response("reused");
+  },
+}
+"#;
+    let pool = IsolatePool::spawn(1, source, config()).expect("spawn isolate");
+    let (body_tx, body_rx) = tokio::sync::mpsc::channel(STREAM_WINDOW);
+    body_tx.send(Err(EngineError::BodyTooLarge.to_string())).await.unwrap();
+    drop(body_tx);
+    let (_, mut first_body) = pool
+        .dispatch_incoming(IncomingHttp {
+            method: "POST".into(),
+            url: "http://tysel.local/open".into(),
+            headers: vec![],
+            body: body_rx,
+            ws_in: None,
+            ws_out: None,
+            request_id: 61,
+        })
+        .await
+        .expect("first request ignores its abandoned body promise");
+    while first_body.recv().await.is_some() {}
+
+    let (_, mut second_body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/reuse".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 62,
+        })
+        .await
+        .expect("stale body completion must be ignored");
+    let mut bytes = Vec::new();
+    while let Some(chunk) = second_body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes, b"reused");
+}
+
+#[test]
+fn abort_controller_is_idempotent_and_dispatches_once() {
+    let value = eval(
+        r#"(async () => {
+            const controller = new AbortController();
+            let events = 0;
+            controller.signal.onabort = () => events++;
+            controller.signal.addEventListener("abort", () => events++, { once: true });
+            controller.abort();
+            controller.abort(new Error("replacement"));
+            let thrown = "";
+            try { controller.signal.throwIfAborted(); } catch (error) { thrown = error.name; }
+            const timeout = AbortSignal.timeout(5);
+            await new Promise((resolve) => timeout.addEventListener("abort", resolve));
+            return JSON.stringify({
+              aborted: controller.signal.aborted,
+              reason: controller.signal.reason.name,
+              events,
+              thrown,
+              staticReason: AbortSignal.abort("stopped").reason,
+              timeout: timeout.reason.name,
+            });
+        })()"#,
+        config(),
+    )
+    .expect("AbortController conformance");
+    assert_eq!(
+        value,
+        Value::String(
+            r#"{"aborted":true,"reason":"AbortError","events":2,"thrown":"AbortError","staticReason":"stopped","timeout":"TimeoutError"}"#.into()
+        )
+    );
+}
+
+#[test]
+fn event_target_listener_lifecycle_matches_supported_contract() {
+    let value = eval(
+        r#"(() => {
+            const target = new EventTarget();
+            const controller = new AbortController();
+            const calls = [];
+            const duplicate = () => calls.push("duplicate");
+            const removed = () => calls.push("removed");
+            target.addEventListener("work", duplicate);
+            target.addEventListener("work", duplicate);
+            target.addEventListener("work", { handleEvent(event) {
+              calls.push(event.target === target && event.currentTarget === target ? "object" : "bad-target");
+            } }, { once: true });
+            target.addEventListener("work", removed, { signal: controller.signal });
+            controller.abort();
+
+            const first = new Event("work", { cancelable: true });
+            target.addEventListener("work", (event) => event.preventDefault(), { once: true });
+            const accepted = target.dispatchEvent(first);
+            target.dispatchEvent(new Event("work"));
+
+            const stopped = new EventTarget();
+            stopped.addEventListener("stop", (event) => {
+              calls.push("stop");
+              event.stopImmediatePropagation();
+            });
+            stopped.addEventListener("stop", () => calls.push("unreachable"));
+            stopped.dispatchEvent(new Event("stop"));
+
+            return JSON.stringify({
+              calls,
+              accepted,
+              defaultPrevented: first.defaultPrevented,
+              targetRetained: first.target === target,
+              currentCleared: first.currentTarget === null,
+            });
+        })()"#,
+        config(),
+    )
+    .expect("EventTarget conformance");
+    assert_eq!(
+        value,
+        Value::String(
+            r#"{"calls":["duplicate","object","duplicate","stop"],"accepted":false,"defaultPrevented":true,"targetRetained":true,"currentCleared":true}"#.into()
+        )
+    );
+}
+
+#[test]
 fn crypto_get_random_values_fills_buffer() {
     let value = eval(
         r#"(() => {
@@ -896,22 +1250,60 @@ fn crypto_subtle_enforces_hmac_key_usages() {
 fn crypto_get_random_values_enforces_quota() {
     let value = eval(
         r#"(() => {
+            const errors = {};
             try {
                 crypto.getRandomValues(new Uint8Array(65537));
-                return "accepted";
+                errors.quota = "accepted";
             } catch (err) {
-                return String(err);
+                errors.quota = [err.name, err instanceof DOMException];
             }
+            for (const [name, value] of [
+              ["float", new Float32Array(1)],
+              ["view", new DataView(new ArrayBuffer(1))],
+              ["buffer", new ArrayBuffer(1)],
+            ]) {
+              try { crypto.getRandomValues(value); errors[name] = "accepted"; }
+              catch (err) { errors[name] = err.name; }
+            }
+            return JSON.stringify(errors);
         })()"#,
         config(),
     )
     .expect("eval");
-    match value {
-        Value::String(message) => {
-            assert!(message.contains("QuotaExceededError"), "unexpected error: {message}");
-        }
-        other => panic!("expected error string, got {other:?}"),
-    }
+    assert_eq!(
+        value,
+        Value::String(
+            r#"{"quota":["QuotaExceededError",true],"float":"TypeMismatchError","view":"TypeMismatchError","buffer":"TypeMismatchError"}"#.into()
+        )
+    );
+}
+
+#[test]
+fn crypto_subtle_uses_stable_error_names_for_invalid_inputs() {
+    let value = eval(
+        r#"(async () => {
+            const raw = new Uint8Array([1, 2, 3]);
+            const errors = {};
+            const capture = async (name, operation) => {
+              try { await operation(); errors[name] = "accepted"; }
+              catch (error) { errors[name] = [error.name, error instanceof DOMException]; }
+            };
+            await capture("digest", () => crypto.subtle.digest("MD5", raw));
+            await capture("format", () => crypto.subtle.importKey("jwk", raw, "HMAC", false, ["sign"]));
+            await capture("algorithm", () => crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["sign"]));
+            await capture("duplicate", () => crypto.subtle.importKey("raw", raw, "HMAC", false, ["sign", "sign"]));
+            await capture("data", () => crypto.subtle.digest("SHA-256", "text"));
+            return JSON.stringify(errors);
+        })()"#,
+        config(),
+    )
+    .expect("Web Crypto error contract");
+    assert_eq!(
+        value,
+        Value::String(
+            r#"{"digest":["NotSupportedError",true],"format":["NotSupportedError",true],"algorithm":["NotSupportedError",true],"duplicate":["SyntaxError",true],"data":["TypeError",false]}"#.into()
+        )
+    );
 }
 
 #[test]
@@ -1307,6 +1699,28 @@ async fn outbound_http_get_reads_body() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn concurrent_fetch_responses_keep_independent_body_streams() {
+    let first = serve_bytes(Bytes::from_static(b"first"));
+    let second = serve_bytes(Bytes::from_static(b"second"));
+    let source = format!(
+        r#"(async () => {{
+            const [first, second] = await Promise.all([
+              fetch("http://{first}/"),
+              fetch("http://{second}/"),
+            ]);
+            const secondText = await second.text();
+            const firstText = await first.text();
+            return secondText + ":" + firstText;
+        }})()"#
+    );
+    let value = tokio::task::spawn_blocking(move || eval(&source, config()))
+        .await
+        .expect("join")
+        .expect("concurrent fetch");
+    assert_eq!(value, Value::String("second:first".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_stops_outbound_fetch() {
     let addr = serve_slow();
     let url = format!("http://{addr}/");
@@ -1332,6 +1746,141 @@ async fn cancel_stops_outbound_fetch() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn abort_signal_cancels_fetch_operation_without_poisoning_followup_io() {
+    let slow = serve_slow();
+    let fast = serve_bytes(Bytes::from_static(b"ok"));
+    let source = format!(
+        r#"(async () => {{
+            const controller = new AbortController();
+            setTimeout(() => controller.abort(), 30);
+            let aborted = "";
+            try {{
+              await fetch("http://{slow}/", {{ signal: controller.signal }});
+            }} catch (error) {{
+              aborted = error.name;
+            }}
+            const followup = await (await fetch("http://{fast}/")).text();
+            return aborted + ":" + followup;
+        }})()"#
+    );
+    let started = Instant::now();
+    let value = tokio::task::spawn_blocking(move || eval(&source, config()))
+        .await
+        .expect("join")
+        .expect("aborted fetch");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(value, Value::String("AbortError:ok".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn abort_signal_cancels_streamed_response_body() {
+    let slow = serve_slow_body();
+    let fast = serve_bytes(Bytes::from_static(b"ok"));
+    let source = format!(
+        r#"(async () => {{
+            const controller = new AbortController();
+            const response = await fetch("http://{slow}/", {{ signal: controller.signal }});
+            setTimeout(() => controller.abort(), 30);
+            let aborted = "";
+            try {{
+              await response.text();
+            }} catch (error) {{
+              aborted = error.name;
+            }}
+            const followup = await (await fetch("http://{fast}/")).text();
+            return aborted + ":" + followup;
+        }})()"#
+    );
+    let started = Instant::now();
+    let value = tokio::task::spawn_blocking(move || eval(&source, config()))
+        .await
+        .expect("join")
+        .expect("aborted response body");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(value, Value::String("AbortError:ok".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn aborting_one_concurrent_response_does_not_cancel_another_body() {
+    let slow = serve_slow_body();
+    let fast = serve_bytes(Bytes::from_static(b"independent"));
+    let source = format!(
+        r#"(async () => {{
+            const controller = new AbortController();
+            const [slow, fast] = await Promise.all([
+              fetch("http://{slow}/", {{ signal: controller.signal }}),
+              fetch("http://{fast}/"),
+            ]);
+            setTimeout(() => controller.abort(), 20);
+            const slowResult = slow.text().then(() => "completed", (error) => error.name);
+            const fastResult = await fast.text();
+            return (await slowResult) + ":" + fastResult;
+        }})()"#
+    );
+    let value = tokio::task::spawn_blocking(move || eval(&source, config()))
+        .await
+        .expect("join")
+        .expect("concurrent body cancellation");
+    assert_eq!(value, Value::String("AbortError:independent".into()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn isolate_reuse_drops_unconsumed_fetch_bodies() {
+    let polled = std::sync::Arc::new(AtomicUsize::new(0));
+    let streaming = serve_counted(STREAM_WINDOW * 16, polled.clone());
+    let fast = serve_bytes(Bytes::from_static(b"reused"));
+    let source = format!(
+        r#"
+export default {{
+  async fetch(request) {{
+    if (new URL(request.url).pathname === "/open") {{
+      await fetch("http://{streaming}/");
+      return new Response("opened");
+    }}
+    return new Response(await (await fetch("http://{fast}/")).text());
+  }},
+}}
+"#
+    );
+    let pool = IsolatePool::spawn(1, &source, config()).expect("spawn isolate");
+    let (_, mut first_body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/open".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 1,
+        })
+        .await
+        .expect("first request");
+    while first_body.recv().await.is_some() {}
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let after_cleanup = polled.load(AtomicOrdering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let settled = polled.load(AtomicOrdering::SeqCst);
+    assert!(
+        settled <= after_cleanup + 1,
+        "unconsumed body kept polling: {after_cleanup} -> {settled}"
+    );
+
+    let (_, mut second_body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/reuse".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 2,
+        })
+        .await
+        .expect("second request");
+    let mut bytes = Vec::new();
+    while let Some(chunk) = second_body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes, b"reused");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn outbound_fetch_body_applies_backpressure() {
     let polled = std::sync::Arc::new(AtomicUsize::new(0));
     // More payload than a typical localhost TCP window so Linux cannot hide
@@ -1347,7 +1896,10 @@ async fn outbound_fetch_body_applies_backpressure() {
                     await tysel.sleep(80);
                     let n = 0;
                     for (;;) {{
-                        const chunk = await tysel._httpRead();
+                        const chunk = await globalThis.__tysel_awaitOperation(
+                            tysel._httpRead(res._bodyId),
+                            null,
+                        );
                         if (chunk == null) break;
                         n += chunk.length;
                     }}
@@ -1519,9 +2071,15 @@ const WS_ECHO: &str = r#"
 export default {
   async fetch() {
     const socket = tysel.acceptWebSocket();
-    socket.addEventListener("message", (event) => {
-      socket.send(event.data);
-    });
+    let calls = 0;
+    const once = { handleEvent() { calls += 100; } };
+    const removed = () => { calls += 1000; };
+    const echo = (event) => { socket.send(`${calls}:${event.data}`); calls += 1; };
+    socket.addEventListener("message", once, { once: true });
+    socket.addEventListener("message", removed);
+    socket.removeEventListener("message", removed);
+    socket.addEventListener("message", echo);
+    socket.addEventListener("message", echo);
     return new Response(null, { status: 101 });
   },
 };
@@ -1546,9 +2104,15 @@ async fn accepted_websocket_echoes_text() {
     let (head, _body) = dispatch.await.expect("dispatch");
     assert_eq!(head.status, 101);
     assert!(head.websocket);
-    to_js_tx.send(Ok(b"ping".to_vec())).await.unwrap();
-    let echoed = from_js_rx.recv().await.expect("echo");
-    assert_eq!(echoed, b"ping");
+    to_js_tx.send(Ok(b"one".to_vec())).await.unwrap();
+    to_js_tx.send(Ok(b"two".to_vec())).await.unwrap();
+    assert_eq!(from_js_rx.recv().await.expect("first echo"), b"100:one");
+    assert_eq!(from_js_rx.recv().await.expect("second echo"), b"101:two");
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), from_js_rx.recv())
+            .await
+            .is_err()
+    );
     drop(to_js_tx);
 }
 
@@ -1561,8 +2125,10 @@ async fn outbound_websocket_echoes_text() {
     tokio::spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept websocket");
         let mut socket = tokio_tungstenite::accept_async(stream).await.expect("handshake");
-        if let Some(Ok(message)) = socket.next().await {
-            socket.send(message).await.expect("echo websocket message");
+        for _ in 0..2 {
+            if let Some(Ok(message)) = socket.next().await {
+                socket.send(message).await.expect("echo websocket message");
+            }
         }
         let _ = socket.close(None).await;
     });
@@ -1570,8 +2136,27 @@ async fn outbound_websocket_echoes_text() {
     let source = format!(
         r#"(async () => new Promise((resolve, reject) => {{
             const socket = new WebSocket("ws://{addr}/echo");
-            socket.onopen = async () => {{ await socket.send("ping"); }};
-            socket.onmessage = async (event) => {{ await socket.close(); resolve(event.data); }};
+            const messages = [];
+            let once = 0;
+            let removed = 0;
+            let targets = true;
+            const removedListener = () => {{ removed++; }};
+            socket.addEventListener("message", {{ handleEvent() {{ once++; }} }}, {{ once: true }});
+            socket.addEventListener("message", removedListener);
+            socket.removeEventListener("message", removedListener);
+            socket.onopen = async (event) => {{
+              targets = targets && event.target === socket && event.currentTarget === socket && socket.OPEN === 1;
+              await socket.send("one");
+              await socket.send("two");
+            }};
+            socket.onmessage = async (event) => {{
+              targets = targets && event.target === socket && event.currentTarget === socket;
+              messages.push(event.data);
+              if (messages.length === 2) {{
+                await socket.close();
+                resolve(JSON.stringify({{ messages, once, removed, targets }}));
+              }}
+            }};
             socket.onerror = (event) => reject(event.error);
         }}))()"#
     );
@@ -1579,7 +2164,10 @@ async fn outbound_websocket_echoes_text() {
         .await
         .expect("join")
         .expect("outbound websocket");
-    assert_eq!(value, Value::String("ping".into()));
+    assert_eq!(
+        value,
+        Value::String(r#"{"messages":["one","two"],"once":1,"removed":0,"targets":true}"#.into())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1716,6 +2304,23 @@ fn serve_slow() -> SocketAddr {
     spawn_origin(|_| async {
         tokio::time::sleep(Duration::from_secs(5)).await;
         Ok::<_, Infallible>(Response::new(http_body_util::Full::new(Bytes::from_static(b"late"))))
+    })
+}
+
+fn serve_delayed(delay: Duration) -> SocketAddr {
+    spawn_origin(move |_| async move {
+        tokio::time::sleep(delay).await;
+        Ok::<_, Infallible>(Response::new(http_body_util::Full::new(Bytes::from_static(b"late"))))
+    })
+}
+
+fn serve_slow_body() -> SocketAddr {
+    spawn_origin(|_| async {
+        let stream = futures_util::stream::once(async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok::<_, Infallible>(Frame::data(Bytes::from_static(b"late")))
+        });
+        Ok::<_, Infallible>(Response::new(http_body_util::StreamBody::new(stream)))
     })
 }
 

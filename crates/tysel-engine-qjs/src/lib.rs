@@ -6,6 +6,8 @@
 
 use std::path::Path;
 
+use serde::Deserialize;
+
 mod control;
 mod cpu;
 mod durable;
@@ -38,6 +40,44 @@ pub use task_module::{
     invoke_task_module,
 };
 pub use trust::configure as configure_policy;
+
+/// Versioned identity of the QuickJS adapter used by this compatibility
+/// engine. This changes when the Rust adapter or underlying engine family
+/// changes in a way that requires runtime conformance to be re-established.
+pub const QUICKJS_ADAPTER_ID: &str = "rquickjs-0.12/quickjs-ng";
+
+/// Machine-readable compatibility contract embedded into the engine binary.
+pub const RUNTIME_COMPATIBILITY_JSON: &str = include_str!("../../../runtime-js/compatibility.json");
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TapCompatibility {
+    pub minimum_supported_version: u32,
+    pub maximum_supported_version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebApiCompatibilityIdentity {
+    pub profile: String,
+    pub compatibility_schema_version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeCompatibility {
+    pub schema_version: u32,
+    pub runtime_js_version: String,
+    pub tap: TapCompatibility,
+    pub component_abi_version: String,
+    pub quickjs_adapter: String,
+    pub web_api: WebApiCompatibilityIdentity,
+}
+
+/// Parse the compatibility contract embedded into this engine build.
+pub fn runtime_compatibility() -> Result<RuntimeCompatibility, serde_json::Error> {
+    serde_json::from_str(RUNTIME_COMPATIBILITY_JSON)
+}
 
 /// Apply the TAP execution profile. `isolated` denies fetch, SQLite,
 /// WebSocket, Postgres, and filesystem access; every other profile is the

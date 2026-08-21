@@ -151,6 +151,7 @@ async fn http2_json(
         let started = Instant::now();
         let request =
             Request::builder().uri(format!("http://localhost{path}")).body(Empty::new())?;
+        sender.ready().await?;
         let response = sender.send_request(request).await?;
         ensure!(response.version() == hyper::Version::HTTP_2);
         ensure!(response.status().as_u16() == 200);
@@ -231,6 +232,7 @@ async fn http2_concurrent(addr: SocketAddr, n: usize) -> Result<()> {
         let mut sender = senders[index % senders.len()].clone();
         joins.push(tokio::spawn(async move {
             let request = Request::builder().uri("http://localhost/").body(Empty::new())?;
+            sender.ready().await?;
             let response = sender.send_request(request).await?;
             ensure!(response.status().as_u16() == 200);
             let _ = response.into_body().collect().await?;
@@ -257,6 +259,7 @@ async fn send_http1(
 ) -> Result<(u16, String)> {
     let request =
         Request::builder().uri(path).header(hyper::header::HOST, "localhost").body(Empty::new())?;
+    sender.ready().await?;
     let response = sender.send_request(request).await?;
     let status = response.status().as_u16();
     let body = String::from_utf8(response.into_body().collect().await?.to_bytes().to_vec())?;

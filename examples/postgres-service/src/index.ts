@@ -1,3 +1,5 @@
+import type {} from "@tysel/types";
+
 /** Postgres service demo (M2). Requires `TYSEL_POSTGRES_MAIN`. */
 export default {
   async fetch(): Promise<Response> {

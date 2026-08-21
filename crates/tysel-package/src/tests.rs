@@ -41,6 +41,17 @@ fn crate_is_named() {
 }
 
 #[test]
+fn runtime_manifest_matches_tap_and_component_contracts() {
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../runtime-js/compatibility.json"))
+            .expect("runtime compatibility manifest");
+
+    assert_eq!(manifest["tap"]["minimumSupportedVersion"], MIN_SUPPORTED_TAP_VERSION);
+    assert_eq!(manifest["tap"]["maximumSupportedVersion"], TAP_VERSION);
+    assert_eq!(manifest["componentAbiVersion"], COMPONENT_ABI_VERSION);
+}
+
+#[test]
 fn tap_roundtrip_preserves_bundle_and_manifest() {
     let tap = sample_tap();
     let encoded = tap.encode().expect("encode");

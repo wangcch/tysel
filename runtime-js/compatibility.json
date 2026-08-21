@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "runtimeJsVersion": "0.0.1",
+  "tap": {
+    "minimumSupportedVersion": 1,
+    "maximumSupportedVersion": 3
+  },
+  "componentAbiVersion": "0.4.0",
+  "quickjsAdapter": "rquickjs-0.12/quickjs-ng",
+  "webApi": {
+    "profile": "tysel-server-web-subset",
+    "compatibilitySchemaVersion": 1
+  }
+}

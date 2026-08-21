@@ -1,3 +1,5 @@
+import type {} from "@tysel/types";
+
 /** SQLite worker demo (M1). */
 export default {
   async fetch(request: Request): Promise<Response> {

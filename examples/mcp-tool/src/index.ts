@@ -1,3 +1,5 @@
+import type {} from "@tysel/types";
+
 export default {
   async fetch(): Promise<Response> {
     return Response.json({ tool: "lookup", isolated: true });
@@ -17,5 +19,3 @@ export default {
     },
   },
 };
-
-declare const tysel: { secrets: { ref: (name: string) => Promise<string> } };

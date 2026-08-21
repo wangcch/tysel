@@ -6,7 +6,7 @@ export interface DurableRetryPolicy {
   maxDelay?: string | number;
 }
 
-export interface DurableHost {
+export interface DurableContext {
   step<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
   effect<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
   sleep(duration: string | number): Promise<void>;
@@ -18,3 +18,6 @@ export interface DurableHost {
   now(): Date;
   random(): number;
 }
+
+/** @deprecated Use `DurableContext`; retained for source compatibility. */
+export type DurableHost = DurableContext;
