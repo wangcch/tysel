@@ -249,3 +249,15 @@ collector, receives real protobuf trace and metric exports, verifies both
 signals are present, and scans the encoded payload for paths, SQL, URLs, and
 bearer-token fixtures. Unit tests separately cover explicit signal activation,
 SDK disable precedence, endpoint validation, and fail-closed label handling.
+
+## M5.9 Production operations
+
+The [Production operations runbook](../operations/production.md) defines the
+release-admission, deployment, key-rotation, durable backup/restore,
+upgrade/rollback, sizing, monitoring, and incident-response procedures. It
+keeps the operational boundary explicit: release keys remain offline, runtime
+secrets remain host-only, application readiness is application-owned, and the
+embedding service owns durable Postgres dispatcher lifecycle. Restore and
+rollback procedures preserve the event-log, wakeup, lease, signal, and program
+catalog as one consistency boundary rather than modifying durable rows in
+place.
