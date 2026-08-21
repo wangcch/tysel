@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use tysel_capability::{
@@ -117,6 +117,7 @@ impl AotComponent {
 }
 
 type StringCapabilityHandler = dyn Fn(&str) -> Result<String, String> + Send + Sync + 'static;
+type StringCapabilityAudit = dyn Fn(&str, Duration) + Send + Sync + 'static;
 
 /// One versioned interface implementation for string/result-string WIT
 /// capabilities. The registry selects the provider before its function is
@@ -126,6 +127,7 @@ pub struct StringCapabilityProvider {
     descriptor: CapabilityDescriptor,
     function: String,
     handler: Arc<StringCapabilityHandler>,
+    audit: Option<Arc<StringCapabilityAudit>>,
 }
 
 impl StringCapabilityProvider {
@@ -143,7 +145,14 @@ impl StringCapabilityProvider {
         {
             return Err(ComponentError::InvalidCapabilityFunction(function));
         }
-        Ok(Self { descriptor, function, handler: Arc::new(handler) })
+        Ok(Self { descriptor, function, handler: Arc::new(handler), audit: None })
+    }
+
+    /// Observe the final capability result after the engine's input and output
+    /// limits have been applied.
+    pub fn with_audit(mut self, audit: impl Fn(&str, Duration) + Send + Sync + 'static) -> Self {
+        self.audit = Some(Arc::new(audit));
+        self
     }
 
     pub fn descriptor(&self) -> &CapabilityDescriptor {
@@ -365,6 +374,7 @@ impl WasmComponentEngine {
                 .find(|provider| provider.descriptor.import == selected)
                 .ok_or_else(|| ComponentError::MissingCapabilityProvider(selected.to_string()))?;
             let handler = Arc::clone(&provider.handler);
+            let audit = provider.audit.clone();
             let function = provider.function.clone();
             let max_input_bytes = self.config.max_input_bytes;
             let max_output_bytes = self.config.max_output_bytes;
@@ -372,19 +382,13 @@ impl WasmComponentEngine {
                 .instance(&requested.to_string())
                 .map_err(ComponentError::link)?
                 .func_wrap(&function, move |_store, (input,): (String,)| {
-                    let result = if input.len() > max_input_bytes {
-                        Err(format!("capability input exceeds {max_input_bytes} bytes"))
-                    } else {
-                        handler(&input)
-                    }
-                    .map_err(bounded_message)
-                    .and_then(|output| {
-                        if output.len() > max_output_bytes {
-                            Err(format!("capability output exceeds {max_output_bytes} bytes"))
-                        } else {
-                            Ok(output)
-                        }
-                    });
+                    let result = invoke_string_capability(
+                        handler.as_ref(),
+                        audit.as_deref(),
+                        &input,
+                        max_input_bytes,
+                        max_output_bytes,
+                    );
                     Ok((result,))
                 })
                 .map_err(ComponentError::link)?;
@@ -457,6 +461,33 @@ impl WasmComponentEngine {
             .map_err(|error| ComponentError::InvalidOutputJson(bounded_display(error)))?;
         Ok(output)
     }
+}
+
+fn invoke_string_capability(
+    handler: &StringCapabilityHandler,
+    audit: Option<&StringCapabilityAudit>,
+    input: &str,
+    max_input_bytes: usize,
+    max_output_bytes: usize,
+) -> Result<String, String> {
+    let started = Instant::now();
+    let result = if input.len() > max_input_bytes {
+        Err(format!("capability input exceeds {max_input_bytes} bytes"))
+    } else {
+        handler(input)
+    }
+    .map_err(bounded_message)
+    .and_then(|output| {
+        if output.len() > max_output_bytes {
+            Err(format!("capability output exceeds {max_output_bytes} bytes"))
+        } else {
+            Ok(output)
+        }
+    });
+    if let Some(audit) = audit {
+        audit(if result.is_ok() { "ok" } else { "error" }, started.elapsed());
+    }
+    result
 }
 
 const ALLOWED_WASI_RUNTIME_INTERFACES: &[&str] = &[
@@ -647,6 +678,7 @@ pub fn crate_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     const ECHO_COMPONENT: &str = r#"
 (component
@@ -698,6 +730,52 @@ mod tests {
   (import "tysel:test/host@0.4.0" (instance $host-import (type $host-instance)))"#,
             1,
         ))
+    }
+
+    fn proxy_component_with_import() -> Vec<u8> {
+        component(
+            r#"
+(component
+  (type $host (func (param "input" string) (result (result string (error string)))))
+  (type $host-instance (instance (export "call" (func (type $host)))))
+  (import "tysel:test/host@0.4.0" (instance $host-import (type $host-instance)))
+  (alias export $host-import "call" (func $call))
+  (core module $memory-module
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 16))
+    (func (export "realloc")
+      (param $old-ptr i32) (param $old-len i32) (param $align i32) (param $new-len i32)
+      (result i32)
+      (local $ptr i32)
+      global.get $heap
+      local.tee $ptr
+      local.get $new-len
+      i32.add
+      global.set $heap
+      local.get $ptr))
+  (core instance $memory-instance (instantiate $memory-module))
+  (alias core export $memory-instance "memory" (core memory $memory))
+  (alias core export $memory-instance "realloc" (core func $realloc))
+  (core func $lowered-call
+    (canon lower (func $call) (memory $memory) (realloc $realloc)))
+  (core module $adapter
+    (import "host" "call" (func $host-call (param i32 i32 i32)))
+    (func (export "call") (param $ptr i32) (param $len i32) (result i32)
+      local.get $ptr
+      local.get $len
+      i32.const 0
+      call $host-call
+      i32.const 0))
+  (core instance $host-core
+    (export "call" (func $lowered-call)))
+  (core instance $adapter-instance
+    (instantiate $adapter (with "host" (instance $host-core))))
+  (alias core export $adapter-instance "call" (core func $adapter-call))
+  (func $run (type $host)
+    (canon lift (core func $adapter-call) (memory $memory) (realloc $realloc)))
+  (export "run" (func $run)))
+"#,
+        )
     }
 
     #[test]
@@ -779,7 +857,9 @@ mod tests {
         use tysel_capability::CapabilityDescriptor;
 
         let engine = WasmComponentEngine::new(ComponentEngineConfig::default()).unwrap();
-        let compiled = engine.compile(&echo_component_with_import()).unwrap();
+        let compiled = engine.compile(&proxy_component_with_import()).unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let audit_events = Arc::clone(&events);
         let provider = StringCapabilityProvider::new(
             CapabilityDescriptor::new(
                 "tysel:test/host@0.4.2".parse().unwrap(),
@@ -787,9 +867,12 @@ mod tests {
             )
             .unwrap(),
             "call",
-            |input| Ok(input.to_owned()),
+            |input| Ok(format!(r#"{{"provider":{input}}}"#)),
         )
-        .unwrap();
+        .unwrap()
+        .with_audit(move |result, _elapsed| {
+            audit_events.lock().unwrap().push(result.to_owned());
+        });
         let grants = [CapabilityId("tysel:test".into())].into_iter().collect();
         assert_eq!(
             engine
@@ -801,8 +884,39 @@ mod tests {
                     &grants,
                 )
                 .unwrap(),
-            r#"{"linked":true}"#
+            r#"{"provider":{"linked":true}}"#
         );
+        assert_eq!(*events.lock().unwrap(), ["ok"]);
+    }
+
+    #[test]
+    fn capability_audit_observes_final_engine_limit_results() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let audit_events = Arc::clone(&events);
+        let audit = move |result: &str, _elapsed: Duration| {
+            audit_events.lock().unwrap().push(result.to_owned());
+        };
+        let input_handler_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_by_handler = Arc::clone(&input_handler_called);
+        let input_handler = move |_input: &str| {
+            called_by_handler.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok("unused".to_owned())
+        };
+
+        let input_error =
+            invoke_string_capability(&input_handler, Some(&audit), "12345", 4, 10).unwrap_err();
+        assert!(input_error.contains("input exceeds"));
+        assert!(!input_handler_called.load(std::sync::atomic::Ordering::Relaxed));
+
+        let output_error =
+            invoke_string_capability(&|_| Ok("12345".to_owned()), Some(&audit), "1", 10, 4)
+                .unwrap_err();
+        assert!(output_error.contains("output exceeds"));
+        assert_eq!(
+            invoke_string_capability(&|_| Ok("1".to_owned()), Some(&audit), "1", 10, 10).unwrap(),
+            "1"
+        );
+        assert_eq!(*events.lock().unwrap(), ["error", "error", "ok"]);
     }
 
     #[test]

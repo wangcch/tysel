@@ -31,6 +31,7 @@ tysel-scheduler = { path = "../tysel-scheduler" }
 tysel-task.workspace = true
 tysel-task-rpc.workspace = true
 tysel-capability.workspace = true
+tysel-cap-fs.workspace = true
 tysel-cap-mcp.workspace = true
 tysel-cap-llm.workspace = true
 tysel-isolate.workspace = true

@@ -7,6 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tysel_capability::CapabilityId;
 use tysel_engine::IsolateConfig;
 use tysel_manifest::Manifest;
 #[cfg(unix)]
@@ -39,12 +40,44 @@ struct TaskSpec {
 }
 
 pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
+    if component_entry(&manifest_path, entry.as_deref())?.is_some() {
+        anyhow::bail!("Wasm Components are one-shot tasks; use `tysel run` instead of `tysel dev`");
+    }
     serve(manifest_path, entry, true).await
 }
 
-/// Serve without watching sources. Same load path as `tysel dev`.
+/// Serve JavaScript without reload, or execute a Component once over stdio.
 pub async fn run_once(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
+    if let Some((manifest, root, entry)) = component_entry(&manifest_path, entry.as_deref())? {
+        let source = fs::read(&entry)
+            .with_context(|| format!("failed to read Component {}", entry.display()))?;
+        let tap =
+            tysel_build::tap_from_component_portable(&manifest, env!("CARGO_PKG_VERSION"), source)
+                .with_context(|| format!("failed to compile Component {}", entry.display()))?;
+        let mut grants = Vec::new();
+        if !manifest.permissions.fs_read.is_empty() || !manifest.permissions.fs_write.is_empty() {
+            grants.push(CapabilityId("tysel:fs".into()));
+        }
+        let policy = tysel_runtime::ComponentRuntimePolicy::new(grants).with_filesystem_root(root);
+        tysel_runtime::run_component_tap_with_policy(&tap, &policy)?;
+        return Ok(());
+    }
     serve(manifest_path, entry, false).await
+}
+
+fn component_entry(
+    manifest_path: &Path,
+    entry: Option<&Path>,
+) -> Result<Option<(Manifest, PathBuf, PathBuf)>> {
+    let manifest = Manifest::from_path(manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let root = manifest_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let entry = entry.map(Path::to_path_buf).unwrap_or_else(|| root.join(&manifest.app.entry));
+    if entry.extension().and_then(|extension| extension.to_str()) == Some("wasm") {
+        Ok(Some((manifest, root, entry)))
+    } else {
+        Ok(None)
+    }
 }
 
 pub async fn run_mcp(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {

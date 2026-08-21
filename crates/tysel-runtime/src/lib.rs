@@ -23,7 +23,10 @@ pub use http::{
     AppIsolate, HttpError, SharedPool, bind, bind_with, bind_with_request_limit, handle_stream,
     serve, serve_with_websocket, spawn_app_isolate,
 };
-pub use service::{StubError, configure_llm_from_env, invoke_component_tap, run_stub, run_tap};
+pub use service::{
+    ComponentRuntimePolicy, StubError, configure_llm_from_env, invoke_component_tap,
+    invoke_component_tap_with_policy, run_component_tap_with_policy, run_stub, run_tap,
+};
 pub use task_ingress::{
     CronExpression, TaskIngress, TaskIngressError, TaskRegistry, TriggeredTask,
 };

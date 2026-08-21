@@ -9,6 +9,7 @@ use hyper::Request;
 use hyper::body::{Body, Bytes, Frame};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+use tysel_capability::CapabilityId;
 use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::IsolatePool;
 use tysel_package::{PackageManifest, PackagedComponent, Tap};
@@ -96,6 +97,143 @@ fn packaged_component_runs_through_the_portable_runtime_path() {
         },
     ]);
     assert_eq!(crate::invoke_component_tap(&tap, r#"{"value":42}"#).unwrap(), r#"{"value":42}"#);
+}
+
+#[test]
+fn packaged_component_calls_fs_provider_only_with_all_permission_layers() {
+    let root = std::env::temp_dir().join(format!(
+        "tysel-component-fs-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("message.txt");
+    std::fs::write(&path, "from-provider").unwrap();
+    let mut manifest = component_manifest();
+    manifest.fs_read = vec![root.to_string_lossy().into_owned()];
+    let tap = Tap::new(manifest, Vec::new(), Vec::new()).with_components(vec![PackagedComponent {
+        name: "fs-read".into(),
+        abi_version: "0.4.0".into(),
+        source: fs_proxy_component("read"),
+        aot: Vec::new(),
+    }]);
+    let input = serde_json::to_string(&path.to_string_lossy()).unwrap();
+
+    assert!(crate::invoke_component_tap(&tap, &input).is_err());
+    let policy =
+        crate::ComponentRuntimePolicy::default().with_interface_grants(["tysel:fs/read"]).unwrap();
+    assert_eq!(
+        crate::invoke_component_tap_with_policy(&tap, &input, &policy).unwrap(),
+        r#""from-provider""#
+    );
+
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn packaged_component_calls_the_scoped_fs_write_provider() {
+    let root = std::env::temp_dir().join(format!(
+        "tysel-component-fs-write-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut manifest = component_manifest();
+    manifest.fs_write = vec!["./data".into()];
+    std::fs::create_dir_all(root.join("data")).unwrap();
+    let tap = Tap::new(manifest, Vec::new(), Vec::new()).with_components(vec![PackagedComponent {
+        name: "fs-write".into(),
+        abi_version: "0.4.0".into(),
+        source: fs_proxy_component("write"),
+        aot: Vec::new(),
+    }]);
+    let read_only_policy = crate::ComponentRuntimePolicy::default()
+        .with_interface_grants(["tysel:fs/read"])
+        .unwrap()
+        .with_filesystem_root(&root);
+    let input = r#"{"path":"data/message.txt","data":"written"}"#;
+    assert!(
+        crate::invoke_component_tap_with_policy(&tap, input, &read_only_policy).is_err(),
+        "read-only deployment policy must not link the write provider"
+    );
+    assert!(!root.join("data/message.txt").exists());
+
+    let policy = crate::ComponentRuntimePolicy::new([CapabilityId("tysel:fs".into())])
+        .with_filesystem_root(&root);
+
+    assert_eq!(crate::invoke_component_tap_with_policy(&tap, input, &policy).unwrap(), "null");
+    assert_eq!(std::fs::read_to_string(root.join("data/message.txt")).unwrap(), "written");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn packaged_component_rejects_an_unknown_abi_before_compilation() {
+    let tap = Tap::new(component_manifest(), Vec::new(), Vec::new()).with_components(vec![
+        PackagedComponent {
+            name: "echo".into(),
+            abi_version: "0.5.0".into(),
+            source: Vec::new(),
+            aot: Vec::new(),
+        },
+    ]);
+    assert!(matches!(
+        crate::invoke_component_tap(&tap, "null"),
+        Err(crate::StubError::ComponentPackage("unsupported Component ABI version"))
+    ));
+}
+
+#[test]
+fn component_policy_rejects_unknown_interface_grants() {
+    let error = crate::ComponentRuntimePolicy::default()
+        .with_interface_grants(["tysel:fs/delete"])
+        .unwrap_err();
+    assert!(error.to_string().contains("unsupported capability interface"));
+}
+
+fn fs_proxy_component(interface: &str) -> Vec<u8> {
+    let source = r#"
+(component
+  (type $host (func (param "input" string) (result (result string (error string)))))
+  (type $host-instance (instance (export "call" (func (type $host)))))
+  (import "tysel:fs/read@0.4.0" (instance $host-import (type $host-instance)))
+  (alias export $host-import "call" (func $call))
+  (core module $memory-module
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 16))
+    (func (export "realloc")
+      (param i32 i32 i32) (param $new-len i32) (result i32)
+      (local $ptr i32)
+      global.get $heap
+      local.tee $ptr
+      local.get $new-len
+      i32.add
+      global.set $heap
+      local.get $ptr))
+  (core instance $memory-instance (instantiate $memory-module))
+  (alias core export $memory-instance "memory" (core memory $memory))
+  (alias core export $memory-instance "realloc" (core func $realloc))
+  (core func $lowered-call
+    (canon lower (func $call) (memory $memory) (realloc $realloc)))
+  (core module $adapter
+    (import "host" "call" (func $host-call (param i32 i32 i32)))
+    (func (export "call") (param $ptr i32) (param $len i32) (result i32)
+      local.get $ptr
+      local.get $len
+      i32.const 0
+      call $host-call
+      i32.const 0))
+  (core instance $host-core (export "call" (func $lowered-call)))
+  (core instance $adapter-instance
+    (instantiate $adapter (with "host" (instance $host-core))))
+  (alias core export $adapter-instance "call" (core func $adapter-call))
+  (func $run (type $host)
+    (canon lift (core func $adapter-call) (memory $memory) (realloc $realloc)))
+  (export "run" (func $run)))
+"#;
+    wat::parse_str(source.replace("tysel:fs/read@0.4.0", &format!("tysel:fs/{interface}@0.4.0")))
+        .unwrap()
 }
 
 fn component_manifest() -> PackageManifest {

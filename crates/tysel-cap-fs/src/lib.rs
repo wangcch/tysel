@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 const MAX_BYTES: u64 = 1_048_576;
+pub const MAX_ROOTS_PER_OPERATION: usize = 64;
 
 struct Policy {
     base: PathBuf,
@@ -26,6 +27,26 @@ struct AllowedRoot {
 
 static POLICY: RwLock<Option<Policy>> = RwLock::new(None);
 
+/// An immutable, application-scoped filesystem policy. Component providers
+/// use this form so concurrent applications cannot replace each other's roots.
+pub struct Filesystem {
+    policy: Policy,
+}
+
+impl Filesystem {
+    pub fn new(read: Vec<String>, write: Vec<String>, root: Option<&Path>) -> Result<Self, String> {
+        Ok(Self { policy: policy(read, write, root)? })
+    }
+
+    pub fn read(&self, path: &str) -> Result<String, String> {
+        read_with(path, Some(&self.policy))
+    }
+
+    pub fn write(&self, path: &str, data: &str) -> Result<(), String> {
+        write_with(path, data, Some(&self.policy))
+    }
+}
+
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
@@ -34,14 +55,33 @@ pub fn crate_name() -> &'static str {
 /// request paths are resolved against `root` when provided, otherwise the
 /// process working directory. An empty list denies that operation.
 pub fn configure(read: Vec<String>, write: Vec<String>, root: Option<&Path>) {
+    *POLICY.write().expect("fs policy lock") = policy(read, write, root).ok();
+}
+
+fn policy(read: Vec<String>, write: Vec<String>, root: Option<&Path>) -> Result<Policy, String> {
+    validate_roots("read", &read)?;
+    validate_roots("write", &write)?;
     let base = root
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    *POLICY.write().expect("fs policy lock") = Some(Policy {
-        read: resolve_roots(&read, &base),
-        write: resolve_roots(&write, &base),
-        base,
-    });
+    Ok(Policy { read: resolve_roots(&read, &base), write: resolve_roots(&write, &base), base })
+}
+
+fn validate_roots(operation: &str, roots: &[String]) -> Result<(), String> {
+    let unique = roots
+        .iter()
+        .map(|root| root.trim())
+        .filter(|root| !root.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    if unique.len() != roots.len() {
+        return Err(format!("filesystem {operation} roots must be non-empty and unique"));
+    }
+    if unique.len() > MAX_ROOTS_PER_OPERATION {
+        return Err(format!(
+            "filesystem {operation} roots exceed {MAX_ROOTS_PER_OPERATION} entries"
+        ));
+    }
+    Ok(())
 }
 
 pub fn read(path: &str) -> Result<String, String> {
@@ -362,6 +402,35 @@ mod tests {
         write_with("data/out.txt", "ok", Some(&policy)).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("data/out.txt")).unwrap(), "ok");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scoped_policies_do_not_replace_each_other() {
+        let first = temp_tree("scoped-first");
+        let second = temp_tree("scoped-second");
+        std::fs::write(first.join("data/value.txt"), "first").unwrap();
+        std::fs::write(second.join("data/value.txt"), "second").unwrap();
+        let first_fs = Filesystem::new(vec!["./data".into()], Vec::new(), Some(&first)).unwrap();
+        let second_fs = Filesystem::new(vec!["./data".into()], Vec::new(), Some(&second)).unwrap();
+
+        assert_eq!(first_fs.read("data/value.txt").unwrap(), "first");
+        assert_eq!(second_fs.read("data/value.txt").unwrap(), "second");
+        assert_eq!(first_fs.read("data/value.txt").unwrap(), "first");
+
+        let _ = std::fs::remove_dir_all(first);
+        let _ = std::fs::remove_dir_all(second);
+    }
+
+    #[test]
+    fn scoped_policy_rejects_duplicate_and_excessive_roots_before_opening() {
+        let duplicate = Filesystem::new(vec!["./data".into(), "./data".into()], Vec::new(), None)
+            .err()
+            .unwrap();
+        assert!(duplicate.contains("unique"), "{duplicate}");
+
+        let roots = (0..=MAX_ROOTS_PER_OPERATION).map(|index| format!("./data-{index}")).collect();
+        let excessive = Filesystem::new(roots, Vec::new(), None).err().unwrap();
+        assert!(excessive.contains("exceed"), "{excessive}");
     }
 
     #[test]

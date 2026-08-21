@@ -1,0 +1,13 @@
+package tysel:fs@0.4.0;
+
+/// Read a UTF-8 file through the manifest and deployment allowlists.
+interface read {
+    /// Both input and output are JSON strings.
+    call: func(input: string) -> result<string, string>;
+}
+
+/// Write a UTF-8 file through the manifest and deployment allowlists.
+interface write {
+    /// Input is `{ "path": string, "data": string }`; output is JSON null.
+    call: func(input: string) -> result<string, string>;
+}

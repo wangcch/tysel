@@ -16,7 +16,7 @@ pub fn run(manifest_path: &Path) -> Result<()> {
     let (artifact_kind, artifact_bytes, types) = if is_component {
         let source =
             std::fs::read(&entry).with_context(|| format!("failed to read {}", entry.display()))?;
-        tysel_build::validate_component(&source)
+        tysel_build::validate_component_for_manifest(&manifest, &source)
             .with_context(|| format!("failed to validate Component {}", entry.display()))?;
         ("component", source.len(), Typecheck::Skipped("Wasm Component"))
     } else {

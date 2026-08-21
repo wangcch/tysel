@@ -21,6 +21,46 @@ struct JsonLog {
 static JSON_LOG: RwLock<Option<JsonLog>> = RwLock::new(None);
 static REQUEST_IDS: AtomicU64 = AtomicU64::new(1);
 
+/// Application-scoped capability logger for runtimes that may execute
+/// multiple independent applications in one process.
+#[derive(Debug, Clone)]
+pub struct CapabilityLogger {
+    app: String,
+    enabled: bool,
+}
+
+impl CapabilityLogger {
+    pub fn new(app: impl Into<String>, enabled: bool) -> Self {
+        Self { app: app.into(), enabled }
+    }
+
+    pub fn log(
+        &self,
+        capability: &str,
+        operation: &str,
+        result: &str,
+        elapsed: Duration,
+        request_id: u64,
+    ) {
+        if let Some(line) = self.format(capability, operation, result, elapsed, request_id) {
+            write_line(&line);
+        }
+    }
+
+    pub fn format(
+        &self,
+        capability: &str,
+        operation: &str,
+        result: &str,
+        elapsed: Duration,
+        request_id: u64,
+    ) -> Option<String> {
+        self.enabled.then(|| {
+            format_capability(&self.app, capability, operation, result, elapsed, request_id)
+        })
+    }
+}
+
 /// Allocate a process-local request id for HTTP and capability log lines.
 pub fn next_request_id() -> u64 {
     REQUEST_IDS.fetch_add(1, Ordering::Relaxed)
@@ -185,5 +225,25 @@ mod tests {
         assert!(value.get("sql").is_none());
         assert!(value.get("path").is_none());
         assert!(value.get("url").is_none());
+    }
+
+    #[test]
+    fn scoped_capability_loggers_keep_application_identity_separate() {
+        let first = CapabilityLogger::new("first-component", true);
+        let second = CapabilityLogger::new("second-component", true);
+        let disabled = CapabilityLogger::new("silent-component", false);
+        let first: serde_json::Value =
+            serde_json::from_str(&first.format("fs", "read", "ok", Duration::ZERO, 7).unwrap())
+                .unwrap();
+        let second: serde_json::Value = serde_json::from_str(
+            &second.format("fs", "write", "error", Duration::ZERO, 8).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(first["app"], "first-component");
+        assert_eq!(first["rid"], 7);
+        assert_eq!(second["app"], "second-component");
+        assert_eq!(second["rid"], 8);
+        assert!(disabled.format("fs", "read", "ok", Duration::ZERO, 9).is_none());
     }
 }

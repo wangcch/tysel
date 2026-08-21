@@ -24,6 +24,7 @@ tysel-runtime = { path = "../tysel-runtime" }
 tysel-engine.workspace = true
 tysel-engine-qjs.workspace = true
 tysel-observability.workspace = true
+tysel-capability.workspace = true
 tysel-cap-mcp.workspace = true
 tysel-task-rpc.workspace = true
 notify = "6"

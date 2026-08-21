@@ -6,6 +6,33 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+#[test]
+fn run_executes_a_component_over_stdio() {
+    let dir = temp_app("run-component");
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "echo-component"
+entry = "echo.wasm"
+profile = "component"
+"#,
+    )
+    .unwrap();
+    fs::write(dir.join("echo.wasm"), echo_component()).unwrap();
+    let mut child = Command::new(cli_exe())
+        .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn Component");
+    child.stdin.take().unwrap().write_all(br#"{"value":42}"#).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "{\"value\":42}\n");
+}
+
 #[cfg(unix)]
 #[test]
 fn mcp_stdio_discovers_lists_and_executes_a_tool() {
@@ -883,6 +910,47 @@ fn temp_app(name: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+fn echo_component() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+(component
+  (core module $module
+    (memory (export "memory") 1)
+    (global $heap (mut i32) (i32.const 16))
+    (func (export "realloc")
+      (param i32 i32 i32) (param $new-len i32) (result i32)
+      (local $ptr i32)
+      global.get $heap
+      local.tee $ptr
+      local.get $new-len
+      i32.add
+      global.set $heap
+      local.get $ptr)
+    (func (export "run") (param $ptr i32) (param $len i32) (result i32)
+      i32.const 0
+      i32.const 0
+      i32.store
+      i32.const 4
+      local.get $ptr
+      i32.store
+      i32.const 8
+      local.get $len
+      i32.store
+      i32.const 0))
+  (core instance $instance (instantiate $module))
+  (alias core export $instance "memory" (core memory $memory))
+  (alias core export $instance "realloc" (core func $realloc))
+  (alias core export $instance "run" (core func $run-core))
+  (type $run-type
+    (func (param "input" string) (result (result string (error string)))))
+  (func $run (type $run-type)
+    (canon lift (core func $run-core) (memory $memory) (realloc $realloc)))
+  (export "run" (func $run)))
+"#,
+    )
+    .unwrap()
 }
 
 fn cli_exe() -> PathBuf {

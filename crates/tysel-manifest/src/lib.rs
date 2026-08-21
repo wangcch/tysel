@@ -8,6 +8,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+pub const MAX_FILESYSTEM_ROOTS_PER_OPERATION: usize = 64;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
     #[error("failed to read manifest: {0}")]
@@ -238,6 +240,25 @@ impl Manifest {
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
+        for (operation, roots) in
+            [("fs_read", &self.permissions.fs_read), ("fs_write", &self.permissions.fs_write)]
+        {
+            let unique = roots
+                .iter()
+                .map(|root| root.trim())
+                .filter(|root| !root.is_empty())
+                .collect::<std::collections::BTreeSet<_>>();
+            if unique.len() != roots.len() {
+                return Err(ManifestError::Invalid(format!(
+                    "{operation} roots must be non-empty and unique"
+                )));
+            }
+            if unique.len() > MAX_FILESYSTEM_ROOTS_PER_OPERATION {
+                return Err(ManifestError::Invalid(format!(
+                    "{operation} declares more than {MAX_FILESYSTEM_ROOTS_PER_OPERATION} roots"
+                )));
+            }
+        }
         if self.permissions.postgres.len() > 1 {
             return Err(ManifestError::Invalid(
                 "this runtime supports exactly one Postgres connection; declare at most one grant"
@@ -328,6 +349,25 @@ fn is_postgres_alias(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_duplicate_and_excessive_filesystem_roots() {
+        let mut manifest = Manifest::parse(
+            r#"
+[app]
+name = "fs-policy"
+entry = "app.wasm"
+"#,
+        )
+        .unwrap();
+        manifest.permissions.fs_read = vec!["./data".into(), "./data".into()];
+        assert!(manifest.validate().unwrap_err().to_string().contains("unique"));
+
+        manifest.permissions.fs_read = (0..=MAX_FILESYSTEM_ROOTS_PER_OPERATION)
+            .map(|index| format!("./data-{index}"))
+            .collect();
+        assert!(manifest.validate().unwrap_err().to_string().contains("more than"));
+    }
 
     #[test]
     fn parses_hello_manifest() {

@@ -9,7 +9,7 @@ mod transpile;
 use std::fs;
 use std::path::Path;
 
-use tysel_engine_wasm::{ComponentEngineConfig, WasmComponentEngine};
+use tysel_engine_wasm::{COMPONENT_ABI_VERSION, ComponentEngineConfig, WasmComponentEngine};
 use tysel_manifest::Manifest;
 use tysel_package::{PackageManifest, PackagedAot, PackagedComponent, Tap, identity_source_map};
 
@@ -34,6 +34,7 @@ pub fn tap_from_component(
     source: Vec<u8>,
 ) -> anyhow::Result<Tap> {
     let engine = WasmComponentEngine::new(ComponentEngineConfig::default())?;
+    admit_component_imports(manifest, &engine.compile(&source)?)?;
     let artifact = engine.precompile(&source)?;
     let component = PackagedComponent {
         name: manifest.app.name.clone(),
@@ -51,9 +52,61 @@ pub fn tap_from_component(
         .with_components(vec![component]))
 }
 
+/// Validate only the stable Component task ABI. Kept for source compatibility
+/// with callers that do not have a project manifest.
 pub fn validate_component(source: &[u8]) -> anyhow::Result<()> {
     let engine = WasmComponentEngine::new(ComponentEngineConfig::default())?;
     engine.compile(source)?;
+    Ok(())
+}
+
+/// Validate the Component ABI and admit every import against the manifest.
+pub fn validate_component_for_manifest(manifest: &Manifest, source: &[u8]) -> anyhow::Result<()> {
+    let engine = WasmComponentEngine::new(ComponentEngineConfig::default())?;
+    let component = engine.compile(source)?;
+    admit_component_imports(manifest, &component)?;
+    Ok(())
+}
+
+/// Package portable source for local one-shot execution without generating an
+/// AOT blob that the unsigned development path cannot load.
+pub fn tap_from_component_portable(
+    manifest: &Manifest,
+    runtime_version: &str,
+    source: Vec<u8>,
+) -> anyhow::Result<Tap> {
+    let engine = WasmComponentEngine::new(ComponentEngineConfig::default())?;
+    let component = engine.compile(&source)?;
+    admit_component_imports(manifest, &component)?;
+    Ok(Tap::new(package_manifest(manifest, runtime_version), Vec::new(), Vec::new())
+        .with_components(vec![PackagedComponent {
+            name: manifest.app.name.clone(),
+            abi_version: COMPONENT_ABI_VERSION.into(),
+            source,
+            aot: Vec::new(),
+        }]))
+}
+
+fn admit_component_imports(
+    manifest: &Manifest,
+    component: &tysel_engine_wasm::CompiledComponent,
+) -> anyhow::Result<()> {
+    for import in component.required_imports() {
+        let declared = match (
+            import.id.0.as_str(),
+            import.interface.as_str(),
+            import.version.major,
+            import.version.minor,
+            import.version.patch,
+        ) {
+            ("tysel:fs", "read", 0, 4, 0) => !manifest.permissions.fs_read.is_empty(),
+            ("tysel:fs", "write", 0, 4, 0) => !manifest.permissions.fs_write.is_empty(),
+            _ => anyhow::bail!("unsupported Component capability import {import}"),
+        };
+        if !declared {
+            anyhow::bail!("Component capability import {import} is not declared in the manifest");
+        }
+    }
     Ok(())
 }
 
@@ -237,6 +290,9 @@ profile = "component"
         assert_eq!(tap.components[0].source, source);
         assert_eq!(tap.components[0].abi_version, "0.4.0");
         assert_eq!(tap.components[0].aot.len(), 1);
+        validate_component(&source).unwrap();
+        let portable = tap_from_component_portable(&manifest, "0.4.0", source).unwrap();
+        assert!(portable.components[0].aot.is_empty());
     }
 
     #[test]
