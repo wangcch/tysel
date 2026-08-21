@@ -1881,7 +1881,6 @@ tysel/
 │   ├── tysel-durable/
 │   ├── tysel-policy/
 │   ├── tysel-capability/
-│   ├── tysel-cap-http/
 │   ├── tysel-cap-fs/
 │   ├── tysel-cap-sqlite/
 │   ├── tysel-cap-postgres/

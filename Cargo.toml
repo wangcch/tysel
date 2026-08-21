@@ -18,7 +18,6 @@ members = [
     "crates/tysel-durable",
     "crates/tysel-policy",
     "crates/tysel-capability",
-    "crates/tysel-cap-http",
     "crates/tysel-cap-fs",
     "crates/tysel-cap-sqlite",
     "crates/tysel-cap-postgres",
