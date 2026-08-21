@@ -124,6 +124,74 @@ fn release_build_writes_compatible_deterministic_evidence() {
 }
 
 #[test]
+fn release_commands_sign_and_verify_against_a_trust_policy() {
+    let dir = temp_js_app("release-signature");
+    let stub = dir.join("tysel-service");
+    fs::write(&stub, b"stub-runtime").unwrap();
+    let artifact = dir.join("dist/release-app");
+    let build = Command::new(cli_exe())
+        .args([
+            "build",
+            "--release",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            stub.to_str().unwrap(),
+            "--output",
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+
+    let key = dir.join("release.key");
+    fs::write(&key, format!("{}\n", "07".repeat(32))).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let key_info = Command::new(cli_exe())
+        .args(["release", "key-info", "--key", key.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(key_info.status.success(), "{}", String::from_utf8_lossy(&key_info.stderr));
+    let info: serde_json::Value = serde_json::from_slice(&key_info.stdout).unwrap();
+    let trust = dir.join("trust.json");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    fs::write(
+        &trust,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "policy_version": 1,
+            "issued_at_unix": now,
+            "expires_at_unix": now + 3600,
+            "keys": [{
+                "key_id": info["key_id"],
+                "algorithm": "ed25519",
+                "public_key": info["public_key"],
+                "status": "active",
+                "valid_from_unix": 0
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let sign = Command::new(cli_exe())
+        .args(["release", "sign", artifact.to_str().unwrap(), "--key", key.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(sign.status.success(), "{}", String::from_utf8_lossy(&sign.stderr));
+    assert!(sidecar(&artifact, ".evidence.sig.json").exists());
+
+    let verify = Command::new(cli_exe())
+        .args(["release", "verify", artifact.to_str().unwrap(), "--trust", trust.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(verify.status.success(), "{}", String::from_utf8_lossy(&verify.stderr));
+    assert!(String::from_utf8_lossy(&verify.stdout).contains("Verified"));
+}
+
+#[test]
 fn build_validates_precompiles_and_embeds_a_component() {
     let dir = std::env::temp_dir().join(format!("tysel-cli-build-wasm-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();

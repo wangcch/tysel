@@ -12,6 +12,7 @@ use tysel_package::{Tap, TapCompatibilityReport, bundle_hash, compatibility_repo
 use crate::supply_chain::{CycloneDxBom, LicenseInventory, inventory_digest, release_supply_chain};
 
 pub const RELEASE_EVIDENCE_VERSION: u32 = 2;
+const MAX_RELEASE_SIDECAR_BYTES: u64 = 32 * 1024 * 1024;
 static TEMP_FILE_IDS: AtomicU64 = AtomicU64::new(1);
 
 /// Deterministic index tying one executable digest to its TAP compatibility
@@ -148,7 +149,9 @@ pub fn verify_release_evidence(output: impl AsRef<Path>) -> Result<ReleaseEviden
         compatibility_report(&tap_payload) == index.compatibility,
         "embedded TAP compatibility does not match evidence"
     );
-    let checksum = fs::read_to_string(sidecar_path(output, ".sha256"))?;
+    let checksum_path = sidecar_path(output, ".sha256");
+    let checksum_bytes = read_bounded(&checksum_path, MAX_RELEASE_SIDECAR_BYTES)?;
+    let checksum = std::str::from_utf8(&checksum_bytes).context("checksum sidecar is not UTF-8")?;
     ensure!(
         checksum == format!("{}\n", index.artifact.sha256),
         "checksum sidecar does not match evidence"
@@ -202,7 +205,7 @@ fn verify_document(
     evidence: &ReleaseDocumentEvidence,
 ) -> Result<Vec<u8>> {
     let path = sidecar_path(output, suffix);
-    let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let bytes = read_bounded(&path, MAX_RELEASE_SIDECAR_BYTES)?;
     ensure!(
         bytes.len() as u64 == evidence.size_bytes,
         "{} size does not match evidence",
@@ -225,8 +228,19 @@ fn document_evidence(kind: &str, contents: &[u8]) -> ReleaseDocumentEvidence {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let bytes = read_bounded(path, MAX_RELEASE_SIDECAR_BYTES)?;
     serde_json::from_slice(&bytes).with_context(|| format!("invalid JSON in {}", path.display()))
+}
+
+fn read_bounded(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
+    let metadata =
+        fs::metadata(path).with_context(|| format!("failed to inspect {}", path.display()))?;
+    ensure!(metadata.len() <= max_bytes, "release sidecar {} is oversized", path.display());
+    fs::read(path).with_context(|| format!("failed to read {}", path.display()))
+}
+
+pub(crate) fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<()> {
+    stage_json(path, value)?.commit()
 }
 
 fn stage_json(path: &Path, value: &impl Serialize) -> Result<StagedFile> {
@@ -239,7 +253,7 @@ fn json_bytes(value: &impl Serialize) -> Result<Vec<u8>> {
     Ok(json)
 }
 
-fn sidecar_path(output: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn sidecar_path(output: &Path, suffix: &str) -> PathBuf {
     let mut path = OsString::from(output.as_os_str());
     path.push(suffix);
     PathBuf::from(path)

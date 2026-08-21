@@ -14,6 +14,7 @@ use tysel_manifest::Manifest;
 mod build;
 mod check;
 mod dev;
+mod release;
 
 #[derive(Parser)]
 #[command(
@@ -86,6 +87,11 @@ enum Commands {
         #[arg(long, default_value = "tysel.toml")]
         manifest: PathBuf,
     },
+    /// Sign or verify release evidence and inspect release keys.
+    Release {
+        #[command(subcommand)]
+        command: release::ReleaseCommand,
+    },
     /// Print the effective capability and permission report.
     Inspect {
         #[arg(long, default_value = "tysel.toml")]
@@ -145,6 +151,7 @@ fn run() -> Result<()> {
         Commands::Build { entry, stub, output, manifest, target, profile, release } => {
             build::run(manifest, entry, stub, output, target, profile, release)
         }
+        Commands::Release { command } => release::run(command),
         other => unimplemented_command(other),
     }
 }
@@ -169,6 +176,7 @@ fn unimplemented_command(command: Commands) -> Result<()> {
         | Commands::Dev { .. }
         | Commands::Run { .. }
         | Commands::Mcp { .. }
+        | Commands::Release { .. }
         | Commands::Queue { .. } => unreachable!(),
     };
     anyhow::bail!("`tysel {name}` is not implemented yet (see roadmap.md §21)")

@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "7e4db474c9684687d33976528976e4b6affc8137dbfd9f6497c11e0db97fd974",
+  "cargo_lock_sha256": "55b1a577a3612edb408a82b4e2d157622371217916331fccfcd75cd9bbf4ab23",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -576,6 +576,22 @@
       "checksum": "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
     },
     {
+      "name": "curve25519-dalek-derive",
+      "version": "0.1.1",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/curve25519-dalek-derive@0.1.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
+    },
+    {
+      "name": "curve25519-dalek",
+      "version": "5.0.0",
+      "license": "BSD-3-Clause",
+      "purl": "pkg:cargo/curve25519-dalek@5.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "b5eed333089e2e1c1ac8c6c0398e5e2497b4c9926ca6d0365ed1e099afa5bc23"
+    },
+    {
       "name": "data-encoding",
       "version": "2.11.1",
       "license": "MIT",
@@ -614,6 +630,22 @@
       "purl": "pkg:cargo/dragonbox_ecma@0.1.12",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "fd8e701084c37e7ef62d3f9e453b618130cbc0ef3573847785952a3ac3f746bf"
+    },
+    {
+      "name": "ed25519-dalek",
+      "version": "3.0.0",
+      "license": "BSD-3-Clause",
+      "purl": "pkg:cargo/ed25519-dalek@3.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "6ebaa1a2bf1290ab3bfe5a7b771d050ebffab2711c19a81691c683a5144a25de"
+    },
+    {
+      "name": "ed25519",
+      "version": "3.0.0",
+      "license": "Apache-2.0 OR MIT",
+      "purl": "pkg:cargo/ed25519@3.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "29fcf32e6c73d1079f83ab4d782de2d81620346a5f38c6237a86a22f8368980a"
     },
     {
       "name": "either",
@@ -702,6 +734,14 @@
       "purl": "pkg:cargo/fd-lock@4.0.4",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+    },
+    {
+      "name": "fiat-crypto",
+      "version": "0.3.0",
+      "license": "MIT OR Apache-2.0 OR BSD-1-Clause",
+      "purl": "pkg:cargo/fiat-crypto@0.3.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
     },
     {
       "name": "filetime",
@@ -2056,6 +2096,14 @@
       "checksum": "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
     },
     {
+      "name": "rustc_version",
+      "version": "0.4.1",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/rustc_version@0.4.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
+    },
+    {
       "name": "rustix-linux-procfs",
       "version": "0.1.1",
       "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
@@ -2248,6 +2296,14 @@
       "checksum": "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
     },
     {
+      "name": "signature",
+      "version": "3.0.0",
+      "license": "Apache-2.0 OR MIT",
+      "purl": "pkg:cargo/signature@3.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
+    },
+    {
       "name": "simd-json",
       "version": "0.17.3",
       "license": "Apache-2.0 OR MIT",
@@ -2350,6 +2406,14 @@
       "purl": "pkg:cargo/strsim@0.11.1",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+    },
+    {
+      "name": "subtle",
+      "version": "2.6.1",
+      "license": "BSD-3-Clause",
+      "purl": "pkg:cargo/subtle@2.6.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
     },
     {
       "name": "syn",
@@ -3504,6 +3568,14 @@
       "purl": "pkg:cargo/zerofrom@0.1.8",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "0ec05a11813ea801ff6d75110ad09cd0824ddba17dfe17128ea0d5f68e6c5272"
+    },
+    {
+      "name": "zeroize",
+      "version": "1.9.0",
+      "license": "Apache-2.0 OR MIT",
+      "purl": "pkg:cargo/zeroize@1.9.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
     },
     {
       "name": "zerotrie",

@@ -5,6 +5,7 @@
 
 mod bundle;
 mod evidence;
+mod signing;
 mod supply_chain;
 mod transpile;
 
@@ -19,6 +20,11 @@ pub use evidence::{
     RELEASE_EVIDENCE_VERSION, ReleaseArtifactEvidence, ReleaseDocumentEvidence,
     ReleaseEvidenceIndex, ReleaseSidecars, ReleaseSupplyChainEvidence, verify_release_evidence,
     write_release_evidence,
+};
+pub use signing::{
+    RELEASE_SIGNATURE_VERSION, ReleaseKeyInfo, ReleaseKeyStatus, ReleaseSignature,
+    TRUST_POLICY_VERSION, TrustPolicy, TrustedReleaseKey, release_key_info, sign_release_evidence,
+    validate_trust_policy, verify_release_signature,
 };
 pub use supply_chain::{
     CycloneDxBom, LicenseInventory, RuntimeInventory, SUPPLY_CHAIN_VERSION, SupplyChainComponent,

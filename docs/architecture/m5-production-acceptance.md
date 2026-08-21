@@ -85,3 +85,35 @@ and checksum sidecars; compares the compatibility sidecar to the index; parses
 all JSON with strict schemas; verifies that the SBOM identifies the executable;
 and rejects a runtime-inventory mismatch. `.evidence.json` remains the final
 commit marker, so partially published sidecars are never authoritative.
+
+## M5.4 Offline signatures and key rotation
+
+`tysel release sign <artifact> --key <path>` first verifies every unsigned
+release sidecar, then writes `.evidence.sig.json`. The signature uses Ed25519
+and a domain-separated message containing the derived key ID, signed Unix
+time, and SHA-256 digest of the exact `.evidence.json` bytes. Private keys are
+32-byte seeds encoded as 64 lowercase hexadecimal characters. On Unix, key
+files must deny all group and other permissions; keys are never accepted on a
+command-line argument or environment variable.
+
+`tysel release key-info --key <path>` prints the public key and its key ID. The
+key ID is the full SHA-256 digest of the 32-byte public key, so aliases cannot
+redirect a signature to another key. The `tysel release verify` command accepts
+an artifact and `--trust <policy.json>`, verifies the artifact and all unsigned
+evidence, then applies a strict trust policy and Ed25519 signature check.
+
+Trust-policy keys are sorted by key ID and have `active`, `retired`, or
+`revoked` status plus validity bounds. Policies have a mandatory expiration to
+bound stale-policy use; their declared lifetime cannot exceed 90 days.
+Verification uses both the signed issue time and the current time: a retired
+key is accepted only during its explicit grace window, and a revoked key is
+rejected unconditionally. Rotation therefore proceeds by
+publishing the new active key during an overlap window, re-signing retained
+artifacts, marking the old key retired with a short deadline, and finally
+removing or revoking it. Compromise requires `revoked`, not `retired`.
+
+Generate a seed with a cryptographic random source and immediately restrict it,
+for example `openssl rand -hex 32 > release.key` followed by `chmod 600
+release.key`. The trust policy is itself a deployment trust anchor: distribute
+it through an authenticated configuration channel, refresh it before
+`expires_at_unix`, and prevent rollback at that layer.
