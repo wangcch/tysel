@@ -374,6 +374,30 @@ fetch = ["api.openai.com"]
     }
 
     #[test]
+    fn tap_copies_http_protocols() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "http2-service"
+entry = "src/index.ts"
+
+[server]
+http1 = false
+http2 = true
+"#,
+        )
+        .unwrap();
+        let tap = tap_from_app(
+            &manifest,
+            "0.0.1",
+            b"export default {};".to_vec(),
+            identity_source_map("src/index.ts", "export default {}\n").unwrap(),
+        );
+        assert!(!tap.manifest.http1);
+        assert!(tap.manifest.http2);
+    }
+
+    #[test]
     fn tap_copies_postgres_and_fs_permissions() {
         let manifest = Manifest::parse(
             r#"

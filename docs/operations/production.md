@@ -170,7 +170,7 @@ copy of a live database is not a production recovery plan.
 
 ## Upgrade and rollback
 
-The current writer emits TAP v2 and reads TAP v1 through v2. Mixed deployment
+The current writer emits TAP v3 and reads TAP v1 through v3. Mixed deployment
 is allowed only when every artifact's machine-readable compatibility report
 accepts the version being served and the Capability ABI imports remain within
 the deployment-approved WIT contract. Unknown versions and fields fail closed.

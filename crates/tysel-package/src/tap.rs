@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use crate::sourcemap::SourceMap;
 
-pub const TAP_VERSION: u32 = 2;
+pub const TAP_VERSION: u32 = 3;
 pub const MIN_SUPPORTED_TAP_VERSION: u32 = 1;
 pub const TAP_COMPATIBILITY_REPORT_VERSION: u32 = 1;
 pub const COMPONENT_ABI_VERSION: &str = "0.4.0";

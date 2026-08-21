@@ -11,3 +11,5 @@ Phase 3 closes the production-capability gaps identified after the developer-exp
 | OTLP | Traces and metrics export over OTLP/HTTP with bounded endpoint configuration, redacted attributes, and clean-shutdown flush. | Existing M5 fake-collector protobuf integration test and configuration/redaction unit tests. |
 
 HTTP/2 is cleartext at the Tysel listener. Public deployments terminate TLS at an ingress or reverse proxy. `wss` uses the platform certificate store. OTLP and `tysel compat` build on the production and Phase 2 contracts rather than introducing parallel implementations.
+
+HTTP protocol metadata advances the package writer to TAP v3. The reader keeps TAP v1 and v2 support, defaulting legacy packages to HTTP/1 enabled and HTTP/2 disabled.

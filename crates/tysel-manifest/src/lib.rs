@@ -252,6 +252,12 @@ impl Manifest {
                 "server must enable at least one of http1 or http2".into(),
             ));
         }
+        if self.server.websocket && !self.server.http1 {
+            return Err(ManifestError::Invalid(
+                "server.websocket requires server.http1 because WebSocket upgrades use HTTP/1.1"
+                    .into(),
+            ));
+        }
         if !matches!(self.app.profile.as_str(), "service" | "isolated" | "component") {
             return Err(ManifestError::Invalid(format!(
                 "unsupported app profile {:?}; expected service, isolated, or component",
@@ -427,6 +433,24 @@ http2 = false
         )
         .unwrap_err();
         assert!(error.to_string().contains("at least one"));
+    }
+
+    #[test]
+    fn rejects_websocket_without_http1() {
+        let error = Manifest::parse(
+            r#"
+[app]
+name = "h2-websocket"
+entry = "src/index.ts"
+
+[server]
+http1 = false
+http2 = true
+websocket = true
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("requires server.http1"));
     }
 
     #[test]

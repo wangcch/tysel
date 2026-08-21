@@ -127,7 +127,7 @@ fn bundle_hash_mismatch_is_rejected() {
 }
 
 #[test]
-fn tap_v2_roundtrips_portable_and_aot_components() {
+fn tap_v3_roundtrips_portable_and_aot_components() {
     let component = PackagedComponent {
         name: "echo".into(),
         abi_version: "0.4.0".into(),
@@ -144,6 +144,37 @@ fn tap_v2_roundtrips_portable_and_aot_components() {
     let decoded = Tap::decode(&tap.encode().unwrap()).unwrap();
     assert_eq!(decoded.manifest.format_version, TAP_VERSION);
     assert_eq!(decoded.components, [component]);
+}
+
+#[test]
+fn tap_v2_without_protocol_fields_remains_readable() {
+    let mut manifest = serde_json::to_value(sample_manifest()).unwrap();
+    manifest["format_version"] = 2.into();
+    manifest["bundle_hash"] = bundle_hash(BUNDLE.as_bytes()).into();
+    let object = manifest.as_object_mut().unwrap();
+    object.remove("http1");
+    object.remove("http2");
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let map = identity_source_map("src/index.ts", TYPESCRIPT).unwrap();
+    let component_index = br#"{"components":[]}"#;
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(b"TYSELTAP");
+    encoded.extend_from_slice(&2u32.to_le_bytes());
+    encoded.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(BUNDLE.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(map.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(component_index.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&0u64.to_le_bytes());
+    encoded.extend_from_slice(&manifest);
+    encoded.extend_from_slice(BUNDLE.as_bytes());
+    encoded.extend_from_slice(&map);
+    encoded.extend_from_slice(component_index);
+
+    let decoded = Tap::decode(&encoded).unwrap();
+    assert_eq!(decoded.manifest.format_version, 2);
+    assert!(decoded.manifest.http1);
+    assert!(!decoded.manifest.http2);
+    assert_eq!(compatibility_report(&encoded).status, TapCompatibilityStatus::Legacy);
 }
 
 #[test]
@@ -287,6 +318,8 @@ fn stable_tap_contract_rejects_ambiguous_or_unknown_metadata() {
     ambiguous.extend_from_slice(&(TAP_VERSION - 1).to_le_bytes());
     ambiguous.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
     ambiguous.extend_from_slice(&(BUNDLE.len() as u64).to_le_bytes());
+    ambiguous.extend_from_slice(&0u64.to_le_bytes());
+    ambiguous.extend_from_slice(&0u64.to_le_bytes());
     ambiguous.extend_from_slice(&0u64.to_le_bytes());
     ambiguous.extend_from_slice(&manifest);
     ambiguous.extend_from_slice(BUNDLE.as_bytes());

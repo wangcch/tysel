@@ -21,8 +21,8 @@ the following evidence to be generated and verified in CI:
 
 ## M5.1 TAP compatibility contract
 
-The first M5 slice freezes the existing TAP v2 envelope as the current writer
-format and keeps TAP v1 as the minimum readable legacy format. The envelope and
+The first M5 slice froze TAP v2; Phase 3 advances the current writer to TAP v3
+for HTTP protocol metadata while keeping TAP v1 and v2 readable. The envelope and
 manifest versions must match. Runtime versions must be semantic versions, and
 the only accepted execution profiles are `service`, `isolated`, and
 `component`. Unknown manifest and component-index fields are rejected.

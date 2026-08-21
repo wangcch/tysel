@@ -330,6 +330,45 @@ async fn http2_prior_knowledge_serves_requests() {
 }
 
 #[tokio::test]
+async fn dual_protocol_listener_accepts_http1_and_http2() {
+    let isolate = IsolatePool::spawn(1, HANDLER, config()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let pool = SharedPool::with_server_options(
+        Arc::new(isolate),
+        16 * 1024 * 1024,
+        false,
+        true,
+        true,
+        None,
+    );
+    tokio::spawn(async move {
+        for _ in 0..2 {
+            let (stream, _) = listener.accept().await.unwrap();
+            handle_stream(stream, pool.clone());
+        }
+    });
+
+    let (status, body) = request(addr, "/http1").await;
+    assert_eq!(status, 200);
+    assert!(body.contains("\"path\":\"/http1\""));
+
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http2::handshake::<_, _, Empty<Bytes>>(
+        TokioExecutor::new(),
+        TokioIo::new(stream),
+    )
+    .await
+    .unwrap();
+    tokio::spawn(conn);
+    let request = Request::builder().uri("http://localhost/http2").body(Empty::new()).unwrap();
+    let response = sender.send_request(request).await.unwrap();
+    assert_eq!(response.version(), hyper::Version::HTTP_2);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&body).contains("\"path\":\"/http2\""));
+}
+
+#[tokio::test]
 async fn multi_isolate_handles_concurrent_requests() {
     let addr = spawn_server(2).await;
     let mut tasks = Vec::new();
