@@ -29,6 +29,8 @@ struct Loaded {
     max_request_bytes: usize,
     addr: std::net::SocketAddr,
     websocket: bool,
+    http1: bool,
+    http2: bool,
     source_map: Arc<SourceMap>,
     task: Option<TaskSpec>,
     durable: Option<DurableSpec>,
@@ -189,10 +191,12 @@ pub async fn run_queue(
 
 async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> Result<()> {
     let loaded = load(&manifest_path, entry.as_deref())?;
-    let pool = SharedPool::with_debug_info(
+    let pool = SharedPool::with_server_options(
         loaded.isolate,
         loaded.max_request_bytes,
         loaded.websocket,
+        loaded.http1,
+        loaded.http2,
         Some(loaded.source_map),
     );
     let listener =
@@ -224,10 +228,12 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                                 match start_dev_durable(next.durable.clone()).await {
                                     Ok(next_durable) => {
                                         eprintln!("tysel reload");
-                                        pool.replace_with_debug_info(
+                                        pool.replace_with_server_options(
                                             next.isolate,
                                             next.max_request_bytes,
                                             next.websocket,
+                                            next.http1,
+                                            next.http2,
                                             Some(next.source_map),
                                         );
                                         shutdown_task_service(task_service).await?;
@@ -343,6 +349,8 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
         max_request_bytes: tap.manifest.max_request_bytes,
         addr,
         websocket,
+        http1: tap.manifest.http1,
+        http2: tap.manifest.http2,
         source_map: parsed_source_map,
         task,
         durable: Some(DurableSpec {
