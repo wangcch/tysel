@@ -3893,11 +3893,25 @@ name = "tysel-testkit"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "bytes",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tokio",
+ "tokio-tungstenite",
  "tysel-build",
+ "tysel-durable",
+ "tysel-engine",
+ "tysel-engine-qjs",
+ "tysel-isolate",
  "tysel-manifest",
+ "tysel-runtime",
+ "tysel-scheduler",
+ "tysel-task",
 ]
 
 [[package]]

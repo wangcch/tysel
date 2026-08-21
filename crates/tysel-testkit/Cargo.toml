@@ -12,11 +12,25 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
 tysel-build.workspace = true
+tysel-durable = { path = "../tysel-durable" }
+tysel-engine.workspace = true
+tysel-engine-qjs.workspace = true
+tysel-isolate.workspace = true
 tysel-manifest.workspace = true
+tysel-runtime = { path = "../tysel-runtime" }
+tysel-scheduler = { path = "../tysel-scheduler" }
+tysel-task.workspace = true
 
 [[bin]]
 name = "tysel-bench"

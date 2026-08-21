@@ -5,11 +5,11 @@ use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 use serde_json::{Value, json};
 use tysel_testkit::{
-    ARTIFACT_MB, BenchReport, COLD_START_MS, IDLE_MEMORY_MB, benchmark_evidence, find_stub,
-    gates_passed, write_benchmark_evidence,
+    ARTIFACT_MB, BenchReport, BenchScale, COLD_START_MS, IDLE_MEMORY_MB, SuiteReport,
+    benchmark_system, complete_benchmark_evidence, find_release_stub, find_release_worker,
+    find_stub, gated_metric, run_durable, run_http, run_isolate, run_isolate_with_worker, run_task,
+    suite_report, write_benchmark_evidence,
 };
-
-const UNAVAILABLE_REASON: &str = "harness is not implemented yet";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum BenchSuite {
@@ -18,6 +18,7 @@ pub enum BenchSuite {
     Isolate,
     Task,
     Durable,
+    Http,
     All,
 }
 
@@ -36,28 +37,49 @@ pub struct Options {
     pub allow_unavailable: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SuiteStatus {
-    Pass,
-    Fail,
-    Unavailable,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct SuiteResult {
-    name: &'static str,
-    status: SuiteStatus,
-    reason: Option<&'static str>,
-    measured: Option<f64>,
-    unit: Option<&'static str>,
-    limit: Option<f64>,
-    samples: Option<Vec<f64>>,
-    memory_kind: Option<&'static str>,
-    bytes: Option<u64>,
-    sha256: Option<String>,
-}
-
 pub fn run(options: Options) -> Result<()> {
+    validate_options(&options)?;
+    let scale = BenchScale::from_env();
+    let needs_baseline =
+        matches!(options.suite, BenchSuite::Startup | BenchSuite::Memory | BenchSuite::All);
+    let evidence_mode = options.evidence.is_some();
+    let baseline = if needs_baseline {
+        let stub = if evidence_mode { find_release_stub()? } else { find_stub()? };
+        Some(tysel_testkit::measure(&stub).context("measure hello-service")?)
+    } else {
+        None
+    };
+    let release_worker = if evidence_mode { Some(find_release_worker()?) } else { None };
+    let suites = run_suites(options.suite, baseline.as_ref(), scale, release_worker.as_deref())?;
+
+    match options.format {
+        BenchFormat::Human => print!("{}", format_human(&suites)),
+        BenchFormat::Json => println!("{}", serde_json::to_string_pretty(&format_json(&suites))?),
+    }
+
+    if let Some(path) = &options.evidence {
+        let baseline = baseline.as_ref().expect("all includes baseline measurement");
+        if !suites_passed(&suites) {
+            bail!("one or more roadmap §23 release gates failed");
+        }
+        let source_commit = match options.source_commit {
+            Some(value) => value,
+            None => git_head().context("detect source commit for --evidence")?,
+        };
+        let command = options.command.unwrap_or_else(default_command);
+        let evidence =
+            complete_benchmark_evidence(baseline, suites.clone(), &source_commit, &command)?;
+        write_benchmark_evidence(path, &evidence)?;
+        eprintln!("Evidence             {}", path.display());
+    }
+
+    if !suites_passed(&suites) {
+        bail!("one or more roadmap §23 release gates failed");
+    }
+    Ok(())
+}
+
+fn validate_options(options: &Options) -> Result<()> {
     if options.evidence.is_none() && (options.source_commit.is_some() || options.command.is_some())
     {
         bail!("--source-commit and --command require --evidence");
@@ -71,221 +93,136 @@ pub fn run(options: Options) -> Result<()> {
     if options.allow_unavailable && options.evidence.is_some() {
         bail!("--allow-unavailable cannot be used with --evidence");
     }
-
-    let names = requested_names(options.suite);
-    if options.evidence.is_some() && names.iter().any(|name| !available_harness(name)) {
-        bail!("benchmark evidence requires every requested suite to be available");
+    if options.evidence.is_some() && cfg!(debug_assertions) {
+        bail!("benchmark evidence requires a release build (`cargo run --release ...`)");
     }
-    let needs_measure = names.iter().any(|name| available_harness(name));
-    let report = if needs_measure {
-        let stub = find_stub()?;
-        Some(tysel_testkit::measure(&stub).context("measure hello-service")?)
-    } else {
-        None
-    };
-
-    let suites: Vec<SuiteResult> =
-        names.iter().map(|name| suite_result(name, report.as_ref())).collect();
-    match options.format {
-        BenchFormat::Human => print!("{}", format_human(&suites)),
-        BenchFormat::Json => println!("{}", serde_json::to_string_pretty(&format_json(&suites))?),
-    }
-
-    if let Some(path) = &options.evidence {
-        let report = report.as_ref().expect("evidence requires a measurement");
-        if !gates_passed(report) {
-            bail!("one or more §30 gates failed");
-        }
-        let source_commit = match options.source_commit {
-            Some(value) => value,
-            None => git_head().context("detect source commit for --evidence")?,
-        };
-        let command = options.command.unwrap_or_else(default_command);
-        let evidence = benchmark_evidence(report, &source_commit, &command)?;
-        write_benchmark_evidence(path, &evidence)?;
-        eprintln!("Evidence             {}", path.display());
-    }
-
-    if !command_succeeded(&suites, options.allow_unavailable) {
-        if options.suite == BenchSuite::All {
-            if suites.iter().any(|suite| suite.status == SuiteStatus::Unavailable) {
-                bail!("one or more benchmark suites are unavailable");
-            }
-            bail!("one or more §30 gates failed");
-        }
-        if suites.iter().any(|suite| suite.status == SuiteStatus::Unavailable) {
-            bail!("benchmark suite is unavailable");
-        }
-        bail!("benchmark suite failed");
+    if options.evidence.is_some()
+        && matches!(std::env::var("TYSEL_BENCH_QUICK").as_deref(), Ok("1" | "true"))
+    {
+        bail!("benchmark evidence requires the full scale; unset TYSEL_BENCH_QUICK");
     }
     Ok(())
 }
 
-fn requested_names(suite: BenchSuite) -> Vec<&'static str> {
-    match suite {
-        BenchSuite::Startup => vec!["startup"],
-        BenchSuite::Memory => vec!["memory"],
-        BenchSuite::Isolate => vec!["isolate"],
-        BenchSuite::Task => vec!["task"],
-        BenchSuite::Durable => vec!["durable"],
-        BenchSuite::All => {
-            vec!["startup", "memory", "binary-size", "isolate", "task", "durable"]
-        }
+fn run_suites(
+    requested: BenchSuite,
+    baseline: Option<&BenchReport>,
+    scale: BenchScale,
+    release_worker: Option<&std::path::Path>,
+) -> Result<Vec<SuiteReport>> {
+    let mut suites = Vec::new();
+    if matches!(requested, BenchSuite::Startup | BenchSuite::All) {
+        suites.push(startup_report(baseline.expect("startup baseline")));
     }
-}
-
-fn available_harness(name: &str) -> bool {
-    matches!(name, "startup" | "memory" | "binary-size")
-}
-
-fn suite_result(name: &'static str, report: Option<&BenchReport>) -> SuiteResult {
-    if !available_harness(name) {
-        return SuiteResult {
-            name,
-            status: SuiteStatus::Unavailable,
-            reason: Some(UNAVAILABLE_REASON),
-            measured: None,
-            unit: None,
-            limit: None,
-            samples: None,
-            memory_kind: None,
-            bytes: None,
-            sha256: None,
+    if matches!(requested, BenchSuite::Memory | BenchSuite::All) {
+        let baseline = baseline.expect("memory baseline");
+        suites.push(memory_report(baseline));
+    }
+    if requested == BenchSuite::All {
+        let baseline = baseline.expect("artifact baseline");
+        suites.push(artifact_report(baseline));
+    }
+    if matches!(requested, BenchSuite::Isolate | BenchSuite::All) {
+        let report = match release_worker {
+            Some(worker) => run_isolate_with_worker(scale, worker),
+            None => run_isolate(scale),
         };
+        suites.push(report.context("run isolate benchmark")?);
     }
-    let report = report.expect("available suite requires a measurement");
-    match name {
-        "startup" => {
-            let measured = report.cold_start_p50_ms();
-            SuiteResult {
-                name,
-                status: if measured <= COLD_START_MS {
-                    SuiteStatus::Pass
-                } else {
-                    SuiteStatus::Fail
-                },
-                reason: None,
-                measured: Some(measured),
-                unit: Some("ms"),
-                limit: Some(COLD_START_MS),
-                samples: Some(report.cold_start_ms.clone()),
-                memory_kind: None,
-                bytes: None,
-                sha256: None,
-            }
-        }
-        "memory" => {
-            let measured = report.idle_memory_mb();
-            let passed = measured <= IDLE_MEMORY_MB
-                && (!cfg!(target_os = "linux") || report.memory_kind == "pss");
-            SuiteResult {
-                name,
-                status: if passed { SuiteStatus::Pass } else { SuiteStatus::Fail },
-                reason: None,
-                measured: Some(measured),
-                unit: Some("MB"),
-                limit: Some(IDLE_MEMORY_MB),
-                samples: None,
-                memory_kind: Some(report.memory_kind),
-                bytes: None,
-                sha256: None,
-            }
-        }
-        "binary-size" => {
-            let measured = report.artifact_mb();
-            SuiteResult {
-                name,
-                status: if measured <= ARTIFACT_MB { SuiteStatus::Pass } else { SuiteStatus::Fail },
-                reason: None,
-                measured: Some(measured),
-                unit: Some("MB"),
-                limit: Some(ARTIFACT_MB),
-                samples: None,
-                memory_kind: None,
-                bytes: Some(report.artifact_bytes),
-                sha256: Some(report.artifact_sha256.clone()),
-            }
-        }
-        _ => unreachable!("available harness {name}"),
+    if matches!(requested, BenchSuite::Task | BenchSuite::All) {
+        suites.push(run_task(scale).context("run task benchmark")?);
     }
+    if matches!(requested, BenchSuite::Durable | BenchSuite::All) {
+        suites.push(run_durable(scale).context("run durable benchmark")?);
+    }
+    if matches!(requested, BenchSuite::Http | BenchSuite::All) {
+        suites.push(run_http(scale).context("run HTTP benchmark")?);
+    }
+    Ok(suites)
 }
 
-fn command_succeeded(results: &[SuiteResult], allow_unavailable: bool) -> bool {
-    if results.iter().any(|result| result.status == SuiteStatus::Fail) {
-        return false;
-    }
-    if !allow_unavailable && results.iter().any(|result| result.status == SuiteStatus::Unavailable)
-    {
-        return false;
-    }
-    true
+fn startup_report(report: &BenchReport) -> SuiteReport {
+    suite_report(
+        "startup",
+        vec![gated_metric("cold_start_p50_ms", "ms", report.cold_start_ms.clone(), COLD_START_MS)],
+    )
 }
 
-fn format_human(results: &[SuiteResult]) -> String {
-    let mut out = String::from("suite             status        measured           limit\n");
-    for result in results {
-        match result.status {
-            SuiteStatus::Unavailable => {
+fn memory_report(report: &BenchReport) -> SuiteReport {
+    let mut metric =
+        gated_metric("idle_memory_mb", "MB", vec![report.idle_memory_mb()], IDLE_MEMORY_MB);
+    metric.extra = Some(json!({ "kind": report.memory_kind }));
+    if cfg!(target_os = "linux") && report.memory_kind != "pss" {
+        metric.status = Some("fail".into());
+        metric.passed = Some(false);
+        metric.reason = Some("Linux release evidence requires PSS".into());
+    }
+    suite_report("memory", vec![metric])
+}
+
+fn artifact_report(report: &BenchReport) -> SuiteReport {
+    let mut metric = gated_metric("artifact_mb", "MB", vec![report.artifact_mb()], ARTIFACT_MB);
+    metric.extra = Some(json!({
+        "bytes": report.artifact_bytes,
+        "sha256": report.artifact_sha256,
+    }));
+    suite_report("binary-size", vec![metric])
+}
+
+fn suites_passed(suites: &[SuiteReport]) -> bool {
+    suites.iter().flat_map(|suite| &suite.metrics).all(|metric| metric.passed != Some(false))
+}
+
+fn suite_status(suite: &SuiteReport) -> &'static str {
+    if suite.metrics.iter().any(|metric| metric.passed == Some(false)) { "fail" } else { "pass" }
+}
+
+fn format_human(suites: &[SuiteReport]) -> String {
+    let mut out = String::from(
+        "suite             status    metric                              p50          p95          p99        gate\n",
+    );
+    for suite in suites {
+        for (index, metric) in suite.metrics.iter().enumerate() {
+            let suite_name = if index == 0 { suite.suite.as_str() } else { "" };
+            let status = metric.status.as_deref().unwrap_or("observed");
+            if status == "skipped" {
                 out.push_str(&format!(
-                    "{:<16}  unavailable   {}\n",
-                    result.name,
-                    result.reason.unwrap_or(UNAVAILABLE_REASON)
+                    "{suite_name:<16}  {status:<8}  {:<34} {}\n",
+                    metric.name,
+                    metric.reason.as_deref().unwrap_or("not configured")
                 ));
+                continue;
             }
-            SuiteStatus::Pass | SuiteStatus::Fail => {
-                let status = if result.status == SuiteStatus::Pass { "pass" } else { "fail" };
-                let measured = result.measured.unwrap_or(0.0);
-                let unit = result.unit.unwrap_or("");
-                let limit = result.limit.unwrap_or(0.0);
-                let kind = result.memory_kind.map(|kind| format!(" ({kind})")).unwrap_or_default();
-                out.push_str(&format!(
-                    "{:<16}  {status:<12}  {measured:>8.2} {unit:<4}  {limit:>6} {unit}{kind}\n",
-                    result.name
-                ));
-            }
+            let display = |value: Option<f64>| {
+                value.map(|value| format!("{value:.2}")).unwrap_or_else(|| "-".into())
+            };
+            let p50 = display(metric.p50);
+            let p95 = display(metric.p95);
+            let p99 = display(metric.p99);
+            let gate = metric
+                .limit
+                .map(|limit| format!("≤ {limit:.2} {}", metric.unit))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "{suite_name:<16}  {status:<8}  {:<34} {p50:>8} {:<4} {p95:>8} {:<4} {p99:>8} {:<4} {gate}\n",
+                metric.name, metric.unit, metric.unit, metric.unit,
+            ));
         }
     }
     out
 }
 
-fn format_json(results: &[SuiteResult]) -> Value {
+fn format_json(suites: &[SuiteReport]) -> Value {
     json!({
-        "schemaVersion": 1,
-        "suites": results.iter().map(suite_json).collect::<Vec<_>>(),
+        "schemaVersion": 2,
+        "system": benchmark_system(),
+        "suites": suites.iter().map(|suite| json!({
+            "name": suite.suite,
+            "status": suite_status(suite),
+            "commit": suite.commit,
+            "metrics": suite.metrics,
+        })).collect::<Vec<_>>(),
     })
-}
-
-fn suite_json(result: &SuiteResult) -> Value {
-    match result.status {
-        SuiteStatus::Unavailable => json!({
-            "name": result.name,
-            "status": "unavailable",
-            "reason": result.reason.unwrap_or(UNAVAILABLE_REASON),
-        }),
-        SuiteStatus::Pass | SuiteStatus::Fail => {
-            let mut body = json!({
-                "name": result.name,
-                "status": if result.status == SuiteStatus::Pass { "pass" } else { "fail" },
-                "measured": result.measured,
-                "unit": result.unit,
-                "limit": result.limit,
-            });
-            let object = body.as_object_mut().expect("suite object");
-            if let Some(samples) = &result.samples {
-                object.insert("samples".into(), json!(samples));
-            }
-            if let Some(kind) = result.memory_kind {
-                object.insert("kind".into(), json!(kind));
-            }
-            if let Some(bytes) = result.bytes {
-                object.insert("bytes".into(), json!(bytes));
-            }
-            if let Some(digest) = &result.sha256 {
-                object.insert("sha256".into(), json!(digest));
-            }
-            body
-        }
-    }
 }
 
 fn git_head() -> Result<String> {
@@ -344,55 +281,34 @@ mod tests {
     }
 
     #[test]
-    fn all_includes_unavailable_suites_without_numbers() {
+    fn baseline_reports_include_raw_samples_and_gates() {
         let report = sample_report(8.0, 10 * 1024, 1_000_000);
-        let suites: Vec<_> = requested_names(BenchSuite::All)
-            .into_iter()
-            .map(|name| suite_result(name, Some(&report)))
-            .collect();
-        assert_eq!(suites.len(), 6);
-        assert_eq!(suites[0].name, "startup");
-        assert_eq!(suites[0].status, SuiteStatus::Pass);
-        assert_eq!(suites[3].name, "isolate");
-        assert_eq!(suites[3].status, SuiteStatus::Unavailable);
-        assert!(suites[3].measured.is_none());
-        let json = format_json(&suites);
-        assert_eq!(json["schemaVersion"], 1);
-        assert_eq!(json["suites"][3]["status"], "unavailable");
-        assert!(json["suites"][3].get("measured").is_none());
-        assert!(json["suites"][3].get("samples").is_none());
-        assert!(!command_succeeded(&suites, false));
-        assert!(command_succeeded(&suites, true));
+        let suites =
+            vec![startup_report(&report), memory_report(&report), artifact_report(&report)];
+        assert!(suites_passed(&suites));
+        assert_eq!(format_json(&suites)["schemaVersion"], 2);
+        assert_eq!(suites[0].metrics[0].samples.len(), 11);
+        assert_eq!(suites[0].metrics[0].limit, Some(COLD_START_MS));
     }
 
     #[test]
-    fn explicit_unavailable_suite_fails() {
-        let suites = vec![suite_result("isolate", None)];
-        assert!(!command_succeeded(&suites, false));
-        let json = format_json(&suites);
-        assert_eq!(json["suites"][0]["reason"], UNAVAILABLE_REASON);
-    }
-
-    #[test]
-    fn failed_gate_fails_all() {
+    fn failed_gate_fails_suite_collection() {
         let report = sample_report(40.0, 10 * 1024, 1_000_000);
-        let suites: Vec<_> = requested_names(BenchSuite::All)
-            .into_iter()
-            .map(|name| suite_result(name, Some(&report)))
-            .collect();
-        assert_eq!(suites[0].status, SuiteStatus::Fail);
-        assert!(!command_succeeded(&suites, false));
-        assert!(!command_succeeded(&suites, true));
-        let human = format_human(&suites);
-        assert!(human.contains("fail"));
-        assert!(human.contains("unavailable"));
+        let suites = vec![startup_report(&report)];
+        assert!(!suites_passed(&suites));
+        assert_eq!(suite_status(&suites[0]), "fail");
+        assert!(format_human(&suites).contains("fail"));
     }
 
     #[test]
-    fn json_omits_fake_fields_for_unavailable_suites() {
-        let text = serde_json::to_string(&format_json(&[suite_result("durable", None)])).unwrap();
-        assert!(!text.contains("measured"));
-        assert!(!text.contains("samples"));
-        assert!(!text.contains("limit"));
+    fn observational_and_skipped_metrics_do_not_fake_failures() {
+        let suite = suite_report(
+            "task",
+            vec![
+                tysel_testkit::metric("enqueue_ms", "ms", vec![1.0]),
+                tysel_testkit::skipped_metric("postgres_ms", "ms", "not configured"),
+            ],
+        );
+        assert!(suites_passed(&[suite]));
     }
 }

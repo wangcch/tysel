@@ -170,6 +170,10 @@ impl Supervisor {
         Ok(())
     }
 
+    pub fn worker_pid(&self) -> Option<u32> {
+        self.child.as_ref().map(|conn| conn.child.id())
+    }
+
     pub fn load_handler(
         &mut self,
         source: &str,

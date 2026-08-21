@@ -137,14 +137,14 @@ enum Commands {
         #[arg(long, requires = "strict")]
         deny_unknown: bool,
     },
-    /// Run the §30 benchmark harness.
+    /// Run the roadmap §23 benchmark harness.
     Bench {
-        /// Suite to run: startup, memory, isolate, task, durable, or all.
+        /// Suite to run: startup, memory, isolate, task, durable, http, or all.
         suite: bench::BenchSuite,
         /// Human table or stable JSON.
         #[arg(long, value_enum, default_value_t = bench::BenchFormat::Human)]
         format: bench::BenchFormat,
-        /// Write the existing release evidence document (requires `all`).
+        /// Write complete benchmark evidence with raw samples (requires release `all`, full scale).
         #[arg(long)]
         evidence: Option<PathBuf>,
         /// Source commit recorded in evidence (defaults to HEAD in a clean source workspace).
@@ -153,7 +153,7 @@ enum Commands {
         /// Command line recorded in evidence (defaults to the current invocation).
         #[arg(long, requires = "evidence")]
         command: Option<String>,
-        /// Return success when `all` contains suites whose harness is not available yet.
+        /// Deprecated compatibility flag; every benchmark suite now has a harness.
         #[arg(long)]
         allow_unavailable: bool,
     },
@@ -183,6 +183,23 @@ enum Commands {
 }
 
 fn main() -> ExitCode {
+    if let Ok(capacity) = std::env::var("TYSEL_INTERNAL_TASK_MEMORY") {
+        return match capacity
+            .parse::<usize>()
+            .context("parse TYSEL_INTERNAL_TASK_MEMORY")
+            .and_then(tysel_testkit::task_backpressure_memory)
+            .and_then(|report| serde_json::to_string(&report).context("encode task memory report"))
+        {
+            Ok(report) => {
+                println!("{report}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error:#}");
+                ExitCode::from(1)
+            }
+        };
+    }
     let cli = Cli::parse();
     let error_format = cli.error_format;
     match run(cli) {

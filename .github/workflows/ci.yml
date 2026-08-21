@@ -196,7 +196,7 @@ jobs:
         env:
           TYSEL_RUST_COMPONENT_FIXTURE: sdk/examples/rust-echo/target/echo.component.wasm
 
-  # Roadmap §30 idle PSS is Linux-only. macOS RSS from tysel-bench is a proxy.
+  # Roadmap §23 idle PSS is Linux-only. macOS RSS from tysel-bench is a proxy.
   linux-pss:
     runs-on: ubuntu-latest
     steps:
@@ -207,14 +207,28 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Build packaged runtime stub
         run: cargo build --locked -p tysel-runtime --bin tysel-service --release
+      - name: Build multi-suite benchmark runner
+        run: >-
+          cargo build --locked --release
+          -p tysel-cli --bin tysel
+          -p tysel-isolate --bin tysel-worker
       - name: Measure hello-service cold start, PSS, and artifact size
         run: >-
           cargo run --locked -p tysel-testkit --bin tysel-bench --release --
           --evidence target/benchmark-evidence-linux-x64.json
           --source-commit ${{ github.sha }}
           --command "cargo run --locked -p tysel-testkit --bin tysel-bench --release"
+      - name: Measure isolate, task, durable, and HTTP suites
+        run: >-
+          target/release/tysel bench all
+          --format json
+          --evidence target/benchmark-evidence-v2-linux-x64.json
+          --source-commit ${{ github.sha }}
+          --command "target/release/tysel bench all --format json --evidence target/benchmark-evidence-v2-linux-x64.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-evidence-linux-x64
-          path: target/benchmark-evidence-linux-x64.json
+          path: |
+            target/benchmark-evidence-linux-x64.json
+            target/benchmark-evidence-v2-linux-x64.json
           if-no-files-found: error

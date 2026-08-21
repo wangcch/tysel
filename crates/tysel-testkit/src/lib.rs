@@ -15,6 +15,23 @@ use sha2::{Digest, Sha256};
 use tysel_build::{embed, tap_from_app, transpile_typescript};
 use tysel_manifest::Manifest;
 
+mod durable_bench;
+mod http_bench;
+mod isolate_bench;
+mod report;
+mod task_bench;
+
+pub use durable_bench::run_durable;
+pub use http_bench::run_http;
+pub use isolate_bench::run_isolate;
+pub use isolate_bench::run_isolate_with_worker;
+pub use report::{
+    BenchScale, MetricReport, SuiteReport, gated_metric, git_commit, metric, skipped_metric,
+    suite_report,
+};
+pub use task_bench::run_task;
+pub use task_bench::task_backpressure_memory;
+
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")
 }
@@ -23,6 +40,7 @@ pub const COLD_START_MS: f64 = 15.0;
 pub const IDLE_MEMORY_MB: f64 = 32.0;
 pub const ARTIFACT_MB: f64 = 20.0;
 pub const BENCHMARK_EVIDENCE_VERSION: u32 = 1;
+pub const COMPLETE_BENCHMARK_EVIDENCE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct BenchReport {
@@ -44,6 +62,8 @@ pub struct BenchmarkEvidence {
     pub system: BenchmarkSystem,
     pub artifact: BenchmarkArtifact,
     pub measurements: BenchmarkMeasurements,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suites: Vec<SuiteReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,7 +227,190 @@ pub fn benchmark_evidence(
             },
             memory_kind: report.memory_kind.into(),
         },
+        suites: Vec::new(),
     })
+}
+
+pub fn complete_benchmark_evidence(
+    report: &BenchReport,
+    mut suites: Vec<SuiteReport>,
+    source_commit: &str,
+    command: &str,
+) -> Result<BenchmarkEvidence> {
+    validate_complete_suites(&suites)?;
+    let system = benchmark_system();
+    for suite in &mut suites {
+        suite.commit = source_commit.to_owned();
+        suite.system = system.clone();
+    }
+    let mut evidence = benchmark_evidence(report, source_commit, command)?;
+    evidence.evidence_version = COMPLETE_BENCHMARK_EVIDENCE_VERSION;
+    evidence.suites = suites;
+    Ok(evidence)
+}
+
+fn validate_complete_suites(suites: &[SuiteReport]) -> Result<()> {
+    const EXPECTED: &[&str] =
+        &["startup", "memory", "binary-size", "isolate", "task", "durable", "http"];
+    ensure!(
+        suites.iter().map(|suite| suite.suite.as_str()).eq(EXPECTED.iter().copied()),
+        "complete benchmark evidence requires suites in canonical order: {}",
+        EXPECTED.join(", ")
+    );
+    for suite in suites {
+        ensure!(!suite.metrics.is_empty(), "suite {} has no metrics", suite.suite);
+        let expected = expected_metrics(&suite.suite);
+        ensure!(
+            suite.metrics.iter().map(|metric| metric.name.as_str()).eq(expected.iter().copied()),
+            "suite {} requires metrics in canonical order: {}",
+            suite.suite,
+            expected.join(", ")
+        );
+        for metric in &suite.metrics {
+            let expected_unit = if metric.name.ends_with("_kb") {
+                "KB"
+            } else if matches!(metric.name.as_str(), "idle_memory_mb" | "artifact_mb") {
+                "MB"
+            } else {
+                "ms"
+            };
+            ensure!(
+                metric.unit == expected_unit,
+                "metric {} requires unit {}",
+                metric.name,
+                expected_unit
+            );
+            if metric.status.as_deref() == Some("skipped") {
+                ensure!(
+                    metric.name == "postgres_append_ms",
+                    "only postgres_append_ms may be skipped"
+                );
+                ensure!(
+                    metric.samples.is_empty()
+                        && metric.p50.is_none()
+                        && metric.p95.is_none()
+                        && metric.p99.is_none()
+                        && metric.reason.as_ref().is_some_and(|reason| !reason.is_empty()),
+                    "skipped metric {} must contain only a reason",
+                    metric.name
+                );
+                continue;
+            }
+            ensure!(
+                !metric.samples.is_empty()
+                    && metric.samples.iter().all(|value| value.is_finite() && *value >= 0.0),
+                "metric {} requires finite non-negative samples",
+                metric.name
+            );
+            ensure!(
+                metric.p50.is_some_and(|value| value.is_finite() && value >= 0.0),
+                "metric {} requires a finite p50",
+                metric.name
+            );
+            let expected_p95 =
+                (metric.samples.len() >= 20).then(|| percentile(&metric.samples, 0.95));
+            let expected_p99 =
+                (metric.samples.len() >= 100).then(|| percentile(&metric.samples, 0.99));
+            ensure!(
+                metric.p50 == Some(percentile(&metric.samples, 0.50))
+                    && metric.p95 == expected_p95
+                    && metric.p99 == expected_p99,
+                "metric {} percentiles do not match its raw samples",
+                metric.name
+            );
+            if let Some(limit) = expected_gate(&metric.name) {
+                ensure!(metric.limit == Some(limit), "metric {} has the wrong gate", metric.name);
+                ensure!(
+                    metric.passed == metric.p50.map(|measured| measured <= limit),
+                    "metric {} gate decision does not match p50",
+                    metric.name
+                );
+                ensure!(
+                    metric.status.as_deref()
+                        == Some(if metric.passed == Some(true) { "pass" } else { "fail" }),
+                    "metric {} status does not match its gate",
+                    metric.name
+                );
+            } else {
+                ensure!(
+                    metric.limit.is_none() && metric.passed.is_none() && metric.status.is_none(),
+                    "observational metric {} must not contain a gate decision",
+                    metric.name
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn expected_metrics(suite: &str) -> &'static [&'static str] {
+    match suite {
+        "startup" => &["cold_start_p50_ms"],
+        "memory" => &["idle_memory_mb"],
+        "binary-size" => &["artifact_mb"],
+        "isolate" => &[
+            "cold_create_ms",
+            "warm_create_ms",
+            "warm_pool_acquire_ms",
+            "idle_memory_kb",
+            "reuse_100_growth_kb",
+            "reuse_1000_growth_kb",
+            "timeout_reclaim_ms",
+            "crash_replace_ms",
+        ],
+        "task" => &[
+            "enqueue_100_ms",
+            "enqueue_1000_ms",
+            "enqueue_10000_ms",
+            "claim_commit_1000_ms",
+            "queue_claim_ms",
+            "cancel_transition_ms",
+            "deadline_transition_ms",
+            "lease_renew_ms",
+            "crash_requeue_ms",
+            "backpressure_memory_delta_kb",
+        ],
+        "durable" => &[
+            "sqlite_append_ms",
+            "postgres_append_ms",
+            "suspend_ms",
+            "resume_ms",
+            "replay_100_effects_ms",
+            "replay_1000_effects_ms",
+            "signal_delivery_ms",
+            "restart_recovery_ms",
+            "effect_replay_skips_callback_ms",
+        ],
+        "http" => &[
+            "http1_keepalive_ms",
+            "http2_ms",
+            "json_1kb_ms",
+            "json_64kb_ms",
+            "bytes_64kb_ms",
+            "streaming_ms",
+            "websocket_echo_ms",
+            "sse_ms",
+            "http1_concurrency_1_ms",
+            "http1_concurrency_10_ms",
+            "http1_concurrency_100_ms",
+            "http2_concurrency_1_ms",
+            "http2_concurrency_10_ms",
+            "http2_concurrency_100_ms",
+            "http2_concurrency_1000_ms",
+        ],
+        _ => &[],
+    }
+}
+
+fn expected_gate(metric: &str) -> Option<f64> {
+    match metric {
+        "cold_start_p50_ms" => Some(COLD_START_MS),
+        "idle_memory_mb" => Some(IDLE_MEMORY_MB),
+        "artifact_mb" => Some(ARTIFACT_MB),
+        "warm_create_ms" => Some(5.0),
+        "resume_ms" => Some(10.0),
+        _ => None,
+    }
 }
 
 pub fn write_benchmark_evidence(
@@ -234,7 +437,7 @@ fn benchmark_target() -> String {
     }
 }
 
-fn benchmark_system() -> BenchmarkSystem {
+pub fn benchmark_system() -> BenchmarkSystem {
     BenchmarkSystem {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
@@ -372,7 +575,7 @@ fn wait_listen(child: &mut Child, timeout: Duration) -> Result<String> {
     rx.recv_timeout(timeout).map_err(|_| anyhow!("timed out waiting for listen"))?
 }
 
-fn process_memory_kb(pid: u32) -> Result<(u64, &'static str)> {
+pub fn process_memory_kb(pid: u32) -> Result<(u64, &'static str)> {
     #[cfg(target_os = "linux")]
     {
         let path = format!("/proc/{pid}/smaps_rollup");
@@ -405,7 +608,7 @@ pub(crate) fn pss_kb_from_smaps_rollup(text: &str) -> Option<u64> {
     None
 }
 
-fn percentile(samples: &[f64], q: f64) -> f64 {
+pub fn percentile(samples: &[f64], q: f64) -> f64 {
     let mut sorted = samples.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     if sorted.is_empty() {
@@ -443,6 +646,98 @@ pub fn find_stub() -> Result<PathBuf> {
     Err(anyhow!(
         "tysel-service stub not found; build with `cargo build -p tysel-runtime --bin tysel-service --release` or set TYSEL_STUB"
     ))
+}
+
+pub fn find_release_stub() -> Result<PathBuf> {
+    find_release_binary("TYSEL_STUB", "tysel-service")
+}
+
+pub fn find_worker() -> Result<PathBuf> {
+    if let Ok(path) = std::env::var("TYSEL_WORKER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(anyhow!(
+            "TYSEL_WORKER is set but is not a file; build with `cargo build -p tysel-isolate --bin tysel-worker --release`"
+        ));
+    }
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join("tysel-worker"));
+    }
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        let dir = PathBuf::from(dir);
+        candidates.push(dir.join("release/tysel-worker"));
+        candidates.push(dir.join("debug/tysel-worker"));
+    }
+    candidates.push(workspace_root().join("target/release/tysel-worker"));
+    candidates.push(workspace_root().join("target/debug/tysel-worker"));
+    for mut candidate in candidates {
+        if cfg!(windows) {
+            candidate.set_extension("exe");
+        }
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(anyhow!(
+        "tysel-worker not found; build with `cargo build -p tysel-isolate --bin tysel-worker --release` or set TYSEL_WORKER"
+    ))
+}
+
+pub fn find_release_worker() -> Result<PathBuf> {
+    find_release_binary("TYSEL_WORKER", "tysel-worker")
+}
+
+fn find_release_binary(env_name: &str, binary_name: &str) -> Result<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(path) = std::env::var(env_name) {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+        && dir.components().any(|component| component.as_os_str() == "release")
+    {
+        candidates.push(dir.join(binary_name));
+    }
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        candidates.push(PathBuf::from(dir).join("release").join(binary_name));
+    }
+    candidates.push(workspace_root().join("target/release").join(binary_name));
+    for mut candidate in candidates {
+        if cfg!(windows) {
+            candidate.set_extension("exe");
+        }
+        if candidate.is_file()
+            && candidate.components().any(|component| component.as_os_str() == "release")
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(anyhow!(
+        "release {binary_name} not found; build with `cargo build --release` or point {env_name} to a path under a release directory"
+    ))
+}
+
+pub fn ensure_worker() -> Result<PathBuf> {
+    if let Ok(path) = find_worker() {
+        return Ok(path);
+    }
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = Command::new(cargo)
+        .args(["build", "-p", "tysel-isolate", "--bin", "tysel-worker"])
+        .current_dir(workspace_root())
+        .status()
+        .context("build tysel-worker")?;
+    ensure!(status.success(), "failed to build tysel-worker");
+    find_worker()
+}
+
+pub fn current_process_memory_kb() -> Result<(u64, &'static str)> {
+    process_memory_kb(std::process::id())
 }
 
 #[cfg(test)]
@@ -506,6 +801,65 @@ Pss_Anon:            1111 kB
         assert!(evidence.measurements.cold_start_p50_ms.passed);
         assert!(evidence.measurements.idle_memory_mb.passed);
         assert!(evidence.measurements.artifact_mb.passed);
+        assert!(evidence.suites.is_empty());
+    }
+
+    #[test]
+    fn complete_evidence_embeds_multi_suite_raw_samples() {
+        let report = BenchReport {
+            artifact_bytes: 1_000_000,
+            artifact_sha256: "ab".repeat(32),
+            cold_start_ms: vec![8.0; 11],
+            idle_memory_kb: 10 * 1024,
+            memory_kind: if cfg!(target_os = "linux") { "pss" } else { "rss" },
+        };
+        let suites = ["startup", "memory", "binary-size", "isolate", "task", "durable", "http"]
+            .into_iter()
+            .map(|name| {
+                let metrics = expected_metrics(name)
+                    .iter()
+                    .map(|metric_name| {
+                        let unit = if metric_name.ends_with("_kb") {
+                            "KB"
+                        } else if matches!(*metric_name, "idle_memory_mb" | "artifact_mb") {
+                            "MB"
+                        } else {
+                            "ms"
+                        };
+                        match expected_gate(metric_name) {
+                            Some(limit) => {
+                                gated_metric(*metric_name, unit, vec![1.0, 2.0, 3.0], limit)
+                            }
+                            None => metric(*metric_name, unit, vec![1.0, 2.0, 3.0]),
+                        }
+                    })
+                    .collect();
+                suite_report(name, metrics)
+            })
+            .collect();
+        let evidence = complete_benchmark_evidence(
+            &report,
+            suites,
+            "0123456789abcdef0123456789abcdef01234567",
+            "tysel bench all --evidence target/bench.json",
+        )
+        .expect("complete evidence");
+        assert_eq!(evidence.evidence_version, COMPLETE_BENCHMARK_EVIDENCE_VERSION);
+        assert_eq!(evidence.suites[3].suite, "isolate");
+        assert_eq!(evidence.suites[3].metrics[1].samples, vec![1.0, 2.0, 3.0]);
+
+        let mut incomplete = evidence.suites;
+        incomplete[3].metrics.retain(|metric| metric.name != "warm_create_ms");
+        assert!(
+            complete_benchmark_evidence(
+                &report,
+                incomplete,
+                "0123456789abcdef0123456789abcdef01234567",
+                "tysel bench all --evidence target/bench.json",
+            )
+            .is_err(),
+            "evidence must fail closed when a required gate disappears"
+        );
     }
 
     #[test]
