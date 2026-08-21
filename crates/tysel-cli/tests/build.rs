@@ -57,6 +57,57 @@ listen = "127.0.0.1:0"
     assert!(tap.bundle_source().unwrap().contains("export default"));
     let origin = tap.parsed_source_map().unwrap().original_position(1, 1).unwrap();
     assert!(origin.source.ends_with("src/index.js"));
+    assert!(!sidecar(&output, ".evidence.json").exists());
+    assert!(!sidecar(&output, ".compat.json").exists());
+    assert!(!sidecar(&output, ".sha256").exists());
+}
+
+#[test]
+fn release_build_writes_compatible_deterministic_evidence() {
+    let dir = temp_js_app("release-evidence");
+    let stub = dir.join("tysel-service");
+    fs::write(&stub, b"stub-runtime").unwrap();
+    let output = dir.join("dist/release-app");
+    let result = Command::new(cli_exe())
+        .args([
+            "build",
+            "--release",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            stub.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run release build");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("Checksum         "), "{stdout}");
+    assert!(stdout.contains("Compatibility    "), "{stdout}");
+    assert!(stdout.contains("Evidence         "), "{stdout}");
+
+    let artifact = fs::read(&output).unwrap();
+    let expected_digest = tysel_package::bundle_hash(&artifact);
+    assert_eq!(
+        fs::read_to_string(sidecar(&output, ".sha256")).unwrap(),
+        format!("{expected_digest}\n")
+    );
+    let compatibility: serde_json::Value =
+        serde_json::from_slice(&fs::read(sidecar(&output, ".compat.json")).unwrap()).unwrap();
+    assert_eq!(compatibility["report_version"], 1);
+    assert_eq!(compatibility["compatible"], true);
+    assert_eq!(compatibility["status"], "current");
+    assert!(compatibility.get("timestamp").is_none());
+
+    let evidence: serde_json::Value =
+        serde_json::from_slice(&fs::read(sidecar(&output, ".evidence.json")).unwrap()).unwrap();
+    assert_eq!(evidence["evidence_version"], 1);
+    assert_eq!(evidence["artifact"]["sha256"], expected_digest);
+    assert_eq!(evidence["artifact"]["size_bytes"], artifact.len());
+    assert_eq!(evidence["application_id"], "hello-service");
+    assert_eq!(evidence["compatibility"]["compatible"], true);
+    assert!(evidence.get("timestamp").is_none());
 }
 
 #[test]
@@ -358,4 +409,8 @@ fn cli_exe() -> PathBuf {
     }
     assert!(candidate.is_file(), "missing tysel at {}", candidate.display());
     candidate
+}
+
+fn sidecar(output: &std::path::Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{suffix}", output.display()))
 }

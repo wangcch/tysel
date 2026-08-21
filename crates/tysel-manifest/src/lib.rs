@@ -21,6 +21,7 @@ pub enum ManifestError {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub app: App,
     #[serde(default)]
@@ -36,6 +37,7 @@ pub struct Manifest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct App {
     pub name: String,
     pub entry: String,
@@ -48,6 +50,7 @@ fn default_profile() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Server {
     #[serde(default = "default_listen")]
     pub listen: String,
@@ -74,6 +77,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Permissions {
     #[serde(default)]
     pub fetch: Vec<String>,
@@ -88,6 +92,7 @@ pub struct Permissions {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Limits {
     #[serde(default = "default_memory_mb")]
     pub memory_mb: u32,
@@ -136,6 +141,7 @@ fn default_request_mb() -> u32 {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Durable {
     #[serde(default = "default_store")]
     pub store: String,
@@ -157,6 +163,7 @@ fn default_store_path() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Observability {
     #[serde(default = "default_logs")]
     pub logs: String,
@@ -240,6 +247,12 @@ impl Manifest {
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
+        if !matches!(self.app.profile.as_str(), "service" | "isolated" | "component") {
+            return Err(ManifestError::Invalid(format!(
+                "unsupported app profile {:?}; expected service, isolated, or component",
+                self.app.profile
+            )));
+        }
         for (operation, roots) in
             [("fs_read", &self.permissions.fs_read), ("fs_write", &self.permissions.fs_write)]
         {
@@ -349,6 +362,31 @@ fn is_postgres_alias(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_unknown_profiles_and_fields() {
+        let profile = Manifest::parse(
+            r#"
+[app]
+name = "future"
+entry = "src/index.ts"
+profile = "future-profile"
+"#,
+        )
+        .unwrap_err();
+        assert!(profile.to_string().contains("unsupported app profile"));
+
+        let field = Manifest::parse(
+            r#"
+[app]
+name = "future"
+entry = "src/index.ts"
+compatibility_flag = true
+"#,
+        )
+        .unwrap_err();
+        assert!(field.to_string().contains("unknown field"));
+    }
 
     #[test]
     fn rejects_duplicate_and_excessive_filesystem_roots() {

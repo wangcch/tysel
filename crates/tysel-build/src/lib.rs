@@ -4,6 +4,7 @@
 //! the ESM bundle, embedded manifest, and source map.
 
 mod bundle;
+mod evidence;
 mod transpile;
 
 use std::fs;
@@ -12,6 +13,11 @@ use std::path::Path;
 use tysel_engine_wasm::{COMPONENT_ABI_VERSION, ComponentEngineConfig, WasmComponentEngine};
 use tysel_manifest::Manifest;
 use tysel_package::{PackageManifest, PackagedAot, PackagedComponent, Tap, identity_source_map};
+
+pub use evidence::{
+    RELEASE_EVIDENCE_VERSION, ReleaseArtifactEvidence, ReleaseEvidenceIndex, ReleaseSidecars,
+    write_release_evidence,
+};
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

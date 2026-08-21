@@ -71,6 +71,14 @@ pub fn run(
     let output = output.unwrap_or_else(|| PathBuf::from("dist").join(&manifest.app.name));
     tysel_build::embed(&stub, &output, &tap)
         .with_context(|| format!("failed to write {}", output.display()))?;
+    let release_sidecars = if release {
+        Some(
+            tysel_build::write_release_evidence(&output, host.label)
+                .context("failed to write release evidence")?,
+        )
+    } else {
+        None
+    };
     let executable = std::fs::metadata(&output).map(|meta| meta.len()).unwrap_or(0);
     println!("Type check       {type_line}");
     println!("{payload_label:<16} {}", format_bytes(payload_bytes as u64));
@@ -79,6 +87,11 @@ pub fn run(
     println!("Executable       {}", format_bytes(executable));
     println!("Target           {}", host.label);
     println!("Output           {}", output.display());
+    if let Some(sidecars) = release_sidecars {
+        println!("Checksum         {}", sidecars.checksum.display());
+        println!("Compatibility    {}", sidecars.compatibility.display());
+        println!("Evidence         {}", sidecars.evidence.display());
+    }
     Ok(())
 }
 

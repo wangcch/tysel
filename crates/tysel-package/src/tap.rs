@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 use crate::sourcemap::SourceMap;
 
 pub const TAP_VERSION: u32 = 2;
+pub const MIN_SUPPORTED_TAP_VERSION: u32 = 1;
+pub const TAP_COMPATIBILITY_REPORT_VERSION: u32 = 1;
 pub const MAX_TAP_PAYLOAD_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_PACKAGED_COMPONENTS: usize = 64;
 pub const MAX_AOT_ARTIFACTS_PER_COMPONENT: usize = 16;
@@ -16,6 +18,7 @@ pub const MAX_AOT_ARTIFACTS_PER_COMPONENT: usize = 16;
 const TAP_MAGIC: &[u8; 8] = b"TYSELTAP";
 const END_MAGIC: &[u8; 8] = b"TYSELEND";
 const MAX_COMPONENT_INDEX_BYTES: usize = 1024 * 1024;
+const MAX_COMPATIBILITY_ISSUE_BYTES: usize = 512;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PackageError {
@@ -32,6 +35,7 @@ pub enum PackageError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageManifest {
     pub format_version: u32,
     pub runtime_version: String,
@@ -96,12 +100,41 @@ pub struct PackagedAot {
     pub bytes: Vec<u8>,
 }
 
+/// Machine-readable compatibility decision for one TAP payload. Reports are
+/// deterministic and deliberately contain no timestamps or host-specific data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TapCompatibilityReport {
+    pub report_version: u32,
+    pub compatible: bool,
+    pub status: TapCompatibilityStatus,
+    pub tap_version: Option<u32>,
+    pub minimum_supported_tap_version: u32,
+    pub maximum_supported_tap_version: u32,
+    pub runtime_version: Option<String>,
+    pub execution_profile: Option<String>,
+    pub component_abi_versions: Vec<String>,
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TapCompatibilityStatus {
+    Current,
+    Legacy,
+    UnsupportedOlder,
+    UnsupportedNewer,
+    Invalid,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ComponentIndex {
     components: Vec<ComponentIndexEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ComponentIndexEntry {
     name: String,
     abi_version: String,
@@ -110,6 +143,7 @@ struct ComponentIndexEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AotIndexEntry {
     target: String,
     wasmtime_version: String,
@@ -119,6 +153,7 @@ struct AotIndexEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BlobIndex {
     offset: u64,
     length: u64,
@@ -138,6 +173,7 @@ impl Tap {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, PackageError> {
+        validate_manifest_contract(&self.manifest, TAP_VERSION)?;
         validate_components(&self.components)?;
         let manifest = serde_json::to_vec(&self.manifest)?;
         let (component_index, component_data) = encode_components(&self.components)?;
@@ -176,12 +212,8 @@ impl Tap {
         if magic != TAP_MAGIC {
             return Err(PackageError::Invalid("missing TYSELTAP magic".into()));
         }
-        let version = u32::from_le_bytes(
-            take(&mut rest, 4)?
-                .try_into()
-                .map_err(|_| PackageError::Invalid("truncated version".into()))?,
-        );
-        if !(1..=TAP_VERSION).contains(&version) {
+        let version = read_version(&mut rest)?;
+        if !(MIN_SUPPORTED_TAP_VERSION..=TAP_VERSION).contains(&version) {
             return Err(PackageError::Version(version));
         }
         let manifest_len = read_usize(&mut rest)?;
@@ -201,6 +233,7 @@ impl Tap {
             return Err(PackageError::Invalid("trailing bytes inside tap payload".into()));
         }
         let manifest: PackageManifest = serde_json::from_slice(manifest_bytes)?;
+        validate_manifest_contract(&manifest, version)?;
         let actual = bundle_hash(&bundle);
         if manifest.bundle_hash != actual {
             return Err(PackageError::Invalid("bundle hash mismatch".into()));
@@ -285,6 +318,10 @@ impl Tap {
         Self::from_path(std::env::current_exe()?)
     }
 
+    pub fn compatibility_report(bytes: &[u8]) -> TapCompatibilityReport {
+        compatibility_report(bytes)
+    }
+
     pub fn bundle_source(&self) -> Result<&str, PackageError> {
         std::str::from_utf8(&self.bundle)
             .map_err(|_| PackageError::Invalid("esm bundle is not utf-8".into()))
@@ -296,6 +333,124 @@ impl Tap {
         }
         SourceMap::parse(&self.source_map)
     }
+}
+
+pub fn compatibility_report(bytes: &[u8]) -> TapCompatibilityReport {
+    let version = match tap_version(bytes) {
+        Ok(version) => version,
+        Err(error) => {
+            return report(None, TapCompatibilityStatus::Invalid, None, vec![error.to_string()]);
+        }
+    };
+    if version < MIN_SUPPORTED_TAP_VERSION {
+        return report(
+            Some(version),
+            TapCompatibilityStatus::UnsupportedOlder,
+            None,
+            vec![format!(
+                "tap version {version} predates minimum supported version {MIN_SUPPORTED_TAP_VERSION}"
+            )],
+        );
+    }
+    if version > TAP_VERSION {
+        return report(
+            Some(version),
+            TapCompatibilityStatus::UnsupportedNewer,
+            None,
+            vec![format!("tap version {version} exceeds maximum supported version {TAP_VERSION}")],
+        );
+    }
+    match Tap::decode(bytes) {
+        Ok(tap) => report(
+            Some(version),
+            if version == TAP_VERSION {
+                TapCompatibilityStatus::Current
+            } else {
+                TapCompatibilityStatus::Legacy
+            },
+            Some(&tap),
+            Vec::new(),
+        ),
+        Err(error) => {
+            report(Some(version), TapCompatibilityStatus::Invalid, None, vec![error.to_string()])
+        }
+    }
+}
+
+fn report(
+    tap_version: Option<u32>,
+    status: TapCompatibilityStatus,
+    tap: Option<&Tap>,
+    issues: Vec<String>,
+) -> TapCompatibilityReport {
+    let component_abi_versions = tap
+        .into_iter()
+        .flat_map(|tap| tap.components.iter().map(|component| component.abi_version.clone()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    TapCompatibilityReport {
+        report_version: TAP_COMPATIBILITY_REPORT_VERSION,
+        compatible: matches!(
+            status,
+            TapCompatibilityStatus::Current | TapCompatibilityStatus::Legacy
+        ),
+        status,
+        tap_version,
+        minimum_supported_tap_version: MIN_SUPPORTED_TAP_VERSION,
+        maximum_supported_tap_version: TAP_VERSION,
+        runtime_version: tap.map(|tap| tap.manifest.runtime_version.clone()),
+        execution_profile: tap.map(|tap| tap.manifest.execution_profile.clone()),
+        component_abi_versions,
+        issues: issues.into_iter().map(bounded_compatibility_issue).collect(),
+    }
+}
+
+fn tap_version(bytes: &[u8]) -> Result<u32, PackageError> {
+    let mut rest = bytes;
+    let magic = take(&mut rest, 8)?;
+    if magic != TAP_MAGIC {
+        return Err(PackageError::Invalid("missing TYSELTAP magic".into()));
+    }
+    read_version(&mut rest)
+}
+
+fn read_version(rest: &mut &[u8]) -> Result<u32, PackageError> {
+    Ok(u32::from_le_bytes(
+        take(rest, 4)?.try_into().map_err(|_| PackageError::Invalid("truncated version".into()))?,
+    ))
+}
+
+fn validate_manifest_contract(
+    manifest: &PackageManifest,
+    envelope_version: u32,
+) -> Result<(), PackageError> {
+    if manifest.format_version != envelope_version {
+        return Err(PackageError::Invalid(format!(
+            "manifest format version {} does not match tap envelope version {envelope_version}",
+            manifest.format_version
+        )));
+    }
+    if semver::Version::parse(&manifest.runtime_version).is_err() {
+        return Err(PackageError::Invalid(
+            "runtime version is not valid semantic versioning".into(),
+        ));
+    }
+    if !matches!(manifest.execution_profile.as_str(), "service" | "isolated" | "component") {
+        return Err(PackageError::Invalid("unsupported execution profile".into()));
+    }
+    Ok(())
+}
+
+fn bounded_compatibility_issue(mut issue: String) -> String {
+    if issue.len() > MAX_COMPATIBILITY_ISSUE_BYTES {
+        let mut end = MAX_COMPATIBILITY_ISSUE_BYTES;
+        while !issue.is_char_boundary(end) {
+            end -= 1;
+        }
+        issue.truncate(end);
+    }
+    issue
 }
 
 pub fn bundle_hash(bundle: &[u8]) -> String {

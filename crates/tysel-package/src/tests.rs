@@ -179,3 +179,108 @@ fn tap_v1_payloads_remain_readable() {
     assert_eq!(decoded.manifest.format_version, 1);
     assert!(decoded.components.is_empty());
 }
+
+#[test]
+fn compatibility_report_is_deterministic_for_current_and_legacy_taps() {
+    let current = sample_tap().encode().unwrap();
+    let current_report = compatibility_report(&current);
+    assert!(current_report.compatible);
+    assert_eq!(current_report.status, TapCompatibilityStatus::Current);
+    assert_eq!(current_report.tap_version, Some(TAP_VERSION));
+    assert_eq!(current_report.runtime_version.as_deref(), Some("0.0.1"));
+    assert_eq!(current_report.execution_profile.as_deref(), Some("service"));
+    assert!(current_report.issues.is_empty());
+    assert_eq!(
+        serde_json::to_string(&current_report).unwrap(),
+        serde_json::to_string(&compatibility_report(&current)).unwrap()
+    );
+
+    let mut manifest = sample_manifest();
+    manifest.format_version = 1;
+    manifest.bundle_hash = bundle_hash(BUNDLE.as_bytes());
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let map = identity_source_map("src/index.ts", TYPESCRIPT).unwrap();
+    let mut legacy = Vec::new();
+    legacy.extend_from_slice(b"TYSELTAP");
+    legacy.extend_from_slice(&1u32.to_le_bytes());
+    legacy.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
+    legacy.extend_from_slice(&(BUNDLE.len() as u64).to_le_bytes());
+    legacy.extend_from_slice(&(map.len() as u64).to_le_bytes());
+    legacy.extend_from_slice(&manifest);
+    legacy.extend_from_slice(BUNDLE.as_bytes());
+    legacy.extend_from_slice(&map);
+
+    let legacy_report = Tap::compatibility_report(&legacy);
+    assert!(legacy_report.compatible);
+    assert_eq!(legacy_report.status, TapCompatibilityStatus::Legacy);
+    assert_eq!(legacy_report.tap_version, Some(1));
+}
+
+#[test]
+fn compatibility_report_distinguishes_future_old_and_invalid_payloads() {
+    let envelope = |version: u32| {
+        let mut bytes = b"TYSELTAP".to_vec();
+        bytes.extend_from_slice(&version.to_le_bytes());
+        bytes
+    };
+    let future = compatibility_report(&envelope(TAP_VERSION + 1));
+    assert!(!future.compatible);
+    assert_eq!(future.status, TapCompatibilityStatus::UnsupportedNewer);
+    assert_eq!(future.tap_version, Some(TAP_VERSION + 1));
+
+    let old = compatibility_report(&envelope(MIN_SUPPORTED_TAP_VERSION - 1));
+    assert!(!old.compatible);
+    assert_eq!(old.status, TapCompatibilityStatus::UnsupportedOlder);
+
+    let invalid = compatibility_report(b"not-a-tap");
+    assert!(!invalid.compatible);
+    assert_eq!(invalid.status, TapCompatibilityStatus::Invalid);
+    assert_eq!(invalid.tap_version, None);
+}
+
+#[test]
+fn stable_tap_contract_rejects_ambiguous_or_unknown_metadata() {
+    let mut mismatch = sample_tap();
+    mismatch.manifest.format_version = TAP_VERSION - 1;
+    let error = mismatch.encode().unwrap_err();
+    assert!(matches!(error, PackageError::Invalid(message) if message.contains("does not match")));
+
+    let mut manifest = sample_manifest();
+    manifest.format_version = TAP_VERSION;
+    manifest.bundle_hash = bundle_hash(BUNDLE.as_bytes());
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let mut ambiguous = Vec::new();
+    ambiguous.extend_from_slice(b"TYSELTAP");
+    ambiguous.extend_from_slice(&(TAP_VERSION - 1).to_le_bytes());
+    ambiguous.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
+    ambiguous.extend_from_slice(&(BUNDLE.len() as u64).to_le_bytes());
+    ambiguous.extend_from_slice(&0u64.to_le_bytes());
+    ambiguous.extend_from_slice(&manifest);
+    ambiguous.extend_from_slice(BUNDLE.as_bytes());
+    let error = Tap::decode(&ambiguous).unwrap_err();
+    assert!(matches!(error, PackageError::Invalid(message) if message.contains("does not match")));
+    assert_eq!(compatibility_report(&ambiguous).status, TapCompatibilityStatus::Invalid);
+
+    let mut unknown_profile = sample_tap();
+    unknown_profile.manifest.execution_profile = "future-profile".into();
+    let error = unknown_profile.encode().unwrap_err();
+    assert!(
+        matches!(error, PackageError::Invalid(message) if message.contains("execution profile"))
+    );
+
+    let mut invalid_runtime = sample_tap();
+    invalid_runtime.manifest.runtime_version = "development".into();
+    let error = invalid_runtime.encode().unwrap_err();
+    assert!(
+        matches!(error, PackageError::Invalid(message) if message.contains("semantic versioning"))
+    );
+
+    let mut manifest = serde_json::to_value(sample_manifest()).unwrap();
+    manifest["unknownCompatibilityFlag"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<PackageManifest>(manifest).is_err());
+
+    let mut report =
+        serde_json::to_value(compatibility_report(&sample_tap().encode().unwrap())).unwrap();
+    report["futureSecurityFlag"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<TapCompatibilityReport>(report).is_err());
+}

@@ -3205,6 +3205,7 @@ dependencies = [
  "anyhow",
  "oxc",
  "oxc_resolver",
+ "serde",
  "serde_json",
  "tysel-capability",
  "tysel-engine-wasm",
@@ -3414,6 +3415,7 @@ dependencies = [
 name = "tysel-package"
 version = "0.0.1"
 dependencies = [
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",
