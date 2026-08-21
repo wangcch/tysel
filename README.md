@@ -99,6 +99,7 @@ cargo run -p tysel-cli -- run --manifest tysel.toml
 cargo run -p tysel-cli -- inspect --manifest tysel.toml
 cargo run -p tysel-cli -- build --manifest tysel.toml
 cargo run -p tysel-cli -- image --manifest tysel.toml --context-only
+cargo run -p tysel-cli -- bench all --format json --allow-unavailable
 ```
 
 `tysel check` loads the manifest, bundles the entry, and runs `tsc --noEmit` when a `tsconfig.json` and TypeScript are present. Missing TypeScript is skipped, not a failure.

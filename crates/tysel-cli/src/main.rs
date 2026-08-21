@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use tysel_manifest::Manifest;
 
+mod bench;
 mod build;
 mod check;
 mod compat;
@@ -136,8 +137,26 @@ enum Commands {
         #[arg(long, requires = "strict")]
         deny_unknown: bool,
     },
-    /// Run the benchmark suite.
-    Bench,
+    /// Run the §30 benchmark harness.
+    Bench {
+        /// Suite to run: startup, memory, isolate, task, durable, or all.
+        suite: bench::BenchSuite,
+        /// Human table or stable JSON.
+        #[arg(long, value_enum, default_value_t = bench::BenchFormat::Human)]
+        format: bench::BenchFormat,
+        /// Write the existing release evidence document (requires `all`).
+        #[arg(long)]
+        evidence: Option<PathBuf>,
+        /// Source commit recorded in evidence (defaults to HEAD in a clean source workspace).
+        #[arg(long, requires = "evidence")]
+        source_commit: Option<String>,
+        /// Command line recorded in evidence (defaults to the current invocation).
+        #[arg(long, requires = "evidence")]
+        command: Option<String>,
+        /// Return success when `all` contains suites whose harness is not available yet.
+        #[arg(long)]
+        allow_unavailable: bool,
+    },
     /// Build a container image around a Linux single executable.
     Image {
         entry: Option<PathBuf>,
@@ -250,7 +269,16 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Compat { manifest, json, strict, deny_unknown } => {
             compat::run(&manifest, json, strict, deny_unknown)
         }
-        other => unimplemented_command(other),
+        Commands::Bench { suite, format, evidence, source_commit, command, allow_unavailable } => {
+            bench::run(bench::Options {
+                suite,
+                format,
+                evidence,
+                source_commit,
+                command,
+                allow_unavailable,
+            })
+        }
     }
 }
 
@@ -259,23 +287,4 @@ fn inspect(path: &Path) -> Result<()> {
         Manifest::from_path(path).with_context(|| format!("failed to read {}", path.display()))?;
     print!("{}", manifest.inspect_report());
     Ok(())
-}
-
-fn unimplemented_command(command: Commands) -> Result<()> {
-    let name = match command {
-        Commands::Bench => "bench",
-        Commands::Init { .. }
-        | Commands::Test { .. }
-        | Commands::Image { .. }
-        | Commands::Compat { .. }
-        | Commands::Inspect { .. }
-        | Commands::Build { .. }
-        | Commands::Check { .. }
-        | Commands::Dev { .. }
-        | Commands::Run { .. }
-        | Commands::Mcp { .. }
-        | Commands::Release { .. }
-        | Commands::Queue { .. } => unreachable!(),
-    };
-    anyhow::bail!("`tysel {name}` is not implemented yet (see roadmap.md §21)")
 }

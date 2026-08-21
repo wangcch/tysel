@@ -37,6 +37,7 @@ pub use supply_chain::{
     CycloneDxBom, LicenseInventory, RuntimeInventory, SUPPLY_CHAIN_VERSION, SupplyChainComponent,
     embedded_runtime_inventory,
 };
+pub use transpile::transpile_typescript;
 
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

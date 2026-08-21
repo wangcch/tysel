@@ -11,6 +11,7 @@
 | `tysel inspect` | Print effective capabilities and limits. | `--manifest` |
 | `tysel build` | Emit one native executable. | `--release`, `--stub`, `--output`, `--target` |
 | `tysel image` | Generate a non-root container context and optionally call Docker. | `--binary`, `--tag`, `--base-image`, `--context-only`, `--force` |
+| `tysel bench <suite>` | Run the §30 harness (`startup`, `memory`, `all`; others report `unavailable`). `all` is strict unless unavailable suites are explicitly allowed. | `--format human\|json`, `--allow-unavailable` (with `all` only), `--evidence` (requires every suite) |
 | `tysel release …` | Sign and verify release evidence. | See command help. |
 
-Successful commands exit 0. Validation, policy, test, build, and runtime failures exit non-zero. Global `--error-format human|json` controls fatal errors on stderr; command reports such as `test --json` and `compat --json` go to stdout.
+Successful commands exit 0. Validation, policy, test, build, benchmark, and runtime failures exit non-zero. Global `--error-format human|json` controls fatal errors on stderr; command reports such as `test --json`, `compat --json`, and `bench --format json` go to stdout.

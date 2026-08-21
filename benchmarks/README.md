@@ -4,6 +4,20 @@ M0 measures a packaged `hello-service` against roadmap §30.
 
 ```bash
 cargo build -p tysel-runtime --bin tysel-service --release
+cargo run -p tysel-cli -- bench all --allow-unavailable
+cargo run -p tysel-cli -- bench all --format json --allow-unavailable
+```
+
+`tysel bench startup` and `tysel bench memory` run the existing cold-start and
+idle-memory harness. `isolate`, `task`, and `durable` report `unavailable` until
+those suites exist; they never emit placeholder numbers. `all` returns non-zero
+while any suite is unavailable unless `--allow-unavailable` is explicit.
+`--allow-unavailable` cannot be combined with `--evidence`, so an incomplete
+matrix cannot produce release evidence.
+
+The release job still records evidence with:
+
+```bash
 cargo run -p tysel-testkit --bin tysel-bench --release
 ```
 

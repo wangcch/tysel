@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tysel_build::{embed, read_bundle, tap_from_app};
+use tysel_build::{embed, tap_from_app, transpile_typescript};
 use tysel_manifest::Manifest;
 
 pub fn crate_name() -> &'static str {
@@ -96,15 +96,18 @@ impl BenchReport {
 }
 
 pub fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("workspace root")
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    root.canonicalize().unwrap_or(root)
 }
 
 pub fn package_hello_service(stub: &Path, output: &Path) -> Result<()> {
-    let root = workspace_root();
-    let app = root.join("examples/hello-service");
-    let manifest = Manifest::from_path(app.join("tysel.toml")).context("hello-service manifest")?;
-    let entry = app.join(&manifest.app.entry);
-    let (bundle, source_map) = read_bundle(&entry).context("transpile hello-service")?;
+    const MANIFEST: &str = include_str!("../../../examples/hello-service/tysel.toml");
+    const SOURCE: &str = include_str!("../../../examples/hello-service/src/index.ts");
+
+    let manifest = Manifest::parse(MANIFEST).context("embedded hello-service manifest")?;
+    let virtual_entry = Path::new("benchmarks/hello-service/src/index.ts");
+    let (bundle, source_map) =
+        transpile_typescript(virtual_entry, SOURCE).context("transpile embedded hello-service")?;
     let mut tap = tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), bundle, source_map);
     tap.manifest.listen = "127.0.0.1:0".into();
     embed(stub, output, &tap).context("embed TAP")?;

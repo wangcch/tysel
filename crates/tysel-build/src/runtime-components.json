@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "53f9e61e8af2a094a1749b47b67912aefbf669af2530c4e60b1dfef17b325915",
+  "cargo_lock_sha256": "80a61b579dacf4190a1f2c73fdf94a0e6dfb7242fb250d9ea8af71fd03ef8202",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -2982,6 +2982,13 @@
       "version": "0.0.1",
       "license": "Apache-2.0",
       "purl": "pkg:cargo/tysel-task@0.0.1",
+      "source": "workspace"
+    },
+    {
+      "name": "tysel-testkit",
+      "version": "0.0.1",
+      "license": "Apache-2.0",
+      "purl": "pkg:cargo/tysel-testkit@0.0.1",
       "source": "workspace"
     },
     {

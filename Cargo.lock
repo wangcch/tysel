@@ -3599,10 +3599,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tysel-cap-http"
-version = "0.0.1"
-
-[[package]]
 name = "tysel-cap-llm"
 version = "0.0.1"
 dependencies = [
@@ -3678,6 +3674,7 @@ dependencies = [
  "tysel-package",
  "tysel-runtime",
  "tysel-task-rpc",
+ "tysel-testkit",
  "wat",
 ]
 

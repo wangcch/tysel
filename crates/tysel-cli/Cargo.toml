@@ -28,6 +28,7 @@ tysel-capability.workspace = true
 tysel-cap-mcp.workspace = true
 tysel-task-rpc.workspace = true
 tysel-package.workspace = true
+tysel-testkit = { path = "../tysel-testkit" }
 notify = "6"
 serde_json.workspace = true
 
