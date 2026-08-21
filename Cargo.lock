@@ -3540,6 +3540,9 @@ name = "tysel-testkit"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "tysel-build",
  "tysel-manifest",
 ]

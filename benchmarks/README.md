@@ -7,6 +7,17 @@ cargo build -p tysel-runtime --bin tysel-service --release
 cargo run -p tysel-testkit --bin tysel-bench --release
 ```
 
+CI also writes a strict machine-readable evidence document containing the raw
+samples, gate decisions, artifact digest, source commit, command, CPU, OS, and
+target. To produce the same document locally:
+
+```bash
+cargo run -p tysel-testkit --bin tysel-bench --release -- \
+  --evidence target/benchmark-evidence.json \
+  --source-commit 0123456789abcdef0123456789abcdef01234567 \
+  --command "cargo run -p tysel-testkit --bin tysel-bench --release"
+```
+
 | Directory | Metric |
 |-----------|--------|
 | `startup/` | Process spawn → `tysel listen` (p50 of 11 runs after 2 warmups) |

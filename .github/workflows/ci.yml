@@ -171,4 +171,13 @@ jobs:
       - name: Build packaged runtime stub
         run: cargo build -p tysel-runtime --bin tysel-service --release
       - name: Measure hello-service cold start, PSS, and artifact size
-        run: cargo run -p tysel-testkit --bin tysel-bench --release
+        run: >-
+          cargo run -p tysel-testkit --bin tysel-bench --release --
+          --evidence target/benchmark-evidence-linux-x64.json
+          --source-commit ${{ github.sha }}
+          --command "cargo run -p tysel-testkit --bin tysel-bench --release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-evidence-linux-x64
+          path: target/benchmark-evidence-linux-x64.json
+          if-no-files-found: error

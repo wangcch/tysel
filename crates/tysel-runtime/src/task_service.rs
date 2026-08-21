@@ -31,6 +31,7 @@ pub struct ModuleTaskService {
     tasks: Vec<JoinHandle<Result<(), ModuleTaskServiceError>>>,
     socket_path: PathBuf,
     failure: watch::Receiver<Option<String>>,
+    _failure_guard: Option<watch::Sender<Option<String>>>,
 }
 
 impl ModuleTaskService {
@@ -98,6 +99,19 @@ impl ModuleTaskService {
             config.request_timeout_ms.max(1),
         )?);
 
+        if ingress.registry().is_empty() {
+            let shutdown = TaskRpcServerShutdown::new();
+            let (failure_guard, failure) = watch::channel(None);
+            return Ok(Self {
+                ingress,
+                shutdown,
+                tasks: Vec::new(),
+                socket_path,
+                failure,
+                _failure_guard: Some(failure_guard),
+            });
+        }
+
         let listener = UnixListener::bind(&socket_path).map_err(|source| {
             ModuleTaskServiceError::Socket { path: socket_path.clone(), source }
         })?;
@@ -162,6 +176,7 @@ impl ModuleTaskService {
             tasks: vec![server, worker_task, cron_task],
             socket_path,
             failure,
+            _failure_guard: None,
         })
     }
 
@@ -491,6 +506,31 @@ export default {
         assert_eq!(response["result"]["structuredContent"]["customer"], "customer-9");
         assert_eq!(response["result"]["isError"], false);
         assert!(path.exists());
+        service.shutdown().await.unwrap();
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn service_without_tasks_does_not_create_a_task_socket() {
+        let path = socket_path();
+        let service = ModuleTaskService::start_with_capacity(
+            &path,
+            "http-only",
+            "export default { fetch() { return new Response('ok'); } };",
+            IsolateConfig {
+                memory_limit_bytes: 16 * 1024 * 1024,
+                cpu_ms_per_turn: 50,
+                request_timeout_ms: 1_000,
+            },
+            "service",
+            Vec::new(),
+            4,
+        )
+        .await
+        .unwrap();
+
+        assert!(service.ingress().registry().is_empty());
+        assert!(!path.exists());
         service.shutdown().await.unwrap();
         assert!(!path.exists());
     }
