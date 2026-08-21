@@ -2,8 +2,9 @@
 
 # Tysel 完整规划与技术方案
 
-**版本：** 规划稿 v0.1  
-**日期：** 2026-08-18
+**版本：** 规划稿 v0.2
+
+**日期：** 2026-08-20
 
 > **Tysel — A lightweight native runtime for TypeScript services and agents.**
 >
@@ -165,6 +166,7 @@ Tysel v1 不承担以下目标：
 | 通用 POSIX 容器         | 不提供任意进程、终端、裸 socket 和动态库加载           |
 | 运行时安装依赖          | 所有依赖必须在构建期锁定并打包                         |
 | 自动序列化任意 JS Heap  | Agent 挂起使用可重放任务模型，而非 Heap Snapshot       |
+| 完整 workerd / Wrangler 兼容 | 会把主线带入 Cloudflare 平台兼容竞争，偏离 Service、Task 与 Agent 核心 |
 
 ---
 
@@ -230,36 +232,28 @@ Supervisor
 
 ---
 
-## 6. 与 Capsid 的关系
+## 6. 外部参照与战略边界
 
-Capsid 当前定位为一个嵌入式、进程隔离的 JavaScript Data Plane，主要运行不可信和 AI 生成的 Fetch Handler。Capsid 明确让 Host 管理 Listener、TLS、路由、Worker Pool 和策略，并明确不以通用 Node.js replacement 为目标。
+Tysel 不以任何单一项目为对手或路线定义者。不同产品只用于验证不同维度：
 
-Tysel 与 Capsid 的关系应当是：
+| Tysel 维度             | 主要参照                              | 需要验证的问题                         |
+| ---------------------- | ------------------------------------- | -------------------------------------- |
+| TypeScript Service     | Node.js、Deno、Bun                    | 迁移成本、吞吐、启动、生态兼容         |
+| 单文件部署             | Deno compile、Bun build、Go / Rust    | 产物大小、外部依赖、跨平台交付         |
+| Durable Task           | Temporal、Restate、Inngest            | 恢复语义、幂等、调度、可观测性         |
+| Agent Runtime          | LangGraph、Mastra、Cloudflare Agents  | LLM、MCP、Tool、Signal 与持久化体验    |
+| 不可信代码执行         | workerd、Capsid、Wasm Sandbox         | 隔离、配额、取消、背压、资源回收       |
+| Capability 与扩展 ABI  | WASI Component Model、Deno Permissions | 权限表达、接口演进、跨语言扩展         |
 
-| 维度              | Capsid                       | Tysel                                   |
-| ----------------- | ---------------------------- | --------------------------------------- |
-| 核心场景          | 不可信 JavaScript Data Plane | TypeScript Service、Task、Agent Runtime |
-| Host              | 外部 Host 管理服务生命周期   | Tysel Trusted Mode 自己管理             |
-| HTTP Listener     | Runtime 不负责               | Service Mode 一等能力                   |
-| 输入              | 自包含 ESM Bundle            | TypeScript Project                      |
-| 部署              | Host + Worker + Bundle       | 单文件可执行程序                        |
-| 信任模型          | 主要面向不可信代码           | 同时覆盖可信与不可信代码                |
-| Agent             | 适合运行生成代码             | Agent 是产品一等场景                    |
-| Durable Task      | 非核心目标                   | Tysel 的关键差异点                      |
-| Native Capability | Host Binding                 | Tysel Capability ABI                    |
-| AOT 路线          | QuickJS Bytecode / JS        | Wasm Component + Static TS 路线         |
+Tysel 的核心定位保持不变：
 
-Tysel 最值得借鉴 Capsid 的部分：
+> **一个可以单文件交付、默认最小权限、支持持久化恢复的 TypeScript Service 与 Agent Runtime。**
 
-1. Deny by default。
-2. Host 与应用权限求交集。
-3. 不向用户代码暴露凭证和原生句柄。
-4. 有界异步队列。
-5. Structured Clone 数据边界。
-6. Linux 进程级 Sandbox。
-7. 基于证据的性能与安全声明。
+路线优先验证三个闭环：
 
-Capsid 的 Binding Runtime 使用独立 QuickJS Runtime，并通过有界中立值和异步队列通信；它也明确说明，同进程 Runtime 隔离无法抵御引擎或原生代码的内存破坏。Tysel 的不可信模式应进一步把高权限 Capability Broker 放到 Supervisor 进程。
+1. **Service**：标准 Fetch / Hono 服务可以低摩擦迁移并构建为单文件。
+2. **Agent**：LLM、MCP、Queue、Signal 是统一 Task 模型的一等能力。
+3. **Durable**：任务可以在进程或机器故障后安全恢复，副作用不被意外重复。
 
 ---
 
@@ -379,6 +373,37 @@ await ctx.effect(...)
 await ctx.sleep(...)
 await ctx.waitForSignal(...)
 ```
+
+### 7.7 Protocol First，Public API Second
+
+跨进程、跨 Runtime 与持久化边界必须先定义版本化协议和资源状态机，再冻结公共 TypeScript API：
+
+```text
+FetchRPC        Host / Supervisor ↔ Worker 的请求、响应、Upgrade 与流
+CapabilityRPC   User Runtime ↔ Trusted Broker 的能力调用、代理与流
+TaskRPC         Trigger / Scheduler ↔ Worker 的 claim、lease、cancel 与 result
+DurableLog      Replay event、effect、timer、signal 与 generation fencing
+```
+
+这些协议可以共享 `resource_id`、credit、deadline、cancellation、half-close、lease 和 owner token 等概念，但不得因为复用代码而混淆信任边界。
+
+每类远程资源必须明确：创建者、所有者、作用域、配额、取消方、超时行为、显式释放、崩溃回收和迟到结果处理。GC 只能作为资源释放的兜底机制。
+
+### 7.8 Compatibility Is a Versioned Contract
+
+每个 Tysel minor release 应固定并发布：
+
+```text
+QuickJS-ng revision
+Web compatibility profile
+WPT / Test262 selected revision
+Capability ABI version
+TAP package version
+supported npm / framework fixtures
+known deviations
+```
+
+未知 profile、ABI 或 compatibility flag 必须给出可执行的错误，不得静默忽略。差分测试用于发现差异，独立绝对断言用于证明行为正确。
 
 ---
 
@@ -1750,9 +1775,7 @@ OpenTelemetry Trace Context
 
 ## 23. 性能目标
 
-以下均为产品目标，不是当前已有性能声明。
-
-Capsid 当前在其固定测试环境中报告小 Bundle 冷启动约 5.1ms、测试过程 PSS 中位数约 34.1MB。该结果说明轻量隔离 Runtime 已可以做到毫秒级启动，但也说明 `<5ms + <10MB` 不应在原型前被视为理所当然。
+以下均为产品目标，不是当前已有性能声明。外部 Runtime 公布的数据只用于量级参考；正式对比必须锁定版本、构建配置、测试负载、硬件与操作系统。
 
 ### 23.1 v0.1 Release Gate
 
@@ -1959,6 +1982,18 @@ tysel/
 
 状态：Proposed
 
+### ADR-011：跨边界协议先于公共 API 稳定
+
+状态：Proposed
+
+Host / Worker、User Runtime / Capability Broker、Scheduler / Task Worker 与 Durable Store 分别使用版本化协议。协议可以共享资源状态机概念，但不得混淆 wire format、ownership 或 trust boundary。
+
+### ADR-012：兼容性是可版本化、可验证的契约
+
+状态：Proposed
+
+每个 minor release 固定引擎、Web profile、标准测试集、Capability ABI 和已知偏差。兼容性差分结果必须配有独立绝对断言和可机器读取的 Release Evidence。
+
 ---
 
 ## 26. 里程碑规划
@@ -2041,6 +2076,8 @@ SQLite
 Secrets
 Structured Log
 Single Executable
+Web API Surface Manifest
+Known Deviations
 ```
 
 平台：
@@ -2067,6 +2104,11 @@ seccomp
 Landlock
 cgroup / rlimit
 Crash Replacement
+CapabilityRPC v1
+Resource ID / Ownership / Lease
+Credit Backpressure
+Late-result Disposal
+Protocol Negative Tests
 ```
 
 ### M3：Task 与 Agent v0.3
@@ -2085,6 +2127,10 @@ Signal
 SQLite Durable Store
 Replay
 Suspend / Resume
+TaskRPC v1
+Claim / Lease / Generation Fencing
+DurableLog Version Contract
+Worker Crash / Timeout / Late Commit Tests
 ```
 
 ### M4：Wasm Component v0.4
@@ -2114,6 +2160,9 @@ Security Audit
 Fuzzing
 SBOM
 签名
+Release Evidence Index
+Machine-readable Compatibility Report
+Reproducible Build Evidence
 Postgres Durable Store
 OTLP
 多架构 Release
@@ -2169,6 +2218,8 @@ Cloud Hosting
 Static TS Compiler
 第三方 Capability Market
 Windows Production Sandbox
+完整 workerd / Wrangler 兼容
+Cloudflare Cache / Assets / Service Binding parity
 ```
 
 ---
