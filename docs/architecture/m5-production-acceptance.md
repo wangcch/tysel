@@ -114,7 +114,7 @@ removing or revoking it. Compromise requires `revoked`, not `retired`.
 
 Deterministic multi-architecture archives use the same keys and trust policy
 through `tysel release sign-artifact <archive> --target <target> --key <path>`
-and `tysel release verify-artifact <archive> --trust <policy.json>`. The target
+and `tysel release verify-artifact <archive> --trust <policy.json> --target <target>`. The target
 and exact archive SHA-256 digest are domain-separated from Evidence Index
 signatures, preventing either signature type from being replayed as the other.
 
@@ -157,14 +157,15 @@ SBOM inventory must be regenerated before the change is accepted.
 
 ## M5.6 Benchmark, reproducibility, and multi-architecture release
 
-The release toolchain is pinned to Rust 1.97.1. Linux x86-64 and arm64 run the
-same formatting, inventory, Clippy, workspace-test, packaging, reproducibility,
-and benchmark gates. Each target is built twice into independent Cargo target
-directories with the source path remapped, the linker build ID disabled, and
-`SOURCE_DATE_EPOCH` derived from the source commit. Both trees package the same
-hello-service acceptance artifact and all of its release sidecars before a
-stable-order, stable-owner, stable-mtime archive is compressed without a gzip
-timestamp.
+The release toolchain is pinned to Rust 1.97.1. A source-scoped policy job runs
+formatting, inventory, dependency-security, and fuzz gates once for the exact
+commit and lockfile. In parallel, Linux x86-64 and arm64 run the same Clippy,
+workspace-test, packaging, reproducibility, and benchmark gates. Each target is
+built twice into independent Cargo target directories with the source path
+remapped, the linker build ID disabled, and `SOURCE_DATE_EPOCH` derived from the
+source commit. Both trees package the same hello-service acceptance artifact
+and all of its release sidecars before a stable-order, stable-owner,
+stable-mtime archive is compressed without a gzip timestamp.
 
 `tysel release reproduce` rejects unequal archive bytes and writes a strict
 machine-readable proof containing the source commit, canonical target, exact
@@ -177,18 +178,29 @@ lockfile, and embedded inventory and validates both recorded build entries.
 
 The benchmark artifact records all 11 cold-start samples, p50 and gate result,
 idle PSS, binary size, CPU, OS, architecture, command, source commit, and
-artifact digest. Tagged builds publish both target archives, checksum files,
-detached Ed25519 signatures, reproducibility proofs, and benchmark evidence.
-The signing key is mandatory for the release workflow and is supplied only as
-the protected `TYSEL_RELEASE_KEY_HEX` secret; the CLI still receives a
-permission-restricted temporary key file. The archives also retain a packaged
+artifact digest. The signing job validates the source-policy evidence against
+the checked-out commit and lockfile, validates each archive checksum, and then
+derives per-target security evidence binding the target and final archive
+digest to the shared gate tool versions, fuzz targets, and run count. Tagged
+builds publish both target archives, checksum files, reproducibility proofs,
+benchmark evidence, security evidence, and detached Ed25519 signatures for
+every artifact except the checksum files.
+
+The signing key is mandatory for the release workflow and is exposed only to a
+separate signing job after both unsigned target builds have passed formatting,
+inventory, dependency-security, fuzz, Clippy, test, reproducibility, and
+benchmark gates. That job receives the protected `TYSEL_RELEASE_KEY_HEX` secret
+only while creating a permission-restricted temporary key file. It builds the
+minimal `tysel-release-signer` rather than the runtime-bearing CLI, keeping the
+offline signing dependency and executable surface separate from QuickJS,
+Wasmtime, and service capabilities. The archives also retain a packaged
 hello-service and its compatibility, SBOM, license, checksum, and Release
 Evidence Index sidecars as an executable acceptance fixture. Signatures are
 created after deterministic comparison; signing timestamps are deliberately
-excluded from the archive and reproducibility comparison.
-Both the archive and its reproducibility proof receive detached signatures, so
-the build commands and source provenance cannot be replaced independently of
-the published bytes.
+excluded from the archive and reproducibility comparison. Signing the archive,
+reproducibility proof, benchmark evidence, and security evidence prevents any
+of their measurements or provenance from being replaced independently of the
+published bytes.
 
 ## M5.7 Postgres Durable Store
 

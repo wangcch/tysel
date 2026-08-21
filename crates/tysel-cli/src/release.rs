@@ -47,6 +47,8 @@ pub enum ReleaseCommand {
         evidence: PathBuf,
         #[arg(long, default_value = "Cargo.lock")]
         lockfile: PathBuf,
+        #[arg(long)]
+        target: String,
     },
     /// Sign a deterministic multi-architecture release archive.
     SignArtifact {
@@ -61,6 +63,8 @@ pub enum ReleaseCommand {
         artifact: PathBuf,
         #[arg(long)]
         trust: PathBuf,
+        #[arg(long)]
+        target: String,
     },
 }
 
@@ -102,9 +106,10 @@ pub fn run(command: ReleaseCommand) -> Result<()> {
             println!("Reproducible      {}", evidence.artifact.sha256);
             println!("Evidence          {}", output.display());
         }
-        ReleaseCommand::VerifyReproducibility { artifact, evidence, lockfile } => {
-            let evidence =
-                tysel_build::verify_reproducible_build_evidence(&artifact, evidence, lockfile)?;
+        ReleaseCommand::VerifyReproducibility { artifact, evidence, lockfile, target } => {
+            let evidence = tysel_build::verify_reproducible_build_evidence(
+                &artifact, evidence, lockfile, &target,
+            )?;
             println!("Verified         {}", artifact.display());
             println!("Target           {}", evidence.target);
             println!("Commit           {}", evidence.source_commit);
@@ -114,9 +119,13 @@ pub fn run(command: ReleaseCommand) -> Result<()> {
                 tysel_build::sign_release_artifact(&artifact, &target, key, now_unix()?)?;
             println!("Signature        {}", signature.display());
         }
-        ReleaseCommand::VerifyArtifact { artifact, trust } => {
-            let signature =
-                tysel_build::verify_release_artifact_signature(&artifact, trust, now_unix()?)?;
+        ReleaseCommand::VerifyArtifact { artifact, trust, target } => {
+            let signature = tysel_build::verify_release_artifact_signature(
+                &artifact,
+                trust,
+                &target,
+                now_unix()?,
+            )?;
             println!("Verified         {}", artifact.display());
             println!("Target           {}", signature.target);
             println!("Key ID           {}", signature.key_id);

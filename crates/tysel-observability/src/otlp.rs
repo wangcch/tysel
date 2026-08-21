@@ -135,7 +135,7 @@ impl Otlp {
     }
 
     fn record_http(&self, method: &str, status: u16, elapsed: Duration, request_id: u64) {
-        let method = super::safe_metadata_label(method);
+        let method = super::safe_http_method_label(method);
         let status_class = format!("{}xx", status / 100);
         let attributes = vec![
             KeyValue::new("service.name", self.app.clone()),
@@ -341,6 +341,8 @@ mod tests {
         assert_eq!(super::super::safe_metadata_label("https://secret"), "redacted");
         assert_eq!(super::super::safe_metadata_label("query?token=secret"), "redacted");
         assert_eq!(super::super::safe_metadata_label("Bearer secret"), "redacted");
+        assert_eq!(super::super::safe_http_method_label("GET"), "GET");
+        assert_eq!(super::super::safe_http_method_label("CUSTOM123"), "redacted");
         assert_eq!(
             super::super::safe_metadata_label(
                 &"x".repeat(super::super::MAX_METADATA_LABEL_BYTES + 1)

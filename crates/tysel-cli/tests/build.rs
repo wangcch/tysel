@@ -4,6 +4,12 @@ use std::process::Command;
 
 use tysel_package::Tap;
 
+fn write_release_stub(path: &std::path::Path) {
+    let mut stub = b"stub-runtime".to_vec();
+    stub.extend_from_slice(include_bytes!("../../tysel-build/src/runtime-components.json"));
+    fs::write(path, stub).unwrap();
+}
+
 #[test]
 fn build_embeds_javascript_bundle_and_manifest() {
     let dir = std::env::temp_dir().join(format!("tysel-cli-build-{}", std::process::id()));
@@ -68,7 +74,7 @@ listen = "127.0.0.1:0"
 fn release_build_writes_compatible_deterministic_evidence() {
     let dir = temp_js_app("release-evidence");
     let stub = dir.join("tysel-service");
-    fs::write(&stub, b"stub-runtime").unwrap();
+    write_release_stub(&stub);
     let output = dir.join("dist/release-app");
     let result = Command::new(cli_exe())
         .args([
@@ -127,7 +133,7 @@ fn release_build_writes_compatible_deterministic_evidence() {
 fn release_commands_sign_and_verify_against_a_trust_policy() {
     let dir = temp_js_app("release-signature");
     let stub = dir.join("tysel-service");
-    fs::write(&stub, b"stub-runtime").unwrap();
+    write_release_stub(&stub);
     let artifact = dir.join("dist/release-app");
     let build = Command::new(cli_exe())
         .args([
@@ -211,6 +217,8 @@ fn release_commands_sign_and_verify_against_a_trust_policy() {
             artifact.to_str().unwrap(),
             "--trust",
             trust.to_str().unwrap(),
+            "--target",
+            "linux-x64",
         ])
         .output()
         .unwrap();

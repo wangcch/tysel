@@ -6,18 +6,20 @@ use anyhow::{Context, Result, ensure};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use tysel_package::bundle_hash;
+pub use tysel_release_signing::{
+    RELEASE_ARTIFACT_SIGNATURE_VERSION, ReleaseArtifactSignature, sign_release_artifact,
+};
+use tysel_release_signing::{artifact_signature_message, validate_release_target};
 
 use crate::evidence::{sidecar_path, verify_release_evidence, write_json_atomically};
 
 pub const RELEASE_SIGNATURE_VERSION: u32 = 1;
-pub const RELEASE_ARTIFACT_SIGNATURE_VERSION: u32 = 1;
 pub const TRUST_POLICY_VERSION: u32 = 1;
 const MAX_CLOCK_SKEW_SECONDS: u64 = 300;
 const MAX_POLICY_LIFETIME_SECONDS: u64 = 90 * 24 * 60 * 60;
 const MAX_SIGNING_DOCUMENT_BYTES: u64 = 1024 * 1024;
 const MAX_SIGNED_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 const SIGNATURE_DOMAIN: &[u8] = b"tysel-release-evidence-signature-v1\0";
-const ARTIFACT_SIGNATURE_DOMAIN: &[u8] = b"tysel-release-artifact-signature-v1\0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,18 +29,6 @@ pub struct ReleaseSignature {
     pub key_id: String,
     pub issued_at_unix: u64,
     pub evidence_sha256: String,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseArtifactSignature {
-    pub signature_version: u32,
-    pub algorithm: String,
-    pub key_id: String,
-    pub issued_at_unix: u64,
-    pub target: String,
-    pub artifact_sha256: String,
     pub signature: String,
 }
 
@@ -184,40 +174,13 @@ pub fn verify_release_signature(
     Ok(signature_document)
 }
 
-pub fn sign_release_artifact(
-    artifact_path: impl AsRef<Path>,
-    target: &str,
-    private_key_path: impl AsRef<Path>,
-    issued_at_unix: u64,
-) -> Result<PathBuf> {
-    validate_release_target(target)?;
-    let artifact_path = artifact_path.as_ref();
-    let artifact = read_bounded_artifact(artifact_path)?;
-    let artifact_sha256 = bundle_hash(&artifact);
-    let signing_key = read_signing_key(private_key_path.as_ref())?;
-    let public_key = signing_key.verifying_key().to_bytes();
-    let key_id = bundle_hash(&public_key);
-    let message = artifact_signature_message(&key_id, issued_at_unix, target, &artifact_sha256);
-    let signature = signing_key.sign(&message);
-    let document = ReleaseArtifactSignature {
-        signature_version: RELEASE_ARTIFACT_SIGNATURE_VERSION,
-        algorithm: "ed25519".into(),
-        key_id,
-        issued_at_unix,
-        target: target.into(),
-        artifact_sha256,
-        signature: encode_hex(&signature.to_bytes()),
-    };
-    let signature_path = sidecar_path(artifact_path, ".sig.json");
-    write_json_atomically(&signature_path, &document)?;
-    Ok(signature_path)
-}
-
 pub fn verify_release_artifact_signature(
     artifact_path: impl AsRef<Path>,
     trust_policy_path: impl AsRef<Path>,
+    expected_target: &str,
     now_unix: u64,
 ) -> Result<ReleaseArtifactSignature> {
+    validate_release_target(expected_target)?;
     let artifact_path = artifact_path.as_ref();
     let document: ReleaseArtifactSignature = read_json(&sidecar_path(artifact_path, ".sig.json"))?;
     ensure!(
@@ -226,6 +189,10 @@ pub fn verify_release_artifact_signature(
     );
     ensure!(document.algorithm == "ed25519", "unsupported signature algorithm");
     validate_release_target(&document.target)?;
+    ensure!(
+        document.target == expected_target,
+        "release artifact target does not match the expected deployment target"
+    );
     ensure!(
         document.issued_at_unix <= now_unix.saturating_add(MAX_CLOCK_SKEW_SECONDS),
         "release artifact signature is from the future"
@@ -323,29 +290,6 @@ fn signature_message(key_id: &str, issued_at_unix: u64, evidence_sha256: &str) -
     message
 }
 
-fn artifact_signature_message(
-    key_id: &str,
-    issued_at_unix: u64,
-    target: &str,
-    artifact_sha256: &str,
-) -> Vec<u8> {
-    let mut message = Vec::with_capacity(192);
-    message.extend_from_slice(ARTIFACT_SIGNATURE_DOMAIN);
-    message.extend_from_slice(key_id.as_bytes());
-    message.push(0);
-    message.extend_from_slice(issued_at_unix.to_string().as_bytes());
-    message.push(0);
-    message.extend_from_slice(target.as_bytes());
-    message.push(0);
-    message.extend_from_slice(artifact_sha256.as_bytes());
-    message
-}
-
-fn validate_release_target(target: &str) -> Result<()> {
-    ensure!(matches!(target, "linux-x64" | "linux-arm64"), "unsupported production release target");
-    Ok(())
-}
-
 fn trusted_release_key<'a>(
     policy: &'a TrustPolicy,
     key_id: &str,
@@ -434,12 +378,18 @@ mod tests {
     use super::*;
     use tysel_package::{PackageManifest, Tap};
 
+    fn release_stub() -> Vec<u8> {
+        let mut stub = b"release-binary".to_vec();
+        stub.extend_from_slice(crate::supply_chain::embedded_runtime_inventory_bytes());
+        stub
+    }
+
     #[test]
     fn signs_verifies_retires_and_revokes_release_evidence() {
         let root = temp_root("rotation");
         fs::create_dir_all(&root).unwrap();
         let output = root.join("release-app");
-        fs::write(&output, tap().embed_into(b"release-binary").unwrap()).unwrap();
+        fs::write(&output, tap().embed_into(&release_stub()).unwrap()).unwrap();
         crate::write_release_evidence(&output, "linux-x64").unwrap();
         let key_path = write_key(&root, [7; 32]);
         let key_info = release_key_info(&key_path).unwrap();
@@ -482,7 +432,7 @@ mod tests {
         let root = temp_root("reject");
         fs::create_dir_all(&root).unwrap();
         let output = root.join("release-app");
-        fs::write(&output, tap().embed_into(b"release-binary").unwrap()).unwrap();
+        fs::write(&output, tap().embed_into(&release_stub()).unwrap()).unwrap();
         crate::write_release_evidence(&output, "linux-x64").unwrap();
         let key_path = write_key(&root, [9; 32]);
         let key_info = release_key_info(&key_path).unwrap();
@@ -548,11 +498,18 @@ mod tests {
         );
 
         sign_release_artifact(&artifact, "linux-x64", &key_path, 1_000).unwrap();
-        let signature = verify_release_artifact_signature(&artifact, &trust_path, 1_000).unwrap();
+        let signature =
+            verify_release_artifact_signature(&artifact, &trust_path, "linux-x64", 1_000).unwrap();
         assert_eq!(signature.target, "linux-x64");
+        assert!(
+            verify_release_artifact_signature(&artifact, &trust_path, "linux-arm64", 1_000)
+                .unwrap_err()
+                .to_string()
+                .contains("expected deployment target")
+        );
         fs::write(&artifact, b"tampered archive").unwrap();
         assert!(
-            verify_release_artifact_signature(&artifact, &trust_path, 1_000)
+            verify_release_artifact_signature(&artifact, &trust_path, "linux-x64", 1_000)
                 .unwrap_err()
                 .to_string()
                 .contains("does not bind")

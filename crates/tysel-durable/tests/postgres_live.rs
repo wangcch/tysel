@@ -65,6 +65,12 @@ fn postgres_preserves_replay_claim_signal_and_catalog_contracts() {
     assert!(!store.complete_wakeup(sleeping, 0, Some("runner-b"), 25).unwrap());
     assert!(store.complete_wakeup(sleeping, 0, Some("runner-a"), 25).unwrap());
 
+    let expired = task(4);
+    store.append_event_json_with_wakeup_at(expired, 0, "nap".into(), "null", 40, 40).unwrap();
+    let claim = store.claim_wakeup(expired, 40, "runner-a", 100).unwrap().unwrap();
+    assert_eq!(claim.lease_until_ms, 140);
+    assert!(store.renew_wakeup_claim(&claim, 140, 100).unwrap().is_none());
+
     let signaled = task(3);
     assert!(store.poll_signal(signaled, 0, "approval", 30, None).unwrap().is_none());
     let signal_id = store.send_signal(signaled, "approval", &json!({"ok": true}), 31).unwrap();

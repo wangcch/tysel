@@ -183,6 +183,13 @@ fn safe_metadata_label(value: &str) -> String {
     }
 }
 
+fn safe_http_method_label(value: &str) -> String {
+    allowed_label(
+        value,
+        &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE"],
+    )
+}
+
 fn allowed_label(value: &str, allowed: &[&str]) -> String {
     if allowed.contains(&value) { value.to_owned() } else { "redacted".into() }
 }

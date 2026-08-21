@@ -683,7 +683,7 @@ impl DurableStore for PostgresStore {
             let changed = client.execute(
                 "UPDATE durable_wakeups SET lease_until_ms = $1 WHERE task_id = $2
                  AND sequence = $3 AND wake_at_ms = $4 AND lease_owner = $5
-                 AND lease_until_ms = $6",
+                 AND lease_until_ms = $6 AND lease_until_ms > $7",
                 &[
                     &to_sql_integer(lease_until_ms, "lease_until_ms")?,
                     &&id[..],
@@ -691,6 +691,7 @@ impl DurableStore for PostgresStore {
                     &to_sql_integer(claim.wake_at_ms, "wake_at_ms")?,
                     &claim.lease_owner,
                     &to_sql_integer(claim.lease_until_ms, "lease_until_ms")?,
+                    &to_sql_integer(now_ms, "now_ms")?,
                 ],
             )?;
             Ok((changed == 1).then(|| WakeupClaim {

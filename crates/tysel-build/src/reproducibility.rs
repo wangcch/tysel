@@ -106,6 +106,7 @@ pub fn verify_reproducible_build_evidence(
     artifact: impl AsRef<Path>,
     evidence_path: impl AsRef<Path>,
     cargo_lock: impl AsRef<Path>,
+    expected_target: &str,
 ) -> Result<ReproducibleBuildEvidence> {
     let evidence_bytes = read_evidence(evidence_path.as_ref())?;
     let evidence: ReproducibleBuildEvidence = serde_json::from_slice(&evidence_bytes)
@@ -116,6 +117,10 @@ pub fn verify_reproducible_build_evidence(
     );
     let commands = evidence.builds.iter().map(|build| build.command.clone()).collect::<Vec<_>>();
     validate_provenance(&evidence.source_commit, &evidence.target, &evidence.toolchain, &commands)?;
+    ensure!(
+        evidence.target == expected_target,
+        "reproducibility evidence target does not match the expected deployment target"
+    );
     ensure!(evidence.artifact.kind == "tysel-release-archive", "unexpected artifact kind");
     ensure!(
         evidence.builds[0].ordinal == 1 && evidence.builds[1].ordinal == 2,
@@ -245,9 +250,21 @@ mod tests {
             &first,
             &output,
             workspace_root().join("Cargo.lock"),
+            "linux-x64",
         )
         .unwrap();
         assert_eq!(decoded, evidence);
+        assert!(
+            verify_reproducible_build_evidence(
+                &first,
+                &output,
+                workspace_root().join("Cargo.lock"),
+                "linux-arm64",
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("expected deployment target")
+        );
 
         let mut tampered: serde_json::Value =
             serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
@@ -257,7 +274,8 @@ mod tests {
             verify_reproducible_build_evidence(
                 &first,
                 &output,
-                workspace_root().join("Cargo.lock")
+                workspace_root().join("Cargo.lock"),
+                "linux-x64",
             )
             .is_err()
         );

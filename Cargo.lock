@@ -3548,6 +3548,7 @@ dependencies = [
  "tysel-engine-wasm",
  "tysel-manifest",
  "tysel-package",
+ "tysel-release-signing",
  "wat",
 ]
 
@@ -3708,6 +3709,7 @@ dependencies = [
  "thiserror",
  "tysel-capability",
  "tysel-engine",
+ "tysel-package",
  "wasmtime",
  "wasmtime-wasi",
  "wat",
@@ -3774,6 +3776,17 @@ name = "tysel-policy"
 version = "0.0.1"
 dependencies = [
  "tysel-capability",
+]
+
+[[package]]
+name = "tysel-release-signing"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

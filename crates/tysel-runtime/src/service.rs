@@ -26,6 +26,9 @@ use crate::http::{AppIsolate, HttpError, serve_with_websocket, spawn_app_isolate
 #[cfg(unix)]
 use crate::{ModuleTaskService, ModuleTaskServiceError};
 
+static EMBEDDED_RUNTIME_INVENTORY: &[u8] =
+    include_bytes!("../../tysel-build/src/runtime-components.json");
+
 #[derive(Debug, thiserror::Error)]
 pub enum StubError {
     #[error(transparent)]
@@ -160,7 +163,24 @@ fn parse_component_capability_grants(
 }
 
 pub async fn run_stub() -> Result<(), StubError> {
+    // Release evidence locates these exact bytes in the executable prefix, so
+    // stale stubs cannot be paired with the current locked-graph SBOM.
+    std::hint::black_box(EMBEDDED_RUNTIME_INVENTORY);
     run_tap(Tap::from_current_exe()?).await
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> io::Result<()> {
+    tokio::signal::ctrl_c().await
 }
 
 pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
@@ -245,12 +265,23 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
                 service.shutdown().await?;
                 return Err(error.into());
             }
+            signal = shutdown_signal() => {
+                let shutdown = service.shutdown().await;
+                signal?;
+                shutdown?;
+            }
         }
     } else {
-        serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await?;
+        tokio::select! {
+            result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => result?,
+            signal = shutdown_signal() => signal?,
+        }
     }
     #[cfg(not(unix))]
-    serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket).await?;
+    tokio::select! {
+        result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => result?,
+        signal = shutdown_signal() => signal?,
+    }
     Ok(())
 }
 
@@ -273,7 +304,8 @@ pub fn run_component_tap_with_policy(
 
 /// Invoke the single packaged Component through the portable source fallback.
 /// AOT metadata is admitted now, but native deserialization remains disabled
-/// until M5 package signatures can make Wasmtime's unsafe trust requirement.
+/// until the launcher passes an authenticated package-verification decision
+/// into this runtime boundary.
 pub fn invoke_component_tap(tap: &Tap, input: &str) -> Result<String, StubError> {
     invoke_component_tap_with_policy(tap, input, &ComponentRuntimePolicy::default())
 }
@@ -310,7 +342,7 @@ pub fn invoke_component_tap_with_policy(
     });
     tracing::debug!(
         compatible_aot,
-        "using portable Component source; native AOT loading requires signed TAP trust"
+        "using portable Component source; native AOT loading requires authenticated trust handoff"
     );
     let compiled = engine.compile(&component.source)?;
     let build_grants = compiled.required_imports().iter().map(|import| import.id.clone()).collect();

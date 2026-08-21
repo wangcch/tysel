@@ -9,7 +9,10 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use tysel_package::{Tap, TapCompatibilityReport, bundle_hash, compatibility_report};
 
-use crate::supply_chain::{CycloneDxBom, LicenseInventory, inventory_digest, release_supply_chain};
+use crate::supply_chain::{
+    CycloneDxBom, LicenseInventory, embedded_runtime_inventory_bytes, inventory_digest,
+    release_supply_chain,
+};
 
 pub const RELEASE_EVIDENCE_VERSION: u32 = 2;
 const MAX_RELEASE_SIDECAR_BYTES: u64 = 32 * 1024 * 1024;
@@ -78,6 +81,7 @@ pub fn write_release_evidence(output: impl AsRef<Path>, target: &str) -> Result<
     let tap = Tap::from_path(output).with_context(|| {
         format!("release artifact {} contains an invalid TAP", output.display())
     })?;
+    ensure_release_runtime_identity(&artifact)?;
     let tap_payload = tap.encode().context("failed to encode embedded TAP for release evidence")?;
     let compatibility = compatibility_report(&tap_payload);
     ensure!(compatibility.compatible, "release TAP is not compatible with this runtime");
@@ -136,6 +140,7 @@ pub fn verify_release_evidence(output: impl AsRef<Path>) -> Result<ReleaseEviden
     ensure!(index.artifact.kind == "tysel-single-executable", "unexpected artifact kind");
     ensure!(!index.artifact.target.is_empty(), "release target is empty");
     let tap = Tap::from_path(output).context("release artifact contains an invalid TAP")?;
+    ensure_release_runtime_identity(&artifact)?;
     ensure!(
         tap.manifest.application_id == index.application_id,
         "application identity does not match evidence"
@@ -225,6 +230,25 @@ fn document_evidence(kind: &str, contents: &[u8]) -> ReleaseDocumentEvidence {
         size_bytes: contents.len() as u64,
         sha256: bundle_hash(contents),
     }
+}
+
+fn ensure_release_runtime_identity(artifact: &[u8]) -> Result<()> {
+    ensure!(artifact.len() >= 16, "release artifact contains no TAP footer");
+    let footer = artifact.len() - 16;
+    ensure!(&artifact[footer + 8..] == b"TYSELEND", "release artifact contains no TAP footer");
+    let payload_len = u64::from_le_bytes(
+        artifact[footer..footer + 8].try_into().expect("eight-byte TAP payload length"),
+    );
+    let payload_len =
+        usize::try_from(payload_len).context("TAP payload length is not addressable")?;
+    ensure!(payload_len <= footer, "TAP payload length exceeds release artifact");
+    let stub = &artifact[..footer - payload_len];
+    let inventory = embedded_runtime_inventory_bytes();
+    ensure!(
+        stub.windows(inventory.len()).any(|window| window == inventory),
+        "release runtime stub does not embed the current locked runtime inventory"
+    );
+    Ok(())
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
@@ -348,12 +372,18 @@ mod tests {
         )
     }
 
+    fn release_stub() -> Vec<u8> {
+        let mut stub = b"release-binary".to_vec();
+        stub.extend_from_slice(embedded_runtime_inventory_bytes());
+        stub
+    }
+
     #[test]
     fn writes_deterministic_release_sidecars() {
         let root = temp_root("deterministic");
         fs::create_dir_all(&root).unwrap();
         let output = root.join("release-app");
-        let artifact = tap().embed_into(b"release-binary").unwrap();
+        let artifact = tap().embed_into(&release_stub()).unwrap();
         fs::write(&output, &artifact).unwrap();
 
         let first = write_release_evidence(&output, "linux-x64").unwrap();
@@ -384,7 +414,7 @@ mod tests {
         let root = temp_root("tampered-sbom");
         fs::create_dir_all(&root).unwrap();
         let output = root.join("release-app");
-        fs::write(&output, tap().embed_into(b"release-binary").unwrap()).unwrap();
+        fs::write(&output, tap().embed_into(&release_stub()).unwrap()).unwrap();
         let sidecars = write_release_evidence(&output, "linux-x64").unwrap();
         fs::write(&sidecars.sbom, b"{}\n").unwrap();
 
@@ -397,7 +427,7 @@ mod tests {
         let root = temp_root("wrong-identity");
         fs::create_dir_all(&root).unwrap();
         let output = root.join("release-app");
-        fs::write(&output, tap().embed_into(b"release-binary").unwrap()).unwrap();
+        fs::write(&output, tap().embed_into(&release_stub()).unwrap()).unwrap();
         let sidecars = write_release_evidence(&output, "linux-x64").unwrap();
         let mut index: ReleaseEvidenceIndex = read_json(&sidecars.evidence).unwrap();
         index.application_id = "different-application".into();
@@ -423,11 +453,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_stale_or_unidentified_release_runtime_stub() {
+        let root = temp_root("stale-runtime");
+        fs::create_dir_all(&root).unwrap();
+        let output = root.join("release-app");
+        fs::write(&output, tap().embed_into(b"stale-runtime-binary").unwrap()).unwrap();
+
+        let error = write_release_evidence(&output, "linux-x64").unwrap_err();
+        assert!(error.to_string().contains("current locked runtime inventory"));
+        assert!(!sidecar_path(&output, ".evidence.json").exists());
+    }
+
+    #[test]
     fn failed_sidecar_publish_removes_the_evidence_commit_marker() {
         let root = temp_root("publish-failure");
         fs::create_dir_all(&root).unwrap();
         let output = root.join("release-app");
-        fs::write(&output, tap().embed_into(b"release-binary").unwrap()).unwrap();
+        fs::write(&output, tap().embed_into(&release_stub()).unwrap()).unwrap();
         let evidence = sidecar_path(&output, ".evidence.json");
         let checksum = sidecar_path(&output, ".sha256");
         fs::write(&evidence, b"stale-evidence").unwrap();

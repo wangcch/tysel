@@ -4,6 +4,7 @@ exclude = ["sdk/examples/rust-echo"]
 members = [
     "crates/tysel-cli",
     "crates/tysel-build",
+    "crates/tysel-release-signing",
     "crates/tysel-package",
     "crates/tysel-manifest",
     "crates/tysel-runtime",
@@ -72,6 +73,7 @@ tysel-component-sdk = { path = "crates/tysel-component-sdk" }
 tysel-engine-qjs = { path = "crates/tysel-engine-qjs" }
 tysel-package = { path = "crates/tysel-package" }
 tysel-build = { path = "crates/tysel-build" }
+tysel-release-signing = { path = "crates/tysel-release-signing" }
 tysel-ipc = { path = "crates/tysel-ipc" }
 tysel-isolate = { path = "crates/tysel-isolate" }
 tysel-capability = { path = "crates/tysel-capability" }

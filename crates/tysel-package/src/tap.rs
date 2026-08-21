@@ -11,6 +11,7 @@ use crate::sourcemap::SourceMap;
 pub const TAP_VERSION: u32 = 2;
 pub const MIN_SUPPORTED_TAP_VERSION: u32 = 1;
 pub const TAP_COMPATIBILITY_REPORT_VERSION: u32 = 1;
+pub const COMPONENT_ABI_VERSION: &str = "0.4.0";
 pub const MAX_TAP_PAYLOAD_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_PACKAGED_COMPONENTS: usize = 64;
 pub const MAX_AOT_ARTIFACTS_PER_COMPONENT: usize = 16;
@@ -475,8 +476,11 @@ fn validate_components(components: &[PackagedComponent]) -> Result<(), PackageEr
         if !names.insert(&component.name) {
             return Err(PackageError::Invalid("duplicate packaged component name".into()));
         }
-        if component.abi_version.is_empty() || component.abi_version.len() > 64 {
-            return Err(PackageError::Invalid("invalid component ABI version".into()));
+        if component.abi_version != COMPONENT_ABI_VERSION {
+            return Err(PackageError::Invalid(format!(
+                "unsupported component ABI version {}; expected {COMPONENT_ABI_VERSION}",
+                component.abi_version
+            )));
         }
         if component.aot.len() > MAX_AOT_ARTIFACTS_PER_COMPONENT {
             return Err(PackageError::Invalid(

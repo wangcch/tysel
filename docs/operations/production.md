@@ -3,8 +3,8 @@
 This runbook is the deployment contract for Tysel Production v1. Linux x86-64
 (`linux-x64`) and Linux arm64 (`linux-arm64`) are the supported production
 targets. Treat the release archive, its reproducibility proof, signatures,
-checksum, benchmark evidence, and the deployment trust policy as one release
-set.
+checksum, benchmark evidence, security evidence, and the deployment trust
+policy as one release set.
 
 ## Release admission
 
@@ -15,8 +15,9 @@ directory:
    the trust policy through a separate authenticated configuration channel.
 2. Compare the archive's SHA-256 digest with the single digest in
    `<archive>.sha256`.
-3. Verify the archive and reproducibility-proof signatures. Use the canonical
-   target for the host architecture.
+3. Verify the archive, reproducibility-proof, benchmark-evidence, and
+   security-evidence signatures. Use the canonical target for the host
+   architecture.
 4. Verify the reproducibility proof against the checked-out release
    `Cargo.lock`.
 5. Extract only after verification. Confirm that `bin/tysel`,
@@ -33,18 +34,23 @@ expected=$(tr -d '[:space:]' < "$archive.sha256")
 actual=$(sha256sum "$archive" | awk '{print $1}')
 test "$actual" = "$expected"
 
-./tysel release verify-artifact "$archive" --trust release-trust.json
-./tysel release verify-artifact "$archive.repro.json" --trust release-trust.json
+./tysel release verify-artifact "$archive" --trust release-trust.json --target linux-x64
+./tysel release verify-artifact "$archive.repro.json" --trust release-trust.json --target linux-x64
+./tysel release verify-artifact benchmark-evidence-linux-x64.json \
+  --trust release-trust.json --target linux-x64
+./tysel release verify-artifact security-evidence-linux-x64.json \
+  --trust release-trust.json --target linux-x64
 ./tysel release verify-reproducibility "$archive" \
-  --evidence "$archive.repro.json" --lockfile Cargo.lock
+  --evidence "$archive.repro.json" --lockfile Cargo.lock --target linux-x64
 ```
 
 Use the verifier from an already trusted Tysel installation, not from the
-unverified archive. The release workflow also signs the archive and
-reproducibility proof as `<artifact>.sig.json`. The acceptance executable has
-its own `.sha256`, `.compat.json`, `.sbom.cdx.json`, `.licenses.json`, and
-`.evidence.json` files inside the archive; `tysel release verify` validates
-those files when an Evidence Index signature is published for that executable.
+unverified archive. The release workflow signs the archive, reproducibility
+proof, benchmark evidence, and security evidence as `<artifact>.sig.json`.
+The acceptance executable has its own `.sha256`, `.compat.json`,
+`.sbom.cdx.json`, `.licenses.json`, and `.evidence.json` files inside the
+archive; `tysel release verify` validates those files when an Evidence Index
+signature is published for that executable.
 
 Reject a release if the trust policy is expired, a key is revoked, a signature
 or digest differs, the target is wrong, reproducibility verification fails, or

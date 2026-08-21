@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,6 +26,7 @@ export default {
   },
 };
 "#;
+static PACKAGE_IDS: AtomicU64 = AtomicU64::new(1);
 
 const TYPESCRIPT: &str = r#"
 export default {
@@ -64,6 +66,33 @@ async fn packaged_stub_serves_embedded_bundle() {
     assert!(body.contains("Hello from Tysel"));
     assert!(body.contains("\"path\":\"/hello\""));
     assert!(body.contains("\"packaged\":true"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn packaged_stub_exits_cleanly_on_sigterm() {
+    let packaged = package_stub();
+    let mut child = Command::new(&packaged)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn packaged stub");
+    let pid = child.id().expect("child pid").to_string();
+    let stdout = child.stdout.take().expect("stdout");
+    let stderr = collect_stderr(child.stderr.take().expect("stderr"));
+    tokio::time::timeout(Duration::from_secs(5), read_listen(stdout))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for listen; stderr={}", stderr_text(&stderr)))
+        .unwrap_or_else(|err| panic!("{err}; stderr={}", stderr_text(&stderr)));
+
+    let signal = Command::new("kill").args(["-TERM", &pid]).status().await.expect("send SIGTERM");
+    assert!(signal.success());
+    let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+        .await
+        .expect("timed out waiting for graceful shutdown")
+        .expect("wait for packaged stub");
+    assert!(status.success(), "status={status}; stderr={}", stderr_text(&stderr));
 }
 
 #[tokio::test]
@@ -171,7 +200,9 @@ fn package_stub() -> PathBuf {
     assert_eq!(origin.source, "src/index.ts");
     assert!(origin.content.unwrap().contains("Promise<Response>"));
 
-    let dir = std::env::temp_dir().join(format!("tysel-packaged-{}", std::process::id()));
+    let package_id = PACKAGE_IDS.fetch_add(1, Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("tysel-packaged-{}-{package_id}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let output = dir.join("hello-service");
     let bytes = tap.embed_into(&stub).expect("embed");
@@ -257,7 +288,9 @@ fn package_component_stub() -> PathBuf {
         source,
         aot: Vec::new(),
     }]);
-    let dir = std::env::temp_dir().join(format!("tysel-component-{}", std::process::id()));
+    let package_id = PACKAGE_IDS.fetch_add(1, Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("tysel-component-{}-{package_id}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let output = dir.join("echo-component");
     std::fs::write(&output, tap.embed_into(&stub).unwrap()).unwrap();

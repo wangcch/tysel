@@ -174,6 +174,10 @@ pub(crate) fn inventory_digest() -> String {
     bundle_hash(RUNTIME_INVENTORY)
 }
 
+pub(crate) fn embedded_runtime_inventory_bytes() -> &'static [u8] {
+    RUNTIME_INVENTORY
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

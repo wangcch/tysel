@@ -276,6 +276,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-oid"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -535,6 +541,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.1",
+ "const-oid",
  "crypto-common 0.2.2",
 ]
 
@@ -2385,6 +2392,7 @@ dependencies = [
  "tysel-engine-wasm",
  "tysel-manifest",
  "tysel-package",
+ "tysel-release-signing",
 ]
 
 [[package]]
@@ -2412,6 +2420,7 @@ dependencies = [
  "thiserror",
  "tysel-capability",
  "tysel-engine",
+ "tysel-package",
  "wasmtime",
  "wasmtime-wasi",
 ]
@@ -2457,6 +2466,17 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror",
+]
+
+[[package]]
+name = "tysel-release-signing"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

@@ -927,7 +927,8 @@ impl SqliteStore {
         let changed = connection.execute(
             "UPDATE durable_wakeups SET lease_until_ms = ?1
              WHERE task_id = ?2 AND sequence = ?3 AND wake_at_ms = ?4
-               AND lease_owner = ?5 AND lease_until_ms = ?6",
+               AND lease_owner = ?5 AND lease_until_ms = ?6
+               AND lease_until_ms > ?7",
             params![
                 to_sql_integer(lease_until_ms, "lease_until_ms")?,
                 id.as_slice(),
@@ -935,6 +936,7 @@ impl SqliteStore {
                 to_sql_integer(claim.wake_at_ms, "wake_at_ms")?,
                 claim.lease_owner,
                 to_sql_integer(claim.lease_until_ms, "lease_until_ms")?,
+                to_sql_integer(now_ms, "now_ms")?,
             ],
         )?;
         Ok((changed == 1).then(|| WakeupClaim {
@@ -2226,6 +2228,15 @@ mod tests {
         assert!(store.release_wakeup_claim(&renewed).unwrap());
         assert_eq!(store.wakeup(TaskId(4)).unwrap().unwrap().sequence, 2);
         assert_eq!(store.claim_due_wakeups(60, 1, "other", 100).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn expired_claim_cannot_be_renewed() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.schedule_wakeup(Wakeup { task_id: TaskId(5), sequence: 1, wake_at_ms: 10 }).unwrap();
+        let claim = store.claim_due_wakeups(10, 1, "runner", 100).unwrap().pop().unwrap();
+        assert_eq!(claim.lease_until_ms, 110);
+        assert!(store.renew_wakeup_claim(&claim, 110, 100).unwrap().is_none());
     }
 
     #[test]

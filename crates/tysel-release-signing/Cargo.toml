@@ -1,0 +1,22 @@
+[package]
+name = "tysel-release-signing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Minimal offline signer for deterministic Tysel release artifacts."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tysel-release-signer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+ed25519-dalek.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"

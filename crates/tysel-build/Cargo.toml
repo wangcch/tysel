@@ -15,6 +15,7 @@ tysel-manifest.workspace = true
 tysel-package.workspace = true
 tysel-capability.workspace = true
 tysel-engine-wasm.workspace = true
+tysel-release-signing.workspace = true
 anyhow.workspace = true
 oxc.workspace = true
 oxc_resolver.workspace = true

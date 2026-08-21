@@ -159,6 +159,37 @@ fn component_blob_tampering_is_rejected() {
 }
 
 #[test]
+fn unsupported_component_abi_is_rejected_and_reported_incompatible() {
+    let component = PackagedComponent {
+        name: "echo".into(),
+        abi_version: "0.5.0".into(),
+        source: b"portable-component".to_vec(),
+        aot: Vec::new(),
+    };
+    let error = sample_tap().with_components(vec![component]).encode().unwrap_err();
+    assert!(
+        matches!(error, PackageError::Invalid(message) if message.contains("unsupported component ABI version"))
+    );
+
+    let supported = PackagedComponent {
+        name: "echo".into(),
+        abi_version: COMPONENT_ABI_VERSION.into(),
+        source: b"portable-component".to_vec(),
+        aot: Vec::new(),
+    };
+    let mut encoded = sample_tap().with_components(vec![supported]).encode().unwrap();
+    let offset = encoded
+        .windows(COMPONENT_ABI_VERSION.len())
+        .position(|window| window == COMPONENT_ABI_VERSION.as_bytes())
+        .expect("component ABI in index");
+    encoded[offset..offset + COMPONENT_ABI_VERSION.len()].copy_from_slice(b"0.5.0");
+    let report = compatibility_report(&encoded);
+    assert!(!report.compatible);
+    assert_eq!(report.status, TapCompatibilityStatus::Invalid);
+    assert!(report.issues.iter().any(|issue| issue.contains("unsupported component ABI version")));
+}
+
+#[test]
 fn tap_v1_payloads_remain_readable() {
     let mut manifest = sample_manifest();
     manifest.format_version = 1;

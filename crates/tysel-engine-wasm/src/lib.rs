@@ -14,6 +14,7 @@ use tysel_capability::{
     CapabilityDescriptor, CapabilityId, CapabilityImport, CapabilityRegistry,
     CapabilityRegistryError, TrustMode,
 };
+pub use tysel_package::COMPONENT_ABI_VERSION;
 use wasmtime::component::types::{ComponentItem, Type};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Precompiled, Store, StoreLimits, StoreLimitsBuilder};
@@ -35,7 +36,6 @@ pub const MAX_COMPONENT_ERROR_BYTES: usize = 4 * 1024;
 pub const MAX_COMPONENT_INPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_COMPONENT_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_AOT_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
-pub const COMPONENT_ABI_VERSION: &str = "0.4.0";
 pub const WASMTIME_VERSION: &str = "32.0.1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
