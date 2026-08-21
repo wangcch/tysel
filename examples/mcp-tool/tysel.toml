@@ -1,0 +1,24 @@
+[app]
+name = "mcp-tool"
+entry = "src/index.ts"
+profile = "isolated"
+
+[server]
+listen = "127.0.0.1:0"
+http1 = true
+http2 = false
+websocket = false
+
+[permissions]
+secrets = ["OPENAI_API_KEY"]
+fetch = ["api.example.com"]
+
+[limits]
+memory_mb = 32
+cpu_ms_per_turn = 50
+request_timeout_ms = 5000
+max_in_flight = 32
+max_response_mb = 1
+
+[observability]
+logs = "json"
