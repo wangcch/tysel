@@ -1,5 +1,7 @@
 # Getting started
 
+Put `tysel` on your `PATH` first. See [Install](install.md). After that, every command below is `tysel`; you do not need `cargo run -p tysel-cli`.
+
 ## Create an application
 
 ```bash

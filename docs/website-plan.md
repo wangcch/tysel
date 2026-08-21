@@ -611,7 +611,14 @@ out of production copy until matching evidence is checked in.
 
 ## 14. Open decisions before visual implementation
 
-1. Confirm the initial installation and binary distribution method.
+1. ~~Confirm the initial installation and binary distribution method.~~ **Decided:**
+   developer install is the three binaries `tysel`, `tysel-service`, and
+   `tysel-worker` in one directory (default `~/.tysel/bin`), verified by SHA-256,
+   later by the existing release signatures. The public hero is
+   `curl -fsSL https://tysel.dev/install.sh | sh` only after Darwin archives exist.
+   Production still ships one application executable and must not require a Tysel
+   runtime package (`roadmap.md` §7.3). `cargo install` and `npm i -g` are not
+   product distribution. See [Install](install.md).
 2. Confirm the public release label and documentation versioning policy.
 3. Confirm the public GitHub repository URL and release artifact locations.
 4. Decide whether Chinese is launch scope. Recommendation: launch canonical English

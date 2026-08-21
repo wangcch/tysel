@@ -47,13 +47,28 @@ benchmarks/      Performance harnesses
 
 ## Quick start
 
+Install the developer toolchain so `tysel`, `tysel-service`, and `tysel-worker`
+sit on `PATH` together ([Install](docs/install.md)). After that, use `tysel`
+directly:
+
+```bash
+tysel init hello-tysel
+cd hello-tysel
+tysel check
+tysel test
+tysel dev
+```
+
+This repository still needs Rust, Node, and pnpm to *build Tysel from source*.
+That is the contributor path, not the application path:
+
 ```bash
 pnpm install
 cargo test --workspace
-cargo run -p tysel-cli -- --help
-cargo run -p tysel-cli -- check --manifest examples/hello-service/tysel.toml
-cargo run -p tysel-cli -- dev --manifest examples/hello-service/tysel.toml
-cargo run -p tysel-cli -- run --manifest examples/hello-service/tysel.toml
+cargo build --release -p tysel-cli -p tysel-runtime -p tysel-isolate
+export PATH="$PWD/target/release:$PATH"
+tysel check --manifest examples/hello-service/tysel.toml
+tysel dev --manifest examples/hello-service/tysel.toml
 ```
 
 Minimal application:
@@ -80,26 +95,32 @@ run the complete demonstration with:
 bash examples/durable-agent/demo.sh
 ```
 
+## Isolation and MCP examples
+
+- [Isolated Plugin](examples/isolated-plugin/README.md) demonstrates denied
+  network/filesystem capabilities and worker crash recovery.
+- [Isolated MCP Tool](examples/mcp-tool/README.md) demonstrates MCP discovery,
+  input validation, stdio calls, and opaque secret handles.
+
 `tysel build` copies a `tysel-service` stub and appends a TAP trailer. It looks for the stub in `--stub`, `TYSEL_STUB`, next to the `tysel` binary, `target/release` or `target/debug`, then `PATH`. `--target` must match this host; cross-compilation is not implemented. `--release` searches for a release stub. The command type-checks when TypeScript is present, then prints bundle size, capabilities, and the output path.
 
 ```bash
-cargo build -p tysel-runtime --bin tysel-service --release
-cargo run -p tysel-cli -- build --manifest examples/hello-service/tysel.toml
+tysel build --manifest examples/hello-service/tysel.toml --release
 ```
 
 ## Commands
 
 ```bash
-cargo run -p tysel-cli -- check --manifest tysel.toml
-cargo run -p tysel-cli -- compat
-cargo run -p tysel-cli -- init ./my-service
-cargo run -p tysel-cli -- test --manifest tysel.toml
-cargo run -p tysel-cli -- dev --manifest tysel.toml
-cargo run -p tysel-cli -- run --manifest tysel.toml
-cargo run -p tysel-cli -- inspect --manifest tysel.toml
-cargo run -p tysel-cli -- build --manifest tysel.toml
-cargo run -p tysel-cli -- image --manifest tysel.toml --context-only
-cargo run -p tysel-cli -- bench all --format json --allow-unavailable
+tysel check --manifest tysel.toml
+tysel compat
+tysel init ./my-service
+tysel test --manifest tysel.toml
+tysel dev --manifest tysel.toml
+tysel run --manifest tysel.toml
+tysel inspect --manifest tysel.toml
+tysel build --manifest tysel.toml
+tysel image --manifest tysel.toml --context-only
+tysel bench all --format json
 ```
 
 `tysel check` loads the manifest, bundles the entry, and runs `tsc --noEmit` when a `tsconfig.json` and TypeScript are present. Missing TypeScript is skipped, not a failure.
