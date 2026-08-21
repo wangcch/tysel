@@ -112,6 +112,12 @@ publishing the new active key during an overlap window, re-signing retained
 artifacts, marking the old key retired with a short deadline, and finally
 removing or revoking it. Compromise requires `revoked`, not `retired`.
 
+Deterministic multi-architecture archives use the same keys and trust policy
+through `tysel release sign-artifact <archive> --target <target> --key <path>`
+and `tysel release verify-artifact <archive> --trust <policy.json>`. The target
+and exact archive SHA-256 digest are domain-separated from Evidence Index
+signatures, preventing either signature type from being replayed as the other.
+
 Generate a seed with a cryptographic random source and immediately restrict it,
 for example `openssl rand -hex 32 > release.key` followed by `chmod 600
 release.key`. The trust policy is itself a deployment trust anchor: distribute
@@ -148,3 +154,38 @@ Crashing inputs are promoted to named corpus fixtures only after confirming
 that they contain no secret or customer data. The root and fuzz lockfiles must
 both be regenerated after security-driven dependency upgrades, and the runtime
 SBOM inventory must be regenerated before the change is accepted.
+
+## M5.6 Benchmark, reproducibility, and multi-architecture release
+
+The release toolchain is pinned to Rust 1.97.1. Linux x86-64 and arm64 run the
+same formatting, inventory, Clippy, workspace-test, packaging, reproducibility,
+and benchmark gates. Each target is built twice into independent Cargo target
+directories with the source path remapped, the linker build ID disabled, and
+`SOURCE_DATE_EPOCH` derived from the source commit. Both trees package the same
+hello-service acceptance artifact and all of its release sidecars before a
+stable-order, stable-owner, stable-mtime archive is compressed without a gzip
+timestamp.
+
+`tysel release reproduce` rejects unequal archive bytes and writes a strict
+machine-readable proof containing the source commit, canonical target, exact
+toolchain, both build commands, archive digest and size, `Cargo.lock` digest,
+and embedded runtime-inventory digest. The supplied lockfile must match the one
+bound into the runtime inventory. Only `linux-x64` and `linux-arm64` are valid
+production targets, and ambiguous, multiline, oversized, or unknown provenance
+fails closed. `tysel release verify-reproducibility` re-hashes the archive,
+lockfile, and embedded inventory and validates both recorded build entries.
+
+The benchmark artifact records all 11 cold-start samples, p50 and gate result,
+idle PSS, binary size, CPU, OS, architecture, command, source commit, and
+artifact digest. Tagged builds publish both target archives, checksum files,
+detached Ed25519 signatures, reproducibility proofs, and benchmark evidence.
+The signing key is mandatory for the release workflow and is supplied only as
+the protected `TYSEL_RELEASE_KEY_HEX` secret; the CLI still receives a
+permission-restricted temporary key file. The archives also retain a packaged
+hello-service and its compatibility, SBOM, license, checksum, and Release
+Evidence Index sidecars as an executable acceptance fixture. Signatures are
+created after deterministic comparison; signing timestamps are deliberately
+excluded from the archive and reproducibility comparison.
+Both the archive and its reproducibility proof receive detached signatures, so
+the build commands and source provenance cannot be replaced independently of
+the published bytes.

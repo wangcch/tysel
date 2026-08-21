@@ -1,0 +1,161 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src -C link-arg=-Wl,--build-id=none
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux-x64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tysel
+          POSTGRES_PASSWORD: tysel
+          POSTGRES_DB: tysel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tysel -d tysel"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TYSEL_POSTGRES_TEST_URL: postgres://tysel:tysel@127.0.0.1:5432/tysel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> target
+      - name: Record deterministic build epoch
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+      - name: Run production acceptance suite
+        run: |
+          cargo fmt --all -- --check
+          cargo run --locked -p tysel-build --bin tysel-supply-chain -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace --all-targets
+      - name: Build two independent release trees
+        run: |
+          CARGO_TARGET_DIR=target/repro-1 cargo build --locked --release -p tysel-cli -p tysel-runtime -p tysel-isolate
+          CARGO_TARGET_DIR=target/repro-2 cargo build --locked --release -p tysel-cli -p tysel-runtime -p tysel-isolate
+      - name: Package deterministic release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME:-snapshot}"
+          version="${version//\//-}"
+          archive="tysel-${version}-${{ matrix.target }}.tar.gz"
+          for ordinal in 1 2; do
+            root="target/archive-${ordinal}/tysel-${version}-${{ matrix.target }}"
+            acceptance="${root}/share/acceptance"
+            mkdir -p "${root}/bin" "$acceptance" "target/release-${ordinal}"
+            install -m 755 "target/repro-${ordinal}/release/tysel" "${root}/bin/tysel"
+            install -m 755 "target/repro-${ordinal}/release/tysel-service" "${root}/bin/tysel-service"
+            install -m 755 "target/repro-${ordinal}/release/tysel-worker" "${root}/bin/tysel-worker"
+            install -m 644 LICENSE README.md "$root"
+            "target/repro-${ordinal}/release/tysel" build \
+              --manifest examples/hello-service/tysel.toml \
+              --stub "target/repro-${ordinal}/release/tysel-service" \
+              --output "target/release-${ordinal}/hello-service" \
+              --release
+            cp "target/release-${ordinal}/hello-service"* "$acceptance"
+            tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+              -C "target/archive-${ordinal}" -cf "target/${archive%.gz}.${ordinal}.tar" \
+              "tysel-${version}-${{ matrix.target }}"
+            gzip -n -9 "target/${archive%.gz}.${ordinal}.tar"
+          done
+          mkdir -p target/release-output
+          mv "target/${archive%.gz}.1.tar.gz" "target/release-output/${archive}"
+          mv "target/${archive%.gz}.2.tar.gz" "target/${archive}.second"
+          first_command="SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} CARGO_TARGET_DIR=target/repro-1 cargo build --locked --release -p tysel-cli -p tysel-runtime -p tysel-isolate; package ordinal 1"
+          second_command="SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} CARGO_TARGET_DIR=target/repro-2 cargo build --locked --release -p tysel-cli -p tysel-runtime -p tysel-isolate; package ordinal 2"
+          target/repro-1/release/tysel release reproduce \
+            "target/release-output/${archive}" "target/${archive}.second" \
+            --source-commit "$GITHUB_SHA" \
+            --target "${{ matrix.target }}" \
+            --toolchain "$(rustc --version)" \
+            --lockfile Cargo.lock \
+            --command "$first_command" \
+            --command "$second_command" \
+            --output "target/release-output/${archive}.repro.json"
+          target/repro-1/release/tysel release verify-reproducibility \
+            "target/release-output/${archive}" \
+            --evidence "target/release-output/${archive}.repro.json" \
+            --lockfile Cargo.lock
+          sha256sum "target/release-output/${archive}" | awk '{print $1}' \
+            > "target/release-output/${archive}.sha256"
+      - name: Record target benchmark evidence
+        env:
+          TYSEL_STUB: target/repro-1/release/tysel-service
+        run: >-
+          cargo run --locked -p tysel-testkit --bin tysel-bench --release --
+          --evidence target/release-output/benchmark-evidence-${{ matrix.target }}.json
+          --source-commit ${{ github.sha }}
+          --command "cargo run --locked -p tysel-testkit --bin tysel-bench --release"
+      - name: Sign deterministic release archive
+        shell: bash
+        env:
+          TYSEL_RELEASE_KEY_HEX: ${{ secrets.TYSEL_RELEASE_KEY_HEX }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TYSEL_RELEASE_KEY_HEX" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "TYSEL_RELEASE_KEY_HEX must contain one canonical 32-byte Ed25519 seed" >&2
+            exit 1
+          fi
+          key_path="${RUNNER_TEMP}/tysel-release.key"
+          trap 'rm -f "$key_path"' EXIT
+          install -m 600 /dev/null "$key_path"
+          printf '%s\n' "$TYSEL_RELEASE_KEY_HEX" > "$key_path"
+          version="${GITHUB_REF_NAME:-snapshot}"
+          version="${version//\//-}"
+          archive="target/release-output/tysel-${version}-${{ matrix.target }}.tar.gz"
+          target/repro-1/release/tysel release sign-artifact "$archive" \
+            --target "${{ matrix.target }}" --key "$key_path"
+          target/repro-1/release/tysel release sign-artifact "${archive}.repro.json" \
+            --target "${{ matrix.target }}" --key "$key_path"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: target/release-output/*
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: target/publish
+          merge-multiple: true
+      - name: Publish immutable tag assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" target/publish/* --verify-tag --generate-notes

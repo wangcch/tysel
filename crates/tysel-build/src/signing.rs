@@ -10,11 +10,14 @@ use tysel_package::bundle_hash;
 use crate::evidence::{sidecar_path, verify_release_evidence, write_json_atomically};
 
 pub const RELEASE_SIGNATURE_VERSION: u32 = 1;
+pub const RELEASE_ARTIFACT_SIGNATURE_VERSION: u32 = 1;
 pub const TRUST_POLICY_VERSION: u32 = 1;
 const MAX_CLOCK_SKEW_SECONDS: u64 = 300;
 const MAX_POLICY_LIFETIME_SECONDS: u64 = 90 * 24 * 60 * 60;
 const MAX_SIGNING_DOCUMENT_BYTES: u64 = 1024 * 1024;
+const MAX_SIGNED_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 const SIGNATURE_DOMAIN: &[u8] = b"tysel-release-evidence-signature-v1\0";
+const ARTIFACT_SIGNATURE_DOMAIN: &[u8] = b"tysel-release-artifact-signature-v1\0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +27,18 @@ pub struct ReleaseSignature {
     pub key_id: String,
     pub issued_at_unix: u64,
     pub evidence_sha256: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseArtifactSignature {
+    pub signature_version: u32,
+    pub algorithm: String,
+    pub key_id: String,
+    pub issued_at_unix: u64,
+    pub target: String,
+    pub artifact_sha256: String,
     pub signature: String,
 }
 
@@ -169,6 +184,75 @@ pub fn verify_release_signature(
     Ok(signature_document)
 }
 
+pub fn sign_release_artifact(
+    artifact_path: impl AsRef<Path>,
+    target: &str,
+    private_key_path: impl AsRef<Path>,
+    issued_at_unix: u64,
+) -> Result<PathBuf> {
+    validate_release_target(target)?;
+    let artifact_path = artifact_path.as_ref();
+    let artifact = read_bounded_artifact(artifact_path)?;
+    let artifact_sha256 = bundle_hash(&artifact);
+    let signing_key = read_signing_key(private_key_path.as_ref())?;
+    let public_key = signing_key.verifying_key().to_bytes();
+    let key_id = bundle_hash(&public_key);
+    let message = artifact_signature_message(&key_id, issued_at_unix, target, &artifact_sha256);
+    let signature = signing_key.sign(&message);
+    let document = ReleaseArtifactSignature {
+        signature_version: RELEASE_ARTIFACT_SIGNATURE_VERSION,
+        algorithm: "ed25519".into(),
+        key_id,
+        issued_at_unix,
+        target: target.into(),
+        artifact_sha256,
+        signature: encode_hex(&signature.to_bytes()),
+    };
+    let signature_path = sidecar_path(artifact_path, ".sig.json");
+    write_json_atomically(&signature_path, &document)?;
+    Ok(signature_path)
+}
+
+pub fn verify_release_artifact_signature(
+    artifact_path: impl AsRef<Path>,
+    trust_policy_path: impl AsRef<Path>,
+    now_unix: u64,
+) -> Result<ReleaseArtifactSignature> {
+    let artifact_path = artifact_path.as_ref();
+    let document: ReleaseArtifactSignature = read_json(&sidecar_path(artifact_path, ".sig.json"))?;
+    ensure!(
+        document.signature_version == RELEASE_ARTIFACT_SIGNATURE_VERSION,
+        "unsupported release artifact signature version"
+    );
+    ensure!(document.algorithm == "ed25519", "unsupported signature algorithm");
+    validate_release_target(&document.target)?;
+    ensure!(
+        document.issued_at_unix <= now_unix.saturating_add(MAX_CLOCK_SKEW_SECONDS),
+        "release artifact signature is from the future"
+    );
+    let artifact = read_bounded_artifact(artifact_path)?;
+    ensure!(
+        bundle_hash(&artifact) == document.artifact_sha256,
+        "release artifact signature does not bind this artifact"
+    );
+    let policy: TrustPolicy = read_json(trust_policy_path.as_ref())?;
+    let trusted =
+        trusted_release_key(&policy, &document.key_id, document.issued_at_unix, now_unix)?;
+    let public_key = VerifyingKey::from_bytes(&decode_hex::<32>(&trusted.public_key)?)
+        .context("trusted Ed25519 public key is invalid")?;
+    let signature = Signature::from_bytes(&decode_hex::<64>(&document.signature)?);
+    let message = artifact_signature_message(
+        &document.key_id,
+        document.issued_at_unix,
+        &document.target,
+        &document.artifact_sha256,
+    );
+    public_key
+        .verify_strict(&message, &signature)
+        .context("release artifact signature verification failed")?;
+    Ok(document)
+}
+
 pub fn validate_trust_policy(policy: &TrustPolicy) -> Result<()> {
     ensure!(policy.policy_version == TRUST_POLICY_VERSION, "unsupported trust policy version");
     ensure!(policy.expires_at_unix > policy.issued_at_unix, "trust policy validity is empty");
@@ -239,6 +323,60 @@ fn signature_message(key_id: &str, issued_at_unix: u64, evidence_sha256: &str) -
     message
 }
 
+fn artifact_signature_message(
+    key_id: &str,
+    issued_at_unix: u64,
+    target: &str,
+    artifact_sha256: &str,
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(192);
+    message.extend_from_slice(ARTIFACT_SIGNATURE_DOMAIN);
+    message.extend_from_slice(key_id.as_bytes());
+    message.push(0);
+    message.extend_from_slice(issued_at_unix.to_string().as_bytes());
+    message.push(0);
+    message.extend_from_slice(target.as_bytes());
+    message.push(0);
+    message.extend_from_slice(artifact_sha256.as_bytes());
+    message
+}
+
+fn validate_release_target(target: &str) -> Result<()> {
+    ensure!(matches!(target, "linux-x64" | "linux-arm64"), "unsupported production release target");
+    Ok(())
+}
+
+fn trusted_release_key<'a>(
+    policy: &'a TrustPolicy,
+    key_id: &str,
+    issued_at_unix: u64,
+    now_unix: u64,
+) -> Result<&'a TrustedReleaseKey> {
+    validate_trust_policy(policy)?;
+    ensure!(
+        policy.issued_at_unix <= now_unix.saturating_add(MAX_CLOCK_SKEW_SECONDS),
+        "release trust policy is from the future"
+    );
+    ensure!(now_unix <= policy.expires_at_unix, "release trust policy has expired");
+    ensure!(
+        issued_at_unix <= policy.expires_at_unix,
+        "release signature postdates the trust policy"
+    );
+    let trusted = policy
+        .keys
+        .iter()
+        .find(|key| key.key_id == key_id)
+        .context("release signature key is not trusted")?;
+    ensure!(trusted.status != ReleaseKeyStatus::Revoked, "release signature key is revoked");
+    ensure!(now_unix >= trusted.valid_from_unix, "release key is not active yet");
+    if let Some(valid_until) = trusted.valid_until_unix {
+        ensure!(now_unix <= valid_until, "release key validity has expired");
+        ensure!(issued_at_unix <= valid_until, "release signature postdates key validity");
+    }
+    ensure!(issued_at_unix >= trusted.valid_from_unix, "release signature predates key validity");
+    Ok(trusted)
+}
+
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
     let bytes = read_bounded(path)?;
     serde_json::from_slice(&bytes).with_context(|| format!("invalid JSON in {}", path.display()))
@@ -252,6 +390,15 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>> {
         "signing document {} is oversized",
         path.display()
     );
+    fs::read(path).with_context(|| format!("failed to read {}", path.display()))
+}
+
+fn read_bounded_artifact(path: &Path) -> Result<Vec<u8>> {
+    let metadata =
+        fs::metadata(path).with_context(|| format!("failed to inspect {}", path.display()))?;
+    ensure!(metadata.is_file(), "release artifact is not a regular file");
+    ensure!(metadata.len() > 0, "release artifact is empty");
+    ensure!(metadata.len() <= MAX_SIGNED_ARTIFACT_BYTES, "release artifact is oversized");
     fs::read(path).with_context(|| format!("failed to read {}", path.display()))
 }
 
@@ -372,6 +519,44 @@ mod tests {
         policy.keys[0].key_id = bundle_hash(&decode_hex::<32>(&policy.keys[0].public_key).unwrap());
         policy.expires_at_unix = MAX_POLICY_LIFETIME_SECONDS + 1;
         assert!(validate_trust_policy(&policy).unwrap_err().to_string().contains("90 days"));
+    }
+
+    #[test]
+    fn signs_and_verifies_distribution_artifacts() {
+        let root = temp_root("artifact");
+        fs::create_dir_all(&root).unwrap();
+        let artifact = root.join("tysel-linux-x64.tar.gz");
+        fs::write(&artifact, b"deterministic release archive").unwrap();
+        let key_path = write_key(&root, [11; 32]);
+        let key_info = release_key_info(&key_path).unwrap();
+        let trust_path = root.join("trust.json");
+        write_policy(
+            &trust_path,
+            &TrustPolicy {
+                policy_version: TRUST_POLICY_VERSION,
+                issued_at_unix: 0,
+                expires_at_unix: 10_000,
+                keys: vec![TrustedReleaseKey {
+                    key_id: key_info.key_id,
+                    algorithm: key_info.algorithm,
+                    public_key: key_info.public_key,
+                    status: ReleaseKeyStatus::Active,
+                    valid_from_unix: 0,
+                    valid_until_unix: None,
+                }],
+            },
+        );
+
+        sign_release_artifact(&artifact, "linux-x64", &key_path, 1_000).unwrap();
+        let signature = verify_release_artifact_signature(&artifact, &trust_path, 1_000).unwrap();
+        assert_eq!(signature.target, "linux-x64");
+        fs::write(&artifact, b"tampered archive").unwrap();
+        assert!(
+            verify_release_artifact_signature(&artifact, &trust_path, 1_000)
+                .unwrap_err()
+                .to_string()
+                .contains("does not bind")
+        );
     }
 
     #[cfg(unix)]

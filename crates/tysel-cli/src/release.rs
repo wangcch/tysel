@@ -23,6 +23,45 @@ pub enum ReleaseCommand {
         #[arg(long)]
         key: PathBuf,
     },
+    /// Compare two release archives and emit deterministic reproducibility evidence.
+    Reproduce {
+        first: PathBuf,
+        second: PathBuf,
+        #[arg(long)]
+        source_commit: String,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        toolchain: String,
+        #[arg(long, default_value = "Cargo.lock")]
+        lockfile: PathBuf,
+        #[arg(long = "command", required = true)]
+        commands: Vec<String>,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Verify one release archive against reproducibility evidence.
+    VerifyReproducibility {
+        artifact: PathBuf,
+        #[arg(long)]
+        evidence: PathBuf,
+        #[arg(long, default_value = "Cargo.lock")]
+        lockfile: PathBuf,
+    },
+    /// Sign a deterministic multi-architecture release archive.
+    SignArtifact {
+        artifact: PathBuf,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        key: PathBuf,
+    },
+    /// Verify a release archive signature against a trust policy.
+    VerifyArtifact {
+        artifact: PathBuf,
+        #[arg(long)]
+        trust: PathBuf,
+    },
 }
 
 pub fn run(command: ReleaseCommand) -> Result<()> {
@@ -39,6 +78,48 @@ pub fn run(command: ReleaseCommand) -> Result<()> {
         ReleaseCommand::KeyInfo { key } => {
             let info = tysel_build::release_key_info(key)?;
             println!("{}", serde_json::to_string_pretty(&info)?);
+        }
+        ReleaseCommand::Reproduce {
+            first,
+            second,
+            source_commit,
+            target,
+            toolchain,
+            lockfile,
+            commands,
+            output,
+        } => {
+            let evidence = tysel_build::compare_reproducible_builds(
+                first,
+                second,
+                &source_commit,
+                &target,
+                &toolchain,
+                &commands,
+                lockfile,
+            )?;
+            let output = tysel_build::write_reproducible_build_evidence(output, &evidence)?;
+            println!("Reproducible      {}", evidence.artifact.sha256);
+            println!("Evidence          {}", output.display());
+        }
+        ReleaseCommand::VerifyReproducibility { artifact, evidence, lockfile } => {
+            let evidence =
+                tysel_build::verify_reproducible_build_evidence(&artifact, evidence, lockfile)?;
+            println!("Verified         {}", artifact.display());
+            println!("Target           {}", evidence.target);
+            println!("Commit           {}", evidence.source_commit);
+        }
+        ReleaseCommand::SignArtifact { artifact, target, key } => {
+            let signature =
+                tysel_build::sign_release_artifact(&artifact, &target, key, now_unix()?)?;
+            println!("Signature        {}", signature.display());
+        }
+        ReleaseCommand::VerifyArtifact { artifact, trust } => {
+            let signature =
+                tysel_build::verify_release_artifact_signature(&artifact, trust, now_unix()?)?;
+            println!("Verified         {}", artifact.display());
+            println!("Target           {}", signature.target);
+            println!("Key ID           {}", signature.key_id);
         }
     }
     Ok(())

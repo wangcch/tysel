@@ -189,6 +189,37 @@ fn release_commands_sign_and_verify_against_a_trust_policy() {
         .unwrap();
     assert!(verify.status.success(), "{}", String::from_utf8_lossy(&verify.stderr));
     assert!(String::from_utf8_lossy(&verify.stdout).contains("Verified"));
+
+    let sign_artifact = Command::new(cli_exe())
+        .args([
+            "release",
+            "sign-artifact",
+            artifact.to_str().unwrap(),
+            "--target",
+            "linux-x64",
+            "--key",
+            key.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(sign_artifact.status.success(), "{}", String::from_utf8_lossy(&sign_artifact.stderr));
+    assert!(sidecar(&artifact, ".sig.json").exists());
+    let verify_artifact = Command::new(cli_exe())
+        .args([
+            "release",
+            "verify-artifact",
+            artifact.to_str().unwrap(),
+            "--trust",
+            trust.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        verify_artifact.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verify_artifact.stderr)
+    );
+    assert!(String::from_utf8_lossy(&verify_artifact.stdout).contains("linux-x64"));
 }
 
 #[test]
