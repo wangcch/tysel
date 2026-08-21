@@ -247,6 +247,11 @@ impl Manifest {
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
+        if !self.server.http1 && !self.server.http2 {
+            return Err(ManifestError::Invalid(
+                "server must enable at least one of http1 or http2".into(),
+            ));
+        }
         if !matches!(self.app.profile.as_str(), "service" | "isolated" | "component") {
             return Err(ManifestError::Invalid(format!(
                 "unsupported app profile {:?}; expected service, isolated, or component",
@@ -405,6 +410,23 @@ entry = "app.wasm"
             .map(|index| format!("./data-{index}"))
             .collect();
         assert!(manifest.validate().unwrap_err().to_string().contains("more than"));
+    }
+
+    #[test]
+    fn rejects_server_with_no_http_protocol() {
+        let error = Manifest::parse(
+            r#"
+[app]
+name = "no-http"
+entry = "src/index.ts"
+
+[server]
+http1 = false
+http2 = false
+"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("at least one"));
     }
 
     #[test]

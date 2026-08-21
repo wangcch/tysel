@@ -202,6 +202,7 @@ fn run_worker(
         reactor.io.inbound.clear();
         reactor.io.ws_in.clear();
         reactor.io.ws_out.clear();
+        reactor.io.client_ws.clear();
         reactor.io.bind_request(0);
         let _ = context.with(|ctx| {
             let _ = host::reset_timers(&ctx);

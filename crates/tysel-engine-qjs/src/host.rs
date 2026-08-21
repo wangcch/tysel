@@ -41,6 +41,10 @@ fn install_inner(
     let io_ws_read = io.clone();
     let io_ws_send = io.clone();
     let io_ws_close = io.clone();
+    let io_ws_connect = io.clone();
+    let io_ws_client_read = io.clone();
+    let io_ws_client_send = io.clone();
+    let io_ws_client_close = io.clone();
     let io_sqlite_exec = io.clone();
     let io_sqlite_query = io.clone();
     let io_pg_exec = io.clone();
@@ -152,6 +156,20 @@ fn install_inner(
         )?,
     )?;
     tysel.set(
+        "_hmacVerify",
+        Function::new(
+            ctx.clone(),
+            |ctx,
+             algorithm: String,
+             key: TypedArray<u8>,
+             signature: TypedArray<u8>,
+             data: TypedArray<u8>| {
+                hmac_verify(&algorithm, key.as_ref(), signature.as_ref(), data.as_ref())
+                    .map_err(|err| Exception::throw_type(&ctx, &err))
+            },
+        )?,
+    )?;
+    tysel.set(
         "_durableStart",
         Function::new(ctx.clone(), |ctx, name: String, input_json: String| {
             crate::control::start_named(&name, &input_json)
@@ -181,6 +199,30 @@ fn install_inner(
         "_wsClose",
         Function::new(ctx.clone(), move |ctx| {
             submit(ctx, &io_ws_close, |id| IoRequest::WsClose { id })
+        })?,
+    )?;
+    tysel.set(
+        "_wsConnect",
+        Function::new(ctx.clone(), move |ctx, url: String| {
+            submit(ctx, &io_ws_connect, |id| IoRequest::WsConnect { id, url })
+        })?,
+    )?;
+    tysel.set(
+        "_wsClientRead",
+        Function::new(ctx.clone(), move |ctx| {
+            submit(ctx, &io_ws_client_read, |id| IoRequest::WsClientRead { id })
+        })?,
+    )?;
+    tysel.set(
+        "_wsClientSend",
+        Function::new(ctx.clone(), move |ctx, data: String| {
+            submit(ctx, &io_ws_client_send, |id| IoRequest::WsClientSend { id, data })
+        })?,
+    )?;
+    tysel.set(
+        "_wsClientClose",
+        Function::new(ctx.clone(), move |ctx| {
+            submit(ctx, &io_ws_client_close, |id| IoRequest::WsClientClose { id })
         })?,
     )?;
     tysel.set(
@@ -354,6 +396,72 @@ fn install_inner(
           })();
           return socket;
         };
+        class WebSocket {
+          static CONNECTING = 0;
+          static OPEN = 1;
+          static CLOSING = 2;
+          static CLOSED = 3;
+          constructor(url) {
+            this.url = String(url);
+            this.readyState = WebSocket.CONNECTING;
+            this.binaryType = "arraybuffer";
+            this.onopen = null;
+            this.onmessage = null;
+            this.onerror = null;
+            this.onclose = null;
+            this._listeners = { open: [], message: [], error: [], close: [] };
+            this.opened = tysel._wsConnect(this.url).then(() => {
+              this.readyState = WebSocket.OPEN;
+              this._dispatch("open", { type: "open", target: this });
+              this._readLoop();
+              return this;
+            }, (error) => {
+              this.readyState = WebSocket.CLOSED;
+              this._dispatch("error", { type: "error", error, target: this });
+              this._dispatch("close", { type: "close", code: 1006, reason: String(error), wasClean: false, target: this });
+              throw error;
+            });
+          }
+          addEventListener(type, listener) {
+            if (this._listeners[type] && typeof listener === "function") this._listeners[type].push(listener);
+          }
+          removeEventListener(type, listener) {
+            if (!this._listeners[type]) return;
+            this._listeners[type] = this._listeners[type].filter((item) => item !== listener);
+          }
+          send(data) {
+            if (this.readyState !== WebSocket.OPEN) throw new DOMException("WebSocket is not open", "InvalidStateError");
+            return tysel._wsClientSend(data == null ? "" : String(data));
+          }
+          async close() {
+            if (this.readyState === WebSocket.CLOSED || this.readyState === WebSocket.CLOSING) return;
+            this.readyState = WebSocket.CLOSING;
+            await tysel._wsClientClose();
+          }
+          _dispatch(type, event) {
+            const handler = this[`on${type}`];
+            if (typeof handler === "function") handler.call(this, event);
+            for (const listener of this._listeners[type]) listener.call(this, event);
+          }
+          async _readLoop() {
+            try {
+              while (this.readyState === WebSocket.OPEN) {
+                let data = await tysel._wsClientRead();
+                if (data == null) break;
+                if (Array.isArray(data)) data = Uint8Array.from(data).buffer;
+                this._dispatch("message", { type: "message", data, target: this });
+              }
+              const wasClean = this.readyState !== WebSocket.OPEN;
+              this.readyState = WebSocket.CLOSED;
+              this._dispatch("close", { type: "close", code: 1000, reason: "", wasClean, target: this });
+            } catch (error) {
+              this.readyState = WebSocket.CLOSED;
+              this._dispatch("error", { type: "error", error, target: this });
+              this._dispatch("close", { type: "close", code: 1006, reason: String(error), wasClean: false, target: this });
+            }
+          }
+        }
+        globalThis.WebSocket = WebSocket;
         globalThis.tysel.sqlite = {
           exec(sql, params) {
             return tysel._sqliteExec(String(sql), JSON.stringify(params == null ? [] : params));
@@ -752,6 +860,25 @@ fn finish_hmac<M: Mac>(
     let mut mac = mac.map_err(|err| err.to_string())?;
     mac.update(data);
     Ok(mac.finalize().into_bytes().to_vec())
+}
+
+fn hmac_verify(algorithm: &str, key: &[u8], signature: &[u8], data: &[u8]) -> Result<bool, String> {
+    match normalize_hash_name(algorithm) {
+        "SHA-256" => finish_hmac_verify(Hmac::<Sha256>::new_from_slice(key), signature, data),
+        "SHA-384" => finish_hmac_verify(Hmac::<Sha384>::new_from_slice(key), signature, data),
+        "SHA-512" => finish_hmac_verify(Hmac::<Sha512>::new_from_slice(key), signature, data),
+        _ => Err(format!("unsupported HMAC algorithm {algorithm}")),
+    }
+}
+
+fn finish_hmac_verify<M: Mac>(
+    mac: Result<M, hmac::digest::InvalidLength>,
+    signature: &[u8],
+    data: &[u8],
+) -> Result<bool, String> {
+    let mut mac = mac.map_err(|err| err.to_string())?;
+    mac.update(data);
+    Ok(mac.verify_slice(signature).is_ok())
 }
 
 fn normalize_hash_name(algorithm: &str) -> &str {

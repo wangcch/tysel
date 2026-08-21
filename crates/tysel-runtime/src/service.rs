@@ -22,7 +22,7 @@ use tysel_engine_wasm::{
 };
 use tysel_package::Tap;
 
-use crate::http::{AppIsolate, HttpError, serve_with_websocket, spawn_app_isolate};
+use crate::http::{AppIsolate, HttpError, serve_with_protocols, spawn_app_isolate};
 use crate::{DurablePlane, DurablePlaneError};
 #[cfg(unix)]
 use crate::{ModuleTaskService, ModuleTaskServiceError};
@@ -270,7 +270,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     #[cfg(unix)]
     if let Some(service) = task_service {
         tokio::select! {
-            result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => {
+            result = serve_with_protocols(listener, pool, tap.manifest.max_request_bytes, websocket, tap.manifest.http1, tap.manifest.http2) => {
                 let durable_shutdown = shutdown_durable(durable.as_ref()).await;
                 service.shutdown().await?;
                 durable_shutdown?;
@@ -292,7 +292,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         }
     } else {
         tokio::select! {
-            result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => {
+            result = serve_with_protocols(listener, pool, tap.manifest.max_request_bytes, websocket, tap.manifest.http1, tap.manifest.http2) => {
                 shutdown_durable(durable.as_ref()).await?;
                 result?;
             }
@@ -304,7 +304,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     }
     #[cfg(not(unix))]
     tokio::select! {
-        result = serve_with_websocket(listener, pool, tap.manifest.max_request_bytes, websocket) => {
+        result = serve_with_protocols(listener, pool, tap.manifest.max_request_bytes, websocket, tap.manifest.http1, tap.manifest.http2) => {
             shutdown_durable(durable.as_ref()).await?;
             result?;
         }

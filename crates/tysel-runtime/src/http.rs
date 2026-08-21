@@ -11,7 +11,8 @@ use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::body::{Body, Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
@@ -127,6 +128,8 @@ struct PoolState {
     isolate: AppIsolate,
     max_request_bytes: usize,
     websocket: bool,
+    http1: bool,
+    http2: bool,
     source_map: Option<Arc<SourceMap>>,
 }
 
@@ -149,11 +152,24 @@ impl SharedPool {
         websocket: bool,
         source_map: Option<Arc<SourceMap>>,
     ) -> Self {
+        Self::with_server_options(pool, max_request_bytes, websocket, true, false, source_map)
+    }
+
+    pub fn with_server_options(
+        pool: impl Into<AppIsolate>,
+        max_request_bytes: usize,
+        websocket: bool,
+        http1: bool,
+        http2: bool,
+        source_map: Option<Arc<SourceMap>>,
+    ) -> Self {
         Self {
             inner: Arc::new(RwLock::new(PoolState {
                 isolate: pool.into(),
                 max_request_bytes,
                 websocket,
+                http1,
+                http2,
                 source_map,
             })),
         }
@@ -179,11 +195,37 @@ impl SharedPool {
         websocket: bool,
         source_map: Option<Arc<SourceMap>>,
     ) {
+        self.replace_with_server_options(
+            pool,
+            max_request_bytes,
+            websocket,
+            true,
+            false,
+            source_map,
+        );
+    }
+
+    pub fn replace_with_server_options(
+        &self,
+        pool: impl Into<AppIsolate>,
+        max_request_bytes: usize,
+        websocket: bool,
+        http1: bool,
+        http2: bool,
+        source_map: Option<Arc<SourceMap>>,
+    ) {
         let previous = {
             let mut guard = self.inner.write().expect("pool lock");
             std::mem::replace(
                 &mut *guard,
-                PoolState { isolate: pool.into(), max_request_bytes, websocket, source_map },
+                PoolState {
+                    isolate: pool.into(),
+                    max_request_bytes,
+                    websocket,
+                    http1,
+                    http2,
+                    source_map,
+                },
             )
         };
         drop(previous);
@@ -196,6 +238,11 @@ impl SharedPool {
 
     pub fn websocket(&self) -> bool {
         self.inner.read().expect("pool lock").websocket
+    }
+
+    pub fn protocols(&self) -> (bool, bool) {
+        let guard = self.inner.read().expect("pool lock");
+        (guard.http1, guard.http2)
     }
 }
 
@@ -213,7 +260,22 @@ pub async fn serve_with_websocket(
     max_request_bytes: usize,
     websocket: bool,
 ) -> Result<(), HttpError> {
-    let pool = SharedPool::with_websocket(pool, max_request_bytes, websocket);
+    serve_with_protocols(listener, pool, max_request_bytes, websocket, true, false).await
+}
+
+pub async fn serve_with_protocols(
+    listener: TcpListener,
+    pool: impl Into<AppIsolate>,
+    max_request_bytes: usize,
+    websocket: bool,
+    http1: bool,
+    http2: bool,
+) -> Result<(), HttpError> {
+    if !http1 && !http2 {
+        return Err(HttpError::Hyper("at least one HTTP protocol must be enabled".into()));
+    }
+    let pool =
+        SharedPool::with_server_options(pool, max_request_bytes, websocket, http1, http2, None);
     loop {
         let (stream, _peer) = listener.accept().await?;
         handle_stream(stream, pool.clone());
@@ -222,6 +284,7 @@ pub async fn serve_with_websocket(
 
 pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
     tokio::spawn(async move {
+        let (http1, http2) = pool.protocols();
         let io = TokioIo::new(stream);
         let service = service_fn(move |request| {
             let pool = pool.clone();
@@ -250,11 +313,26 @@ pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
                 Ok::<_, Infallible>(response)
             }
         });
-        let _ = hyper::server::conn::http1::Builder::new()
-            .keep_alive(true)
-            .serve_connection(io, service)
-            .with_upgrades()
-            .await;
+        match (http1, http2) {
+            (true, true) => {
+                let _ = auto::Builder::new(TokioExecutor::new())
+                    .serve_connection_with_upgrades(io, service)
+                    .await;
+            }
+            (false, true) => {
+                let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                    .serve_connection(io, service)
+                    .await;
+            }
+            (true, false) => {
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .keep_alive(true)
+                    .serve_connection(io, service)
+                    .with_upgrades()
+                    .await;
+            }
+            (false, false) => {}
+        }
     });
 }
 
@@ -352,7 +430,9 @@ async fn dispatch_inner(
     {
         return Err(HttpError::BodyTooLarge(max_request_bytes));
     }
-    let upgrade = websocket_enabled && is_websocket_upgrade(&request);
+    let upgrade = websocket_enabled
+        && request.version() == hyper::Version::HTTP_11
+        && is_websocket_upgrade(&request);
     let ws_key = upgrade
         .then(|| {
             request

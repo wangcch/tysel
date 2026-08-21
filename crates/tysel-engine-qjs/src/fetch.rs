@@ -325,6 +325,19 @@ const BOOTSTRAP: &str = r##"
     timers.clear();
   };
 
+  class CryptoKey {
+    constructor(token, type, extractable, algorithm, usages) {
+      if (token !== cryptoKeyToken) throw new TypeError("Illegal constructor");
+      Object.defineProperties(this, {
+        type: { value: type, enumerable: true },
+        extractable: { value: extractable, enumerable: true },
+        algorithm: { value: Object.freeze(algorithm), enumerable: true },
+        usages: { value: Object.freeze(usages), enumerable: true },
+      });
+      Object.freeze(this);
+    }
+  }
+  globalThis.CryptoKey = CryptoKey;
   globalThis.crypto = {
     getRandomValues(typedArray) {
       if (typedArray == null || typedArray.buffer == null) {
@@ -343,42 +356,59 @@ const BOOTSTRAP: &str = r##"
     },
     subtle: {
       async digest(algorithm, data) {
-        const name = typeof algorithm === "string" ? algorithm : String(algorithm && algorithm.name || "");
+        const name = normalizeCryptoHash(algorithm);
         return tysel._digest(name, toCryptoBytes(data)).buffer;
       },
       async importKey(format, keyData, algorithm, extractable, keyUsages) {
         if (format !== "raw") throw new DOMException("only raw CryptoKeys are supported", "NotSupportedError");
         const algo = typeof algorithm === "string" ? { name: algorithm } : algorithm || {};
-        if (String(algo.name) !== "HMAC") throw new DOMException("only HMAC keys are supported", "NotSupportedError");
-        const hash = algo.hash && (algo.hash.name || algo.hash) || "SHA-256";
-        const bytes = toCryptoBytes(keyData);
-        const key = {
-          type: "secret",
-          extractable: Boolean(extractable),
-          algorithm: { name: "HMAC", hash: { name: String(hash) } },
-          usages: Array.from(keyUsages || []),
-        };
-        cryptoKeys.set(key, { hash: String(hash), bytes });
+        if (String(algo.name).toUpperCase() !== "HMAC") throw new DOMException("only HMAC keys are supported", "NotSupportedError");
+        const hash = normalizeCryptoHash(algo.hash || "SHA-256");
+        const usages = Array.from(keyUsages || [], String);
+        if (usages.some((usage) => usage !== "sign" && usage !== "verify")) {
+          throw new DOMException("HMAC keys only support sign and verify usages", "SyntaxError");
+        }
+        const bytes = new Uint8Array(toCryptoBytes(keyData));
+        // Ask the native implementation to validate the hash before returning a key.
+        tysel._digest(hash, new Uint8Array(0));
+        const key = new CryptoKey(
+          cryptoKeyToken,
+          "secret",
+          Boolean(extractable),
+          { name: "HMAC", hash: Object.freeze({ name: hash }), length: bytes.byteLength * 8 },
+          usages,
+        );
+        cryptoKeys.set(key, { hash, bytes });
         return key;
       },
       async sign(algorithm, key, data) {
         const rec = cryptoKeys.get(key);
         if (!rec) throw new TypeError("unknown CryptoKey");
-        const name = typeof algorithm === "string" ? algorithm : String(algorithm && algorithm.name || "HMAC");
-        if (name !== "HMAC") throw new DOMException("only HMAC signing is supported", "NotSupportedError");
+        const name = typeof algorithm === "string" ? algorithm : String(algorithm && algorithm.name || "");
+        if (name.toUpperCase() !== "HMAC") throw new DOMException("only HMAC signing is supported", "NotSupportedError");
+        if (!key.usages.includes("sign")) throw new DOMException("key does not allow signing", "InvalidAccessError");
         return tysel._hmac(rec.hash, rec.bytes, toCryptoBytes(data)).buffer;
       },
       async verify(algorithm, key, signature, data) {
-        const expected = new Uint8Array(await globalThis.crypto.subtle.sign(algorithm, key, data));
-        const actual = toCryptoBytes(signature);
-        if (expected.byteLength !== actual.byteLength) return false;
-        let diff = 0;
-        for (let i = 0; i < expected.byteLength; i++) diff |= expected[i] ^ actual[i];
-        return diff === 0;
+        const rec = cryptoKeys.get(key);
+        if (!rec) throw new TypeError("unknown CryptoKey");
+        const name = typeof algorithm === "string" ? algorithm : String(algorithm && algorithm.name || "");
+        if (name.toUpperCase() !== "HMAC") throw new DOMException("only HMAC verification is supported", "NotSupportedError");
+        if (!key.usages.includes("verify")) throw new DOMException("key does not allow verification", "InvalidAccessError");
+        return tysel._hmacVerify(rec.hash, rec.bytes, toCryptoBytes(signature), toCryptoBytes(data));
       },
     },
   };
+  const cryptoKeyToken = Object.freeze({});
   const cryptoKeys = new WeakMap();
+  function normalizeCryptoHash(algorithm) {
+    const raw = typeof algorithm === "string" ? algorithm : String(algorithm && algorithm.name || "");
+    const compact = raw.trim().toUpperCase().replace("-", "");
+    if (compact === "SHA256") return "SHA-256";
+    if (compact === "SHA384") return "SHA-384";
+    if (compact === "SHA512") return "SHA-512";
+    throw new DOMException(`unsupported digest algorithm ${raw}`, "NotSupportedError");
+  }
   function toCryptoBytes(data) {
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
     if (ArrayBuffer.isView(data)) {

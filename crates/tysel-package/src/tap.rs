@@ -52,6 +52,10 @@ pub struct PackageManifest {
     pub max_request_bytes: usize,
     #[serde(default)]
     pub websocket: bool,
+    #[serde(default = "default_true")]
+    pub http1: bool,
+    #[serde(default)]
+    pub http2: bool,
     #[serde(default)]
     pub sqlite_path: String,
     #[serde(default)]
@@ -73,6 +77,10 @@ pub fn default_max_request_bytes() -> usize {
 }
 
 fn default_json_logs() -> bool {
+    true
+}
+
+fn default_true() -> bool {
     true
 }
 

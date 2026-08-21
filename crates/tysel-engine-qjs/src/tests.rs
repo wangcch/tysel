@@ -858,6 +858,34 @@ fn crypto_subtle_digest_and_hmac_match_known_vectors() {
 }
 
 #[test]
+fn crypto_subtle_enforces_hmac_key_usages() {
+    let value = eval(
+        r#"(async () => {
+          const data = new TextEncoder().encode("payload");
+          const raw = new TextEncoder().encode("secret");
+          const signing = await crypto.subtle.importKey("raw", raw, { name: "hmac", hash: "sha256" }, false, ["sign"]);
+          const signature = new Uint8Array(await crypto.subtle.sign("hmac", signing, data));
+          signature[0] ^= 1;
+          const verifying = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+          const altered = await crypto.subtle.verify("HMAC", verifying, signature, data);
+          let denied = "";
+          try { await crypto.subtle.sign("HMAC", verifying, data); } catch (error) { denied = error.name; }
+          let invalid = "";
+          try { await crypto.subtle.importKey("raw", raw, "HMAC", false, ["encrypt"]); } catch (error) { invalid = error.name; }
+          return JSON.stringify({ altered, denied, invalid, cryptoKey: signing instanceof CryptoKey });
+        })()"#,
+        config(),
+    )
+    .expect("web crypto key semantics");
+    assert_eq!(
+        value,
+        Value::String(
+            r#"{"altered":false,"denied":"InvalidAccessError","invalid":"SyntaxError","cryptoKey":true}"#.into()
+        )
+    );
+}
+
+#[test]
 fn crypto_get_random_values_enforces_quota() {
     let value = eval(
         r#"(() => {
@@ -1515,6 +1543,36 @@ async fn accepted_websocket_echoes_text() {
     let echoed = from_js_rx.recv().await.expect("echo");
     assert_eq!(echoed, b"ping");
     drop(to_js_tx);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn outbound_websocket_echoes_text() {
+    use futures_util::{SinkExt, StreamExt};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind websocket");
+    let addr = listener.local_addr().expect("websocket address");
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept websocket");
+        let mut socket = tokio_tungstenite::accept_async(stream).await.expect("handshake");
+        if let Some(Ok(message)) = socket.next().await {
+            socket.send(message).await.expect("echo websocket message");
+        }
+        let _ = socket.close(None).await;
+    });
+
+    let source = format!(
+        r#"(async () => new Promise((resolve, reject) => {{
+            const socket = new WebSocket("ws://{addr}/echo");
+            socket.onopen = async () => {{ await socket.send("ping"); }};
+            socket.onmessage = async (event) => {{ await socket.close(); resolve(event.data); }};
+            socket.onerror = (event) => reject(event.error);
+        }}))()"#
+    );
+    let value = tokio::task::spawn_blocking(move || eval(&source, config()))
+        .await
+        .expect("join")
+        .expect("outbound websocket");
+    assert_eq!(value, Value::String("ping".into()));
 }
 
 fn serve_bytes(body: Bytes) -> SocketAddr {

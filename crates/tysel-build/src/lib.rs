@@ -149,6 +149,8 @@ fn package_manifest(manifest: &Manifest, runtime_version: &str) -> PackageManife
         bundle_hash: String::new(),
         max_request_bytes: (manifest.limits.max_request_mb as usize).saturating_mul(1024 * 1024),
         websocket: manifest.server.websocket,
+        http1: manifest.server.http1,
+        http2: manifest.server.http2,
         sqlite_path: if manifest.durable.store == "sqlite" {
             manifest.durable.path.clone()
         } else {

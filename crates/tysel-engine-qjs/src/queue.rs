@@ -3,6 +3,8 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::{SinkExt, StreamExt};
 use http_body_util::{BodyExt, Full};
 use hyper::Request;
 use hyper::body::Incoming;
@@ -11,6 +13,8 @@ use tokio::net::TcpStream;
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::{Mutex, mpsc};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tysel_engine::{InterruptReason, Value};
 use tysel_policy::Cap;
 
@@ -53,6 +57,10 @@ pub enum IoRequest {
     WsRead { id: OpId },
     WsSend { id: OpId, data: String },
     WsClose { id: OpId },
+    WsConnect { id: OpId, url: String },
+    WsClientRead { id: OpId },
+    WsClientSend { id: OpId, data: String },
+    WsClientClose { id: OpId },
     SqliteExec { id: OpId, sql: String, params_json: String },
     SqliteQuery { id: OpId, sql: String, params_json: String },
     PostgresExec { id: OpId, sql: String, params_json: String },
@@ -74,6 +82,10 @@ impl IoRequest {
             | Self::WsRead { id }
             | Self::WsSend { id, .. }
             | Self::WsClose { id }
+            | Self::WsConnect { id, .. }
+            | Self::WsClientRead { id }
+            | Self::WsClientSend { id, .. }
+            | Self::WsClientClose { id }
             | Self::SqliteExec { id, .. }
             | Self::SqliteQuery { id, .. }
             | Self::PostgresExec { id, .. }
@@ -91,7 +103,13 @@ impl IoRequest {
             Self::SecretRef { .. } => Cap::SecretRef,
             Self::ReadBody { .. } => Cap::ReadBody,
             Self::HttpGet { .. } | Self::HttpRead { .. } => Cap::Fetch,
-            Self::WsRead { .. } | Self::WsSend { .. } | Self::WsClose { .. } => Cap::WebSocket,
+            Self::WsRead { .. }
+            | Self::WsSend { .. }
+            | Self::WsClose { .. }
+            | Self::WsConnect { .. }
+            | Self::WsClientRead { .. }
+            | Self::WsClientSend { .. }
+            | Self::WsClientClose { .. } => Cap::WebSocket,
             Self::SqliteExec { .. } | Self::SqliteQuery { .. } => Cap::Sqlite,
             Self::PostgresExec { .. } | Self::PostgresQuery { .. } => Cap::Postgres,
             Self::FsRead { .. } | Self::FsWrite { .. } => Cap::Fs,
@@ -113,11 +131,15 @@ impl IoRequest {
             Self::SecretRef { .. } => Some(("secrets", "ref")),
             Self::WsSend { .. } => Some(("websocket", "send")),
             Self::WsClose { .. } => Some(("websocket", "close")),
+            Self::WsConnect { .. } => Some(("websocket", "connect")),
+            Self::WsClientSend { .. } => Some(("websocket", "client_send")),
+            Self::WsClientClose { .. } => Some(("websocket", "client_close")),
             Self::Sleep { .. }
             | Self::Echo { .. }
             | Self::ReadBody { .. }
             | Self::HttpRead { .. }
             | Self::WsRead { .. } => None,
+            Self::WsClientRead { .. } => None,
         }
     }
 }
@@ -197,6 +219,96 @@ impl SendSlot {
     }
 }
 
+type ClientSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type ClientSink = SplitSink<ClientSocket, Message>;
+type ClientStream = SplitStream<ClientSocket>;
+
+#[derive(Clone, Default)]
+pub struct ClientWebSocketSlot {
+    connect_guard: Arc<Mutex<()>>,
+    sink: Arc<Mutex<Option<ClientSink>>>,
+    stream: Arc<Mutex<Option<ClientStream>>>,
+}
+
+impl ClientWebSocketSlot {
+    pub fn clear(&self) {
+        *self.sink.blocking_lock() = None;
+        *self.stream.blocking_lock() = None;
+    }
+
+    async fn connect(
+        &self,
+        url: String,
+        cancel: &Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let _connect_guard = self.connect_guard.lock().await;
+        let uri: hyper::Uri =
+            url.parse().map_err(|err: hyper::http::uri::InvalidUri| err.to_string())?;
+        match uri.scheme_str() {
+            Some("ws" | "wss") => {}
+            _ => return Err("outbound WebSocket only supports ws and wss".into()),
+        }
+        let host = uri.host().ok_or("missing host")?;
+        crate::fetch_policy::host_permitted(host)?;
+        if self.sink.lock().await.is_some() {
+            return Err("an outbound WebSocket is already connected".into());
+        }
+        let (socket, _) = tokio::select! {
+            biased;
+            _ = cancelled(cancel, deadline) => return Err(interrupt_err(cancel, deadline)),
+            result = connect_async(url) => result.map_err(|err| err.to_string())?,
+        };
+        let (sink, stream) = socket.split();
+        *self.sink.lock().await = Some(sink);
+        *self.stream.lock().await = Some(stream);
+        Ok(())
+    }
+
+    async fn send(
+        &self,
+        data: String,
+        cancel: &Arc<AtomicBool>,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let mut sink = self.sink.lock().await;
+        let sink = sink.as_mut().ok_or("outbound WebSocket is not connected")?;
+        tokio::select! {
+            biased;
+            _ = cancelled(cancel, deadline) => Err(interrupt_err(cancel, deadline)),
+            result = sink.send(Message::Text(data.into())) => result.map_err(|err| err.to_string()),
+        }
+    }
+
+    async fn read(&self, cancel: &Arc<AtomicBool>, deadline: Instant) -> Result<Value, String> {
+        let mut stream = self.stream.lock().await;
+        let stream = stream.as_mut().ok_or("outbound WebSocket is not connected")?;
+        loop {
+            let message = tokio::select! {
+                biased;
+                _ = cancelled(cancel, deadline) => return Err(interrupt_err(cancel, deadline)),
+                result = stream.next() => result,
+            };
+            match message {
+                Some(Ok(Message::Text(text))) => return Ok(Value::String(text.to_string())),
+                Some(Ok(Message::Binary(bytes))) => return Ok(Value::Bytes(bytes.to_vec())),
+                Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
+                Some(Ok(Message::Close(_))) | None => return Ok(Value::Null),
+                Some(Err(err)) => return Err(err.to_string()),
+            }
+        }
+    }
+
+    async fn close(&self) -> Result<(), String> {
+        let mut sink = self.sink.lock().await;
+        if let Some(mut socket) = sink.take() {
+            socket.close().await.map_err(|err| err.to_string())?;
+        }
+        *self.stream.lock().await = None;
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct IoHandle {
     tx: UnboundedSender<IoWork>,
@@ -206,6 +318,7 @@ pub struct IoHandle {
     pub outbound: StreamSlot,
     pub ws_in: StreamSlot,
     pub ws_out: SendSlot,
+    pub client_ws: ClientWebSocketSlot,
 }
 
 /// One host I/O op plus the HTTP request id that submitted it.
@@ -237,12 +350,14 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
     let outbound = StreamSlot::new();
     let ws_in = StreamSlot::new();
     let ws_out = SendSlot::new();
+    let client_ws = ClientWebSocketSlot::default();
     let (req_tx, req_rx) = unbounded_channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let inbound_task = inbound.clone();
     let outbound_task = outbound.clone();
     let ws_in_task = ws_in.clone();
     let ws_out_task = ws_out.clone();
+    let client_ws_task = client_ws.clone();
     io_handle().spawn(async move {
         run_reactor(
             req_rx,
@@ -254,6 +369,7 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
                 outbound: outbound_task,
                 ws_in: ws_in_task,
                 ws_out: ws_out_task,
+                client_ws: client_ws_task,
             },
         )
         .await;
@@ -268,6 +384,7 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
             outbound,
             ws_in,
             ws_out,
+            client_ws,
         },
         completions: done_rx,
     }
@@ -292,6 +409,7 @@ pub fn open_bridge() -> (Reactor, UnboundedReceiver<IoWork>, std::sync::mpsc::Se
                 outbound: StreamSlot::new(),
                 ws_in: StreamSlot::new(),
                 ws_out: SendSlot::new(),
+                client_ws: ClientWebSocketSlot::default(),
             },
             completions: done_rx,
         },
@@ -305,6 +423,7 @@ struct IoSlots {
     outbound: StreamSlot,
     ws_in: StreamSlot,
     ws_out: SendSlot,
+    client_ws: ClientWebSocketSlot,
 }
 
 async fn run_reactor(
@@ -322,6 +441,7 @@ async fn run_reactor(
             outbound: slots.outbound.clone(),
             ws_in: slots.ws_in.clone(),
             ws_out: slots.ws_out.clone(),
+            client_ws: slots.client_ws.clone(),
         };
         tokio::spawn(async move {
             let completion = execute(work.request, work.request_id, cancel, deadline, slots).await;
@@ -380,6 +500,20 @@ async fn execute(
         IoRequest::WsClose { id } => {
             slots.ws_out.close().await;
             IoCompletion { id, result: Ok(Value::Null) }
+        }
+        IoRequest::WsConnect { id, url } => IoCompletion {
+            id,
+            result: slots.client_ws.connect(url, &cancel, deadline).await.map(|()| Value::Null),
+        },
+        IoRequest::WsClientRead { id } => {
+            IoCompletion { id, result: slots.client_ws.read(&cancel, deadline).await }
+        }
+        IoRequest::WsClientSend { id, data } => IoCompletion {
+            id,
+            result: slots.client_ws.send(data, &cancel, deadline).await.map(|()| Value::Null),
+        },
+        IoRequest::WsClientClose { id } => {
+            IoCompletion { id, result: slots.client_ws.close().await.map(|()| Value::Null) }
         }
         IoRequest::SqliteExec { id, sql, params_json } => {
             IoCompletion { id, result: sqlite_op(sql, params_json, false, cancel, deadline).await }

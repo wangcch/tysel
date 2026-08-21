@@ -544,6 +544,8 @@ mod tests {
                 bundle_hash: String::new(),
                 max_request_bytes: 16 * 1024 * 1024,
                 websocket: false,
+                http1: true,
+                http2: false,
                 sqlite_path: String::new(),
                 secret_names: Vec::new(),
                 fetch_hosts: Vec::new(),

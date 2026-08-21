@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "f6528a743acd715b4ccbe5ad69a38e358eb5299c25f55bb81e2d9ca642f5756e",
+  "cargo_lock_sha256": "53f9e61e8af2a094a1749b47b67912aefbf669af2530c4e60b1dfef17b325915",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -760,6 +760,14 @@
       "checksum": "b09cf3155332e944990140d967ff5eceb70df778b34f77d8075db46e4704e6d8"
     },
     {
+      "name": "fnv",
+      "version": "1.0.7",
+      "license": "Apache-2.0  OR  MIT",
+      "purl": "pkg:cargo/fnv@1.0.7",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+    },
+    {
       "name": "foldhash",
       "version": "0.1.5",
       "license": "Zlib",
@@ -926,6 +934,14 @@
       "purl": "pkg:cargo/gimli@0.32.3",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
+    },
+    {
+      "name": "h2",
+      "version": "0.4.18",
+      "license": "MIT",
+      "purl": "pkg:cargo/h2@0.4.18",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "839c0e8a181239723652be9062bb56ca5bf5f64011f73b623f6f4fc59086a228"
     },
     {
       "name": "halfbrown",
