@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use tysel_engine::{HttpRequest, Value};
@@ -119,7 +120,15 @@ fn kill_worker_recovers_on_next_http() {
     let (head, body) = supervisor.http(&request).expect("http");
     assert_eq!(head.status, 200);
     assert_eq!(body, b"ok");
-    supervisor.kill_worker().expect("kill");
+    let worker = supervisor.worker_pid().expect("worker pid");
+    // Exercise the real race: IPC can observe EOF before try_wait reports exit.
+    assert!(
+        Command::new("kill")
+            .args(["-KILL", &worker.to_string()])
+            .status()
+            .expect("kill worker")
+            .success()
+    );
     let (head, body) = supervisor.http(&request).expect("http after kill");
     assert_eq!(head.status, 200);
     assert_eq!(body, b"ok");

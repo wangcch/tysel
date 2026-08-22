@@ -404,7 +404,7 @@ fn collect_platform(checks: &mut Vec<Check>, target: Target) {
             status.lines().find(|line| line.starts_with("Seccomp:")).map(str::to_owned)
         });
         checks.push(match seccomp {
-            Some(value) => pass("platform.linux-seccomp", format!("{}", value.trim())),
+            Some(value) => pass("platform.linux-seccomp", value.trim().to_string()),
             None => warn(
                 "platform.linux-seccomp",
                 "seccomp status is unavailable",

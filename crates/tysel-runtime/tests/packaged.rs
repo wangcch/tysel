@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,6 +12,7 @@ use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 use tysel_package::{PackageManifest, PackagedComponent, Tap, identity_source_map};
 
 const HANDLER: &str = r#"
@@ -27,6 +28,7 @@ export default {
 };
 "#;
 static PACKAGE_IDS: AtomicU64 = AtomicU64::new(1);
+static PACKAGE_SEMAPHORE: Semaphore = Semaphore::const_new(1);
 
 const TYPESCRIPT: &str = r#"
 export default {
@@ -47,8 +49,9 @@ async fn unpackaged_stub_exits_without_payload() {
 
 #[tokio::test]
 async fn packaged_stub_serves_embedded_bundle() {
+    let _permit = PACKAGE_SEMAPHORE.acquire().await.expect("package semaphore");
     let packaged = package_stub();
-    let mut child = Command::new(&packaged)
+    let mut child = Command::new(packaged.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
@@ -66,13 +69,15 @@ async fn packaged_stub_serves_embedded_bundle() {
     assert!(body.contains("Hello from Tysel"));
     assert!(body.contains("\"path\":\"/hello\""));
     assert!(body.contains("\"packaged\":true"));
+    child.kill().await.expect("stop packaged stub");
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn packaged_stub_exits_cleanly_on_sigterm() {
+    let _permit = PACKAGE_SEMAPHORE.acquire().await.expect("package semaphore");
     let packaged = package_stub();
-    let mut child = Command::new(&packaged)
+    let mut child = Command::new(packaged.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
@@ -97,8 +102,9 @@ async fn packaged_stub_exits_cleanly_on_sigterm() {
 
 #[tokio::test]
 async fn packaged_stub_invokes_embedded_component_over_stdio() {
+    let _permit = PACKAGE_SEMAPHORE.acquire().await.expect("package semaphore");
     let packaged = package_component_stub();
-    let mut child = Command::new(&packaged)
+    let mut child = Command::new(packaged.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -167,7 +173,7 @@ fn stub_exe() -> PathBuf {
     candidate
 }
 
-fn package_stub() -> PathBuf {
+fn package_stub() -> PackagedExecutable {
     let stub = std::fs::read(stub_exe()).expect("read stub");
     let map = identity_source_map("src/index.ts", TYPESCRIPT).expect("source map");
     let tap = Tap::new(
@@ -205,21 +211,21 @@ fn package_stub() -> PathBuf {
     let package_id = PACKAGE_IDS.fetch_add(1, Ordering::Relaxed);
     let dir =
         std::env::temp_dir().join(format!("tysel-packaged-{}-{package_id}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let output = dir.join("hello-service");
+    let packaged = PackagedExecutable::new(dir, "hello-service");
+    std::fs::create_dir_all(&packaged.root).unwrap();
     let bytes = tap.embed_into(&stub).expect("embed");
-    std::fs::write(&output, bytes).unwrap();
+    std::fs::write(packaged.path(), bytes).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(&output).unwrap().permissions();
+        let mut permissions = std::fs::metadata(packaged.path()).unwrap().permissions();
         permissions.set_mode(permissions.mode() | 0o755);
-        std::fs::set_permissions(&output, permissions).unwrap();
+        std::fs::set_permissions(packaged.path(), permissions).unwrap();
     }
-    output
+    packaged
 }
 
-fn package_component_stub() -> PathBuf {
+fn package_component_stub() -> PackagedExecutable {
     let stub = std::fs::read(stub_exe()).expect("read stub");
     let source = wat::parse_str(
         r#"
@@ -295,17 +301,38 @@ fn package_component_stub() -> PathBuf {
     let package_id = PACKAGE_IDS.fetch_add(1, Ordering::Relaxed);
     let dir =
         std::env::temp_dir().join(format!("tysel-component-{}-{package_id}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let output = dir.join("echo-component");
-    std::fs::write(&output, tap.embed_into(&stub).unwrap()).unwrap();
+    let packaged = PackagedExecutable::new(dir, "echo-component");
+    std::fs::create_dir_all(&packaged.root).unwrap();
+    std::fs::write(packaged.path(), tap.embed_into(&stub).unwrap()).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(&output).unwrap().permissions();
+        let mut permissions = std::fs::metadata(packaged.path()).unwrap().permissions();
         permissions.set_mode(permissions.mode() | 0o755);
-        std::fs::set_permissions(&output, permissions).unwrap();
+        std::fs::set_permissions(packaged.path(), permissions).unwrap();
     }
-    output
+    packaged
+}
+
+struct PackagedExecutable {
+    path: PathBuf,
+    root: PathBuf,
+}
+
+impl PackagedExecutable {
+    fn new(root: PathBuf, filename: &str) -> Self {
+        Self { path: root.join(filename), root }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PackagedExecutable {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
 }
 
 async fn request(addr: SocketAddr, path: &str) -> (u16, String) {

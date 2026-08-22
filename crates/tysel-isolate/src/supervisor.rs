@@ -137,8 +137,8 @@ impl Supervisor {
     pub fn eval(&mut self, source: &str) -> Result<Value, IsolateError> {
         match self.eval_inner(source) {
             Ok(value) => Ok(value),
-            Err(err) if self.worker_exited() => {
-                self.ensure_worker()?;
+            Err(err) if self.worker_connection_failed(&err) => {
+                self.restart_worker()?;
                 self.eval_inner(source)
                     .map_err(|retry| IsolateError::Worker(format!("{err}; retry: {retry}")))
             }
@@ -188,9 +188,11 @@ impl Supervisor {
     pub fn http(&mut self, request: &HttpRequest) -> Result<(HttpHead, Vec<u8>), IsolateError> {
         match self.http_inner(request) {
             Ok(value) => Ok(value),
-            Err(err) if self.worker_exited() => self
-                .http_inner(request)
-                .map_err(|retry| IsolateError::Worker(format!("{err}; retry: {retry}"))),
+            Err(err) if self.worker_connection_failed(&err) => {
+                self.restart_worker()?;
+                self.http_inner(request)
+                    .map_err(|retry| IsolateError::Worker(format!("{err}; retry: {retry}")))
+            }
             Err(err) => Err(err),
         }
     }
@@ -215,8 +217,8 @@ impl Supervisor {
     ) -> Result<Value, IsolateError> {
         match self.invoke_task_inner(task_name, input_json, request_id, deadline_ms) {
             Ok(value) => Ok(value),
-            Err(error) if self.worker_exited() => {
-                self.ensure_worker()?;
+            Err(error) if self.worker_connection_failed(&error) => {
+                self.restart_worker()?;
                 self.invoke_task_inner(task_name, input_json, request_id, deadline_ms)
                     .map_err(|retry| IsolateError::Worker(format!("{error}; retry: {retry}")))
             }
@@ -451,6 +453,15 @@ impl Supervisor {
             Ok(None) => false,
             Err(_) => true,
         }
+    }
+
+    fn worker_connection_failed(&mut self, error: &IsolateError) -> bool {
+        matches!(error, IsolateError::Io(_) | IsolateError::Ipc(_)) || self.worker_exited()
+    }
+
+    fn restart_worker(&mut self) -> Result<(), IsolateError> {
+        self.kill_worker()?;
+        self.ensure_worker()
     }
 }
 
