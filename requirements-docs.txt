@@ -1,0 +1,2 @@
+# Keep the interim MkDocs build reproducible until the planned Fumadocs migration.
+mkdocs==1.6.1

@@ -139,8 +139,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Install documentation builder
+        run: python3 -m pip install --requirement requirements-docs.txt
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - run: pnpm docs:build
       - run: pnpm test
       - name: Verify publishable TypeScript packages from an external consumer
         run: bash .github/scripts/test-types-package.sh
