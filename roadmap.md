@@ -1894,8 +1894,7 @@ tysel/
 ├── packages/
 │   ├── tysel/
 │   ├── tysel-types/
-│   ├── tysel-test/
-│   └── tysel-compat/
+│   └── tysel-test/
 │
 ├── wit/
 │   ├── core/

@@ -12,7 +12,6 @@ fi
 version="$rust_versions"
 for manifest in \
   packages/tysel/package.json \
-  packages/tysel-compat/package.json \
   packages/tysel-test/package.json \
   packages/tysel-types/package.json \
   runtime-js/package.json; do

@@ -32,38 +32,6 @@ struct Finding {
 }
 
 const SHIM: &[&str] = &["buffer", "path", "util", "events", "assert", "querystring"];
-const NODE_BUILTINS: &[&str] = &[
-    "async_hooks",
-    "child_process",
-    "cluster",
-    "crypto",
-    "dgram",
-    "diagnostics_channel",
-    "dns",
-    "domain",
-    "fs",
-    "http",
-    "http2",
-    "https",
-    "inspector",
-    "module",
-    "net",
-    "os",
-    "perf_hooks",
-    "process",
-    "punycode",
-    "readline",
-    "repl",
-    "stream",
-    "string_decoder",
-    "tls",
-    "tty",
-    "url",
-    "v8",
-    "vm",
-    "worker_threads",
-    "zlib",
-];
 const COMPATIBLE: &[&str] =
     &["@standard-schema/spec", "hono", "itty-router", "typescript", "valibot", "zod"];
 const UNSUPPORTED: &[(&str, &str)] = &[
@@ -166,7 +134,7 @@ fn classify(name: &str) -> Finding {
             reason: "requires a Web/Tysel shim",
         };
     }
-    if NODE_BUILTINS.contains(&bare) {
+    if node_scan::is_node_builtin(bare) {
         return Finding {
             name: name.into(),
             kind: CompatKind::Unsupported,
@@ -238,5 +206,14 @@ mod tests {
         assert_eq!(classify("@standard-schema/spec").kind, CompatKind::Compatible);
         assert_eq!(classify("hono/cors").kind, CompatKind::Compatible);
         assert_eq!(classify("node:fs/promises").kind, CompatKind::Unsupported);
+    }
+
+    #[test]
+    fn source_scanner_and_classifier_share_the_builtin_catalog() {
+        for builtin in ["diagnostics_channel", "domain", "punycode", "repl", "string_decoder"] {
+            assert!(node_scan::is_node_builtin(builtin));
+            assert_eq!(classify(builtin).kind, CompatKind::Unsupported);
+        }
+        assert_eq!(classify("node:path/posix").kind, CompatKind::Shim);
     }
 }

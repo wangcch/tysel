@@ -3,6 +3,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 const NODE_PREFIX: &str = "node:";
+/// Node builtin roots understood by both source scanning and compatibility
+/// classification. Keep this as the single catalog so the two paths cannot
+/// silently disagree about a builtin import.
 const BUILTINS: &[&str] = &[
     "assert",
     "async_hooks",
@@ -11,7 +14,9 @@ const BUILTINS: &[&str] = &[
     "cluster",
     "crypto",
     "dgram",
+    "diagnostics_channel",
     "dns",
+    "domain",
     "events",
     "fs",
     "http",
@@ -24,9 +29,12 @@ const BUILTINS: &[&str] = &[
     "path",
     "perf_hooks",
     "process",
+    "punycode",
     "querystring",
     "readline",
+    "repl",
     "stream",
+    "string_decoder",
     "tls",
     "tty",
     "url",
@@ -82,6 +90,31 @@ mod tests {
         assert_eq!(
             found,
             vec!["fs".to_string(), "node:assert/strict".to_string(), "node:path/posix".to_string()]
+        );
+    }
+
+    #[test]
+    fn detects_every_compatibility_only_builtin() {
+        let found = scan_source(
+            Path::new("example.ts"),
+            r#"
+            import "node:diagnostics_channel";
+            import domain from "domain";
+            import "punycode";
+            import "repl";
+            import "string_decoder";
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            found,
+            vec![
+                "domain".to_string(),
+                "node:diagnostics_channel".to_string(),
+                "punycode".to_string(),
+                "repl".to_string(),
+                "string_decoder".to_string(),
+            ]
         );
     }
 
