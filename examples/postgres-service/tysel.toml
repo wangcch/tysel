@@ -1,3 +1,5 @@
+schema_version = 1
+
 [app]
 name = "postgres-service"
 entry = "src/index.ts"
@@ -8,3 +10,11 @@ listen = "127.0.0.1:3000"
 
 [permissions]
 postgres = ["main:read-write"]
+
+[tasks.verify]
+description = "Check the application"
+steps = [["check"]]
+
+[tasks.release]
+depends = ["verify"]
+steps = [["build", "--release"]]

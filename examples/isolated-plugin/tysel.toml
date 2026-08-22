@@ -1,3 +1,5 @@
+schema_version = 1
+
 [app]
 name = "isolated-plugin"
 entry = "src/index.ts"
@@ -22,3 +24,11 @@ max_response_mb = 1
 
 [observability]
 logs = "json"
+
+[tasks.verify]
+description = "Check the application"
+steps = [["check"]]
+
+[tasks.release]
+depends = ["verify"]
+steps = [["build", "--release"]]
