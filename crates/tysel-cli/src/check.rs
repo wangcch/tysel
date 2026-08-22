@@ -59,9 +59,10 @@ pub(crate) enum Typecheck {
 }
 
 pub(crate) fn typecheck(root: &Path) -> Typecheck {
-    let tsconfig = root.join("tsconfig.json");
+    let tysel_config = root.join("tsconfig.tysel.json");
+    let tsconfig = if tysel_config.is_file() { tysel_config } else { root.join("tsconfig.json") };
     if !tsconfig.is_file() {
-        return Typecheck::Skipped("no tsconfig.json");
+        return Typecheck::Skipped("no tsconfig.tysel.json or tsconfig.json");
     }
     let Some(tsc) = find_tsc(root) else {
         return Typecheck::Skipped("typescript not found");

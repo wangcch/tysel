@@ -451,12 +451,14 @@ fn collect_platform(checks: &mut Vec<Check>, target: Target) {
 
 fn collect_project(checks: &mut Vec<Check>, selected: Option<&Path>) -> Result<()> {
     let manifest_path = match selected {
-        Some(path) if path.is_dir() => Some(path.join("tysel.toml")),
+        Some(path) if path.is_dir() => crate::project::discover_manifest(path)?,
         Some(path) => Some(path.to_path_buf()),
-        None => nearest_manifest(&env::current_dir().context("resolve current directory")?),
+        None => crate::project::discover_manifest(
+            &env::current_dir().context("resolve current directory")?,
+        )?,
     };
     let Some(manifest_path) = manifest_path else {
-        checks.push(skip("project.manifest", "no tysel.toml found"));
+        checks.push(skip("project.manifest", "no Tysel manifest found"));
         checks.push(skip("project.entry", "no project selected"));
         checks.push(skip("project.types-version", "no project selected"));
         checks.push(skip("project.typecheck", "no project selected"));
@@ -759,10 +761,6 @@ fn managed_root(executable: &Path) -> Option<PathBuf> {
     versions.parent().map(Path::to_path_buf)
 }
 
-fn nearest_manifest(start: &Path) -> Option<PathBuf> {
-    start.ancestors().map(|path| path.join("tysel.toml")).find(|path| path.is_file())
-}
-
 fn read_build_info(path: &Path) -> Result<BuildInfo> {
     let mut child = Command::new(path)
         .arg("--build-info-json")
@@ -908,7 +906,10 @@ mod tests {
         let nested = root.join("a/b");
         fs::create_dir_all(&nested).unwrap();
         fs::write(root.join("tysel.toml"), "fixture").unwrap();
-        assert_eq!(nearest_manifest(&nested), Some(root.join("tysel.toml")));
+        assert_eq!(
+            crate::project::discover_manifest(&nested).unwrap(),
+            Some(root.join("tysel.toml"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

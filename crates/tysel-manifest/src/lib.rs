@@ -1,14 +1,17 @@
-//! Application config loaded from `tysel.toml`.
+//! Application config loaded from `tysel.toml` or `tysel.json`.
 //!
-//! Schema follows `roadmap.md` §14. Fields are parsed and reported now;
-//! enforcement belongs to the policy engine.
+//! Public schema for application identity, server protocols, permissions,
+//! limits, durable storage, and observability. Enforcement belongs to the
+//! policy engine.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub const MAX_FILESYSTEM_ROOTS_PER_OPERATION: usize = 64;
+pub const JSON_SCHEMA: &str = include_str!("../schema/tysel-manifest-v1.schema.json");
 
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
@@ -16,13 +19,44 @@ pub enum ManifestError {
     Io(#[from] std::io::Error),
     #[error("invalid toml: {0}")]
     Toml(#[from] toml::de::Error),
+    #[error("failed to encode toml: {0}")]
+    TomlEncode(#[from] toml::ser::Error),
+    #[error("invalid json: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("unsupported manifest format for {0}; expected .toml or .json")]
+    UnsupportedFormat(PathBuf),
     #[error("{0}")]
     Invalid(String),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestFormat {
+    Toml,
+    Json,
+}
+
+impl ManifestFormat {
+    pub fn from_path(path: &Path) -> Result<Self, ManifestError> {
+        match path.extension().and_then(|value| value.to_str()) {
+            Some("toml") => Ok(Self::Toml),
+            Some("json") => Ok(Self::Json),
+            _ => Err(ManifestError::UnsupportedFormat(path.to_path_buf())),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Toml => "toml",
+            Self::Json => "json",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub app: App,
     #[serde(default)]
     pub server: Server,
@@ -34,9 +68,26 @@ pub struct Manifest {
     pub durable: Durable,
     #[serde(default)]
     pub observability: Observability,
+    #[serde(default)]
+    pub tasks: BTreeMap<String, Task>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+fn default_schema_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Task {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub depends: Vec<String>,
+    #[serde(default)]
+    pub steps: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct App {
     pub name: String,
@@ -49,7 +100,7 @@ fn default_profile() -> String {
     "service".into()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Server {
     #[serde(default = "default_listen")]
@@ -76,7 +127,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Permissions {
     #[serde(default)]
@@ -91,7 +142,7 @@ pub struct Permissions {
     pub fs_write: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
     #[serde(default = "default_memory_mb")]
@@ -140,7 +191,7 @@ fn default_request_mb() -> u32 {
     16
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Durable {
     #[serde(default = "default_store")]
@@ -162,7 +213,7 @@ fn default_store_path() -> String {
     "./data/tysel.db".into()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Observability {
     #[serde(default = "default_logs")]
@@ -185,14 +236,31 @@ fn default_logs() -> String {
 
 impl Manifest {
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ManifestError> {
+        let path = path.as_ref();
+        let format = ManifestFormat::from_path(path)?;
         let raw = fs::read_to_string(path)?;
-        Self::parse(&raw)
+        Self::parse_with_format(&raw, format)
     }
 
+    /// Parse a TOML manifest. Kept for callers embedding existing TOML fixtures.
     pub fn parse(raw: &str) -> Result<Self, ManifestError> {
-        let manifest: Self = toml::from_str(raw)?;
+        Self::parse_with_format(raw, ManifestFormat::Toml)
+    }
+
+    pub fn parse_with_format(raw: &str, format: ManifestFormat) -> Result<Self, ManifestError> {
+        let manifest: Self = match format {
+            ManifestFormat::Toml => toml::from_str(raw)?,
+            ManifestFormat::Json => serde_json::from_str(raw)?,
+        };
         manifest.validate()?;
         Ok(manifest)
+    }
+
+    pub fn to_string_pretty(&self, format: ManifestFormat) -> Result<String, ManifestError> {
+        match format {
+            ManifestFormat::Toml => Ok(toml::to_string_pretty(self)?),
+            ManifestFormat::Json => Ok(serde_json::to_string_pretty(self)?),
+        }
     }
 
     pub fn inspect_report(&self) -> String {
@@ -247,6 +315,25 @@ impl Manifest {
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
+        if self.schema_version != 1 {
+            return Err(ManifestError::Invalid(format!(
+                "unsupported schema_version {}; expected 1",
+                self.schema_version
+            )));
+        }
+        if self.app.name.trim().is_empty() {
+            return Err(ManifestError::Invalid("app.name must be non-empty".into()));
+        }
+        if !is_app_name(&self.app.name) {
+            return Err(ManifestError::Invalid(
+                "app.name must start with a letter or digit and contain only letters, digits, '-', '_' or '.'"
+                    .into(),
+            ));
+        }
+        if self.app.entry.trim().is_empty() {
+            return Err(ManifestError::Invalid("app.entry must be non-empty".into()));
+        }
+        validate_entry(&self.app.entry)?;
         if !self.server.http1 && !self.server.http2 {
             return Err(ManifestError::Invalid(
                 "server must enable at least one of http1 or http2".into(),
@@ -264,6 +351,8 @@ impl Manifest {
                 self.app.profile
             )));
         }
+        validate_string_set("permissions.fetch", &self.permissions.fetch)?;
+        validate_string_set("permissions.secrets", &self.permissions.secrets)?;
         for (operation, roots) in
             [("fs_read", &self.permissions.fs_read), ("fs_write", &self.permissions.fs_write)]
         {
@@ -292,8 +381,164 @@ impl Manifest {
         for item in &self.permissions.postgres {
             parse_postgres_grant(item).map_err(ManifestError::Invalid)?;
         }
+        self.validate_tasks()?;
         Ok(())
     }
+
+    fn validate_tasks(&self) -> Result<(), ManifestError> {
+        for (name, task) in &self.tasks {
+            if !is_task_name(name) {
+                return Err(ManifestError::Invalid(format!(
+                    "invalid task name {name:?}; start with a letter or digit, then use letters, digits, '-', '_' or ':'"
+                )));
+            }
+            if task.depends.is_empty() && task.steps.is_empty() {
+                return Err(ManifestError::Invalid(format!(
+                    "task {name:?} must declare depends or steps"
+                )));
+            }
+            let mut dependencies = BTreeSet::new();
+            for dependency in &task.depends {
+                if !self.tasks.contains_key(dependency) {
+                    return Err(ManifestError::Invalid(format!(
+                        "task {name:?} depends on unknown task {dependency:?}"
+                    )));
+                }
+                if !dependencies.insert(dependency) {
+                    return Err(ManifestError::Invalid(format!(
+                        "task {name:?} contains duplicate dependency {dependency:?}"
+                    )));
+                }
+            }
+            for (index, step) in task.steps.iter().enumerate() {
+                if step.is_empty() || step.iter().any(|argument| argument.is_empty()) {
+                    return Err(ManifestError::Invalid(format!(
+                        "task {name:?} step {} must contain non-empty arguments",
+                        index + 1
+                    )));
+                }
+                if !is_task_command(&step[0]) {
+                    return Err(ManifestError::Invalid(format!(
+                        "task {name:?} step {} uses unsupported Tysel command {:?}",
+                        index + 1,
+                        step[0]
+                    )));
+                }
+                if step[1..].iter().any(|argument| {
+                    matches!(
+                        argument.as_str(),
+                        "--" | "--manifest" | "-C" | "--project" | "--project-dir"
+                    ) || argument.starts_with("-C")
+                        || argument.starts_with("--manifest=")
+                        || argument.starts_with("--project=")
+                        || argument.starts_with("--project-dir=")
+                }) {
+                    return Err(ManifestError::Invalid(format!(
+                        "task {name:?} step {} cannot override its project selection",
+                        index + 1
+                    )));
+                }
+            }
+        }
+
+        let mut visiting = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        for name in self.tasks.keys() {
+            visit_task(name, &self.tasks, &mut visiting, &mut visited)?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_string_set(name: &str, values: &[String]) -> Result<(), ManifestError> {
+    let unique = values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>();
+    if unique.len() != values.len() {
+        return Err(ManifestError::Invalid(format!("{name} values must be non-empty and unique")));
+    }
+    Ok(())
+}
+
+fn is_app_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|ch| ch.is_ascii_alphanumeric())
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+fn validate_entry(entry: &str) -> Result<(), ManifestError> {
+    if entry.chars().any(char::is_control) || entry.contains('\\') {
+        return Err(ManifestError::Invalid(
+            "app.entry must use '/' separators and contain no control characters".into(),
+        ));
+    }
+    let path = Path::new(entry);
+    let bytes = entry.as_bytes();
+    let windows_prefix = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    let mut has_normal_component = false;
+    if path.is_absolute()
+        || windows_prefix
+        || path.components().any(|component| match component {
+            std::path::Component::Normal(_) => {
+                has_normal_component = true;
+                false
+            }
+            std::path::Component::CurDir => false,
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => true,
+        })
+        || !has_normal_component
+    {
+        return Err(ManifestError::Invalid(
+            "app.entry must be a project-relative path without '..'".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_task_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|ch| ch.is_ascii_alphanumeric())
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':'))
+}
+
+fn is_task_command(command: &str) -> bool {
+    matches!(
+        command,
+        "check"
+            | "test"
+            | "build"
+            | "inspect"
+            | "compat"
+            | "run"
+            | "dev"
+            | "mcp"
+            | "queue"
+            | "image"
+    )
+}
+
+fn visit_task<'a>(
+    name: &'a str,
+    tasks: &'a BTreeMap<String, Task>,
+    visiting: &mut BTreeSet<&'a str>,
+    visited: &mut BTreeSet<&'a str>,
+) -> Result<(), ManifestError> {
+    if visited.contains(name) {
+        return Ok(());
+    }
+    if !visiting.insert(name) {
+        return Err(ManifestError::Invalid(format!("task dependency cycle includes {name:?}")));
+    }
+    for dependency in &tasks[name].depends {
+        visit_task(dependency, tasks, visiting, visited)?;
+    }
+    visiting.remove(name);
+    visited.insert(name);
+    Ok(())
 }
 
 /// A named Postgres connection from `[permissions] postgres`.
@@ -468,11 +713,192 @@ listen = "127.0.0.1:3000"
         )
         .unwrap();
         assert_eq!(manifest.app.name, "hello-service");
+        assert_eq!(manifest.schema_version, 1);
         assert_eq!(manifest.server.listen, "127.0.0.1:3000");
         assert!(manifest.permissions.fetch.is_empty());
         assert!(manifest.inspect_report().contains("Logs: json"));
         assert!(manifest.inspect_report().contains("SQLite"));
         assert!(manifest.inspect_report().contains("./data/tysel.db"));
+    }
+
+    #[test]
+    fn parses_equivalent_json_manifest() {
+        let manifest = Manifest::parse_with_format(
+            r#"{
+  "schema_version": 1,
+  "app": {
+    "name": "hello-json",
+    "entry": "src/index.ts",
+    "profile": "service"
+  },
+  "server": {
+    "listen": "127.0.0.1:4000"
+  }
+}"#,
+            ManifestFormat::Json,
+        )
+        .unwrap();
+        assert_eq!(manifest.app.name, "hello-json");
+        assert_eq!(manifest.server.listen, "127.0.0.1:4000");
+        assert!(manifest.server.http1);
+    }
+
+    #[test]
+    fn rejects_unsupported_schema_version_in_both_formats() {
+        let toml = Manifest::parse(
+            r#"
+schema_version = 2
+
+[app]
+name = "future"
+entry = "src/index.ts"
+"#,
+        )
+        .unwrap_err();
+        assert!(toml.to_string().contains("schema_version 2"));
+
+        let json = Manifest::parse_with_format(
+            r#"{"schema_version":2,"app":{"name":"future","entry":"src/index.ts"}}"#,
+            ManifestFormat::Json,
+        )
+        .unwrap_err();
+        assert!(json.to_string().contains("schema_version 2"));
+    }
+
+    #[test]
+    fn rejects_empty_identity_and_non_set_permissions() {
+        let empty_name = Manifest::parse(
+            r#"
+[app]
+name = " "
+entry = "src/index.ts"
+"#,
+        )
+        .unwrap_err();
+        assert!(empty_name.to_string().contains("app.name"), "{empty_name}");
+
+        let duplicate_fetch = Manifest::parse(
+            r#"
+[app]
+name = "app"
+entry = "src/index.ts"
+
+[permissions]
+fetch = ["api.example.com", " api.example.com "]
+"#,
+        )
+        .unwrap_err();
+        assert!(duplicate_fetch.to_string().contains("permissions.fetch"), "{duplicate_fetch}");
+
+        let unsafe_name = Manifest::parse(
+            r#"
+[app]
+name = "../../outside"
+entry = "src/index.ts"
+"#,
+        )
+        .unwrap_err();
+        assert!(unsafe_name.to_string().contains("app.name"), "{unsafe_name}");
+
+        for entry in ["../outside.ts", "/tmp/outside.ts", "C:/outside.ts", "."] {
+            let error = Manifest::parse(&format!(
+                r#"
+[app]
+name = "app"
+entry = "{entry}"
+"#
+            ))
+            .unwrap_err();
+            assert!(error.to_string().contains("app.entry"), "{entry}: {error}");
+        }
+    }
+
+    #[test]
+    fn parses_and_validates_native_tasks() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "tasks"
+entry = "src/index.ts"
+
+[tasks.verify]
+description = "Check and test"
+steps = [["check"], ["test"]]
+
+[tasks.release]
+depends = ["verify"]
+steps = [["build", "--release"]]
+"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.tasks["verify"].steps.len(), 2);
+        assert_eq!(manifest.tasks["release"].depends, ["verify"]);
+    }
+
+    #[test]
+    fn rejects_invalid_task_graphs_and_commands() {
+        let cycle = Manifest::parse(
+            r#"
+[app]
+name = "tasks"
+entry = "src/index.ts"
+
+[tasks.a]
+depends = ["b"]
+
+[tasks.b]
+depends = ["a"]
+"#,
+        )
+        .unwrap_err();
+        assert!(cycle.to_string().contains("cycle"), "{cycle}");
+
+        let command = Manifest::parse(
+            r#"
+[app]
+name = "tasks"
+entry = "src/index.ts"
+
+[tasks.unsafe]
+steps = [["upgrade"]]
+"#,
+        )
+        .unwrap_err();
+        assert!(command.to_string().contains("unsupported Tysel command"), "{command}");
+
+        let option_like_name = Manifest::parse(
+            r#"
+[app]
+name = "tasks"
+entry = "src/index.ts"
+
+[tasks."-unsafe"]
+steps = [["check"]]
+"#,
+        )
+        .unwrap_err();
+        assert!(option_like_name.to_string().contains("invalid task name"));
+
+        let project_override = Manifest::parse(
+            r#"
+[app]
+name = "tasks"
+entry = "src/index.ts"
+
+[tasks.unsafe]
+steps = [["check", "-C/tmp/other-project"]]
+"#,
+        )
+        .unwrap_err();
+        assert!(project_override.to_string().contains("project selection"), "{project_override}");
+    }
+
+    #[test]
+    fn bundled_json_schema_is_valid_and_versioned() {
+        let schema: serde_json::Value = serde_json::from_str(JSON_SCHEMA).unwrap();
+        assert_eq!(schema["$id"], "https://tysel.dev/schemas/manifest-v1.json");
+        assert_eq!(schema["properties"]["schema_version"]["const"], 1);
+        assert!(schema["properties"]["tasks"].is_object());
     }
 
     #[test]

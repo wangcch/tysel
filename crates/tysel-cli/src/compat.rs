@@ -54,10 +54,13 @@ pub fn run(
 ) -> Result<()> {
     let root = manifest_path.parent().unwrap_or(Path::new("."));
     let package = root.join("package.json");
-    let text = fs::read_to_string(&package)
-        .with_context(|| format!("failed to read {}", package.display()))?;
-    let value: Value =
-        serde_json::from_str(&text).with_context(|| format!("invalid {}", package.display()))?;
+    let value: Value = if package.is_file() {
+        let text = fs::read_to_string(&package)
+            .with_context(|| format!("failed to read {}", package.display()))?;
+        serde_json::from_str(&text).with_context(|| format!("invalid {}", package.display()))?
+    } else {
+        Value::Object(Default::default())
+    };
     let mut names = Vec::new();
     collect_deps(&value["dependencies"], &mut names);
     collect_deps(&value["devDependencies"], &mut names);
@@ -87,7 +90,11 @@ pub fn run(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "schemaVersion": 1,
-                "source": package.display().to_string(),
+                "source": if package.is_file() {
+                    package.display().to_string()
+                } else {
+                    manifest_path.display().to_string()
+                },
                 "summary": summary(&findings),
                 "packages": rows,
             }))?

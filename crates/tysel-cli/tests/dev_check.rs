@@ -275,6 +275,391 @@ fn init_writes_a_hello_service_skeleton() {
 }
 
 #[test]
+fn init_can_create_a_package_free_json_project() {
+    let dir = temp_app("init-json");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args([
+            "init",
+            dir.to_str().unwrap(),
+            "--manifest-format",
+            "json",
+            "--package-json",
+            "none",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(dir.join("tysel.json").is_file());
+    assert!(!dir.join("tysel.toml").exists());
+    assert!(!dir.join("package.json").exists());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("tysel.json")).unwrap()).unwrap();
+    assert_eq!(manifest["schema_version"], 1);
+    assert_eq!(manifest["app"]["entry"], "src/index.ts");
+
+    let check =
+        Command::new(cli_exe()).args(["-C", dir.to_str().unwrap(), "check"]).output().unwrap();
+    assert!(check.status.success(), "{}", String::from_utf8_lossy(&check.stderr));
+
+    let compat = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "compat", "--json"])
+        .output()
+        .unwrap();
+    assert!(compat.status.success(), "{}", String::from_utf8_lossy(&compat.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&compat.stdout).unwrap();
+    assert!(report["source"].as_str().unwrap().ends_with("tysel.json"));
+
+    let task = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "task", "verify"])
+        .output()
+        .unwrap();
+    assert!(task.status.success(), "{}", String::from_utf8_lossy(&task.stderr));
+    assert!(String::from_utf8_lossy(&task.stdout).contains("task verify completed"));
+}
+
+#[test]
+fn init_can_generate_an_mcp_template_without_tests_or_package_json() {
+    let dir = temp_app("init-mcp-template");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args([
+            "init",
+            dir.to_str().unwrap(),
+            "--template",
+            "mcp",
+            "--manifest-format",
+            "json",
+            "--package-json",
+            "none",
+            "--no-tests",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(!dir.join("package.json").exists());
+    assert!(!dir.join("tests").exists());
+    let source = fs::read_to_string(dir.join("src/index.ts")).unwrap();
+    assert!(source.contains("kind: \"mcp\""), "{source}");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("tysel.json")).unwrap()).unwrap();
+    assert_eq!(manifest["app"]["profile"], "isolated");
+    assert_eq!(manifest["server"]["listen"], "127.0.0.1:0");
+
+    let check =
+        Command::new(cli_exe()).args(["-C", dir.to_str().unwrap(), "check"]).output().unwrap();
+    assert!(check.status.success(), "{}", String::from_utf8_lossy(&check.stderr));
+    let verify = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "task", "verify"])
+        .output()
+        .unwrap();
+    assert!(verify.status.success(), "{}", String::from_utf8_lossy(&verify.stderr));
+    assert!(!String::from_utf8_lossy(&verify.stdout).contains("tysel test"));
+}
+
+#[test]
+fn init_adopts_an_existing_node_project_without_overwriting_it() {
+    let dir = temp_app("init-existing-node");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    let package = r#"{"name":"existing","private":true,"scripts":{"dev":"node src/server.js"}}"#;
+    fs::write(dir.join("package.json"), package).unwrap();
+    fs::write(dir.join("src/server.js"), "console.log('keep');\n").unwrap();
+    #[cfg(unix)]
+    {
+        let typescript =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../node_modules/typescript");
+        if typescript.is_dir() {
+            fs::create_dir_all(dir.join("node_modules")).unwrap();
+            std::os::unix::fs::symlink(typescript, dir.join("node_modules/typescript")).unwrap();
+        }
+    }
+
+    let output = Command::new(cli_exe()).args(["init", dir.to_str().unwrap()]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(fs::read_to_string(dir.join("package.json")).unwrap(), package);
+    assert_eq!(fs::read_to_string(dir.join("src/server.js")).unwrap(), "console.log('keep');\n");
+    assert!(dir.join("src/tysel.ts").is_file());
+    assert!(dir.join("tests/tysel.test.ts").is_file());
+    assert!(dir.join("tsconfig.tysel.json").is_file());
+    assert!(!dir.join("tsconfig.json").exists());
+    let config: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("tsconfig.tysel.json")).unwrap()).unwrap();
+    assert_eq!(config["files"], serde_json::json!(["src/tysel.ts"]));
+    assert_eq!(config["compilerOptions"]["types"], serde_json::json!([]));
+    assert!(dir.join("tysel.toml").is_file());
+    let check =
+        Command::new(cli_exe()).args(["-C", dir.to_str().unwrap(), "check"]).output().unwrap();
+    assert!(check.status.success(), "{}", String::from_utf8_lossy(&check.stderr));
+}
+
+#[test]
+fn init_dot_uses_the_real_directory_name() {
+    let dir = temp_app("named-dot-project");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let output = Command::new(cli_exe())
+        .current_dir(&dir)
+        .args(["init", ".", "--package-json", "none", "--no-tests"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let manifest = tysel_manifest::Manifest::from_path(dir.join("tysel.toml")).unwrap();
+    assert_eq!(manifest.app.name, dir.file_name().unwrap().to_string_lossy());
+}
+
+#[test]
+fn init_rejects_conflicting_package_json_options() {
+    let dir = temp_app("init-package-conflict");
+    fs::write(dir.join("package.json"), r#"{"name":"existing"}"#).unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--add-scripts"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(fs::read_to_string(dir.join("package.json")).unwrap(), r#"{"name":"existing"}"#);
+}
+
+#[cfg(unix)]
+#[test]
+fn init_refuses_to_create_files_through_a_symlink_outside_the_project() {
+    let dir = temp_app("init-symlink-root");
+    let outside = temp_app("init-symlink-outside");
+    std::os::unix::fs::symlink(&outside, dir.join("src")).unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--no-tests"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("outside project root"));
+    assert!(!outside.join("index.ts").exists());
+    assert!(!dir.join("tysel.toml").exists());
+    assert!(!dir.join("tsconfig.json").exists());
+}
+
+#[test]
+fn init_can_add_namespaced_scripts_without_replacing_node_scripts() {
+    let dir = temp_app("init-existing-scripts");
+    let package = r#"{"name":"existing","scripts":{"dev":"node server.js"}}"#;
+    fs::write(dir.join("package.json"), package).unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--add-scripts"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let updated: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("package.json")).unwrap()).unwrap();
+    assert_eq!(updated["scripts"]["dev"], "node server.js");
+    assert_eq!(updated["scripts"]["tysel:check"], "tysel check");
+    assert_eq!(updated["scripts"]["tysel:build"], "tysel build --release");
+}
+
+#[test]
+fn project_discovery_walks_up_and_config_reports_the_context() {
+    let dir = temp_app("project-discovery");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    let nested = dir.join("src/nested");
+    fs::create_dir_all(&nested).unwrap();
+
+    let check = Command::new(cli_exe()).current_dir(&nested).arg("check").output().unwrap();
+    assert!(check.status.success(), "{}", String::from_utf8_lossy(&check.stderr));
+
+    let config = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "config", "validate"])
+        .output()
+        .unwrap();
+    assert!(config.status.success(), "{}", String::from_utf8_lossy(&config.stderr));
+    let stdout = String::from_utf8_lossy(&config.stdout);
+    assert!(stdout.contains("Format       toml"), "{stdout}");
+    assert!(stdout.contains("Status       valid"), "{stdout}");
+
+    let shown = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "config", "show", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(shown.status.success(), "{}", String::from_utf8_lossy(&shown.stderr));
+    let effective: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(effective["schema_version"], 1);
+    assert_eq!(effective["limits"]["memory_mb"], 128);
+
+    let converted = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "config", "convert", "--to", "json"])
+        .output()
+        .unwrap();
+    assert!(converted.status.success(), "{}", String::from_utf8_lossy(&converted.stderr));
+    let converted: serde_json::Value = serde_json::from_slice(&converted.stdout).unwrap();
+    assert_eq!(converted["app"]["name"], "hello-service");
+
+    let schema = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "config", "schema"])
+        .output()
+        .unwrap();
+    assert!(schema.status.success(), "{}", String::from_utf8_lossy(&schema.stderr));
+    let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
+    assert_eq!(schema["properties"]["schema_version"]["const"], 1);
+}
+
+#[test]
+fn config_path_reports_a_discovered_manifest_even_when_it_is_invalid() {
+    let dir = temp_app("config-path-invalid");
+    fs::write(dir.join("tysel.toml"), "this is not valid toml = [\n").unwrap();
+    let output = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "config", "path"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        fs::canonicalize(dir.join("tysel.toml")).unwrap().to_string_lossy()
+    );
+}
+
+#[test]
+fn config_path_rejects_a_missing_explicit_manifest() {
+    let dir = temp_app("config-path-missing");
+    let missing = dir.join("missing.toml");
+    let output = Command::new(cli_exe())
+        .args(["config", "path", "--manifest", missing.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("does not exist"));
+}
+
+#[test]
+fn config_convert_cannot_create_a_second_manifest_through_parent_components() {
+    let dir = temp_app("config-convert-normalized");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    fs::create_dir_all(dir.join("generated")).unwrap();
+    let output = Command::new(cli_exe())
+        .args([
+            "-C",
+            dir.to_str().unwrap(),
+            "config",
+            "convert",
+            "--to",
+            "json",
+            "--output",
+            "generated/../tysel.json",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!dir.join("tysel.json").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("ambiguous"));
+}
+
+#[test]
+fn config_convert_rejects_an_extension_that_disagrees_with_the_format() {
+    let dir = temp_app("config-convert-extension");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    let output = Command::new(cli_exe())
+        .args([
+            "-C",
+            dir.to_str().unwrap(),
+            "config",
+            "convert",
+            "--to",
+            "json",
+            "--output",
+            "converted.toml",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!dir.join("converted.toml").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("extension"));
+}
+
+#[cfg(unix)]
+#[test]
+fn global_project_option_changes_cwd_for_non_project_commands() {
+    let dir = temp_app("global-project-cwd");
+    fs::write(dir.join("key.json"), "invalid\n").unwrap();
+    let output = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "release", "key-info", "--key", "key.json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("permissions"), "{stderr}");
+    assert!(!stderr.contains("No such file"), "{stderr}");
+}
+
+#[test]
+fn doctor_project_keeps_accepting_an_explicit_manifest_file() {
+    let dir = temp_app("doctor-explicit-manifest");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    let output = Command::new(cli_exe())
+        .args(["doctor", "--project", dir.join("tysel.toml").to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let manifest_check = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "project.manifest")
+        .expect("project.manifest check");
+    assert_eq!(manifest_check["status"], "pass");
+}
+
+#[test]
+fn project_discovery_rejects_toml_and_json_in_the_same_directory() {
+    let dir = temp_app("project-ambiguous");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    fs::write(dir.join("tysel.json"), r#"{"app":{"name":"duplicate","entry":"src/index.js"}}"#)
+        .unwrap();
+    let output =
+        Command::new(cli_exe()).args(["-C", dir.to_str().unwrap(), "check"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("multiple Tysel manifests"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn native_tasks_list_and_run_dependency_steps_without_a_shell() {
+    let dir = temp_app("native-tasks");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    let mut manifest = fs::read_to_string(dir.join("tysel.toml")).unwrap();
+    manifest.push_str(
+        r#"
+[tasks.base]
+description = "Validate source"
+steps = [["check"]]
+
+[tasks.verify]
+description = "Run the complete verification"
+depends = ["base"]
+steps = [["inspect"]]
+"#,
+    );
+    fs::write(dir.join("tysel.toml"), manifest).unwrap();
+
+    let list = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "task", "--list"])
+        .output()
+        .unwrap();
+    assert!(list.status.success(), "{}", String::from_utf8_lossy(&list.stderr));
+    let listed = String::from_utf8_lossy(&list.stdout);
+    assert!(listed.contains("base"), "{listed}");
+    assert!(listed.contains("verify"), "{listed}");
+
+    let run = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "task", "verify"])
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("task base [1/1] tysel check"), "{stdout}");
+    assert!(stdout.contains("task verify [1/1] tysel inspect"), "{stdout}");
+    assert!(stdout.contains("task verify completed"), "{stdout}");
+}
+
+#[test]
 fn init_preflights_conflicts_without_partial_writes() {
     let dir = temp_app("init-conflict");
     let _ = fs::remove_dir_all(&dir);

@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tysel.dev/schemas/manifest-v1.json",
+  "title": "Tysel application manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["app"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1, "default": 1 },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "entry"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000-\\u001F]+$"
+        },
+        "profile": {
+          "type": "string",
+          "enum": ["service", "isolated", "component"],
+          "default": "service"
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listen": { "type": "string", "default": "127.0.0.1:3000" },
+        "http1": { "type": "boolean", "default": true },
+        "http2": { "type": "boolean", "default": false },
+        "websocket": { "type": "boolean", "default": false }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": ["http1", "http2"],
+            "properties": {
+              "http1": { "const": false },
+              "http2": { "const": false }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["websocket"],
+            "properties": { "websocket": { "const": true } }
+          },
+          "then": {
+            "properties": { "http1": { "not": { "const": false } } }
+          }
+        }
+      ]
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fetch": { "$ref": "#/$defs/stringSet" },
+        "secrets": { "$ref": "#/$defs/stringSet" },
+        "postgres": {
+          "type": "array",
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*(?::(?:read-write|read-only))?$"
+          }
+        },
+        "fs_read": { "$ref": "#/$defs/filesystemRoots" },
+        "fs_write": { "$ref": "#/$defs/filesystemRoots" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory_mb": { "type": "integer", "minimum": 0, "default": 128 },
+        "cpu_ms_per_turn": { "type": "integer", "minimum": 0, "default": 50 },
+        "request_timeout_ms": { "type": "integer", "minimum": 0, "default": 30000 },
+        "max_in_flight": { "type": "integer", "minimum": 0, "default": 1000 },
+        "max_response_mb": { "type": "integer", "minimum": 0, "default": 16 },
+        "max_request_mb": { "type": "integer", "minimum": 0, "default": 16 }
+      }
+    },
+    "durable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "store": { "type": "string", "default": "sqlite" },
+        "path": { "type": "string", "default": "./data/tysel.db" }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "logs": { "type": "string", "default": "json" },
+        "traces": { "type": ["string", "null"] },
+        "metrics": { "type": ["string", "null"] }
+      }
+    },
+    "tasks": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9:_-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/task" }
+    }
+  },
+  "$defs": {
+    "stringSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "pattern": "\\S" }
+    },
+    "filesystemRoots": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "pattern": "\\S" }
+    },
+    "taskStep": {
+      "type": "array",
+      "minItems": 1,
+      "prefixItems": [
+        {
+          "type": "string",
+          "enum": ["check", "test", "build", "inspect", "compat", "run", "dev", "mcp", "queue", "image"]
+        }
+      ],
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "not": {
+          "anyOf": [
+            { "const": "--" },
+            { "pattern": "^-C" },
+            { "pattern": "^--manifest(?:=|$)" },
+            { "pattern": "^--project(?:-dir)?(?:=|$)" }
+          ]
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": ["string", "null"] },
+        "depends": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9:_-]*$" }
+        },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskStep" }
+        }
+      },
+      "anyOf": [
+        { "required": ["depends"], "properties": { "depends": { "minItems": 1 } } },
+        { "required": ["steps"], "properties": { "steps": { "minItems": 1 } } }
+      ]
+    }
+  }
+}
