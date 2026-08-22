@@ -7,9 +7,13 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use tysel_package::bundle_hash;
 pub use tysel_release_signing::{
-    RELEASE_ARTIFACT_SIGNATURE_VERSION, ReleaseArtifactSignature, sign_release_artifact,
+    RELEASE_ARTIFACT_SIGNATURE_VERSION, RELEASE_METADATA_SIGNATURE_VERSION,
+    ReleaseArtifactSignature, ReleaseMetadataSignature, sign_release_artifact,
+    sign_release_metadata,
 };
-use tysel_release_signing::{artifact_signature_message, validate_release_target};
+use tysel_release_signing::{
+    artifact_signature_message, metadata_signature_message, validate_release_target,
+};
 
 use crate::evidence::{sidecar_path, verify_release_evidence, write_json_atomically};
 
@@ -220,6 +224,45 @@ pub fn verify_release_artifact_signature(
     Ok(document)
 }
 
+pub fn verify_release_metadata_signature(
+    document_path: impl AsRef<Path>,
+    signature_path: impl AsRef<Path>,
+    trust_policy_path: impl AsRef<Path>,
+    now_unix: u64,
+) -> Result<ReleaseMetadataSignature> {
+    let document_path = document_path.as_ref();
+    let signature: ReleaseMetadataSignature = read_json(signature_path.as_ref())?;
+    ensure!(
+        signature.signature_version == RELEASE_METADATA_SIGNATURE_VERSION,
+        "unsupported release metadata signature version"
+    );
+    ensure!(signature.algorithm == "ed25519", "unsupported signature algorithm");
+    ensure!(
+        signature.issued_at_unix <= now_unix.saturating_add(MAX_CLOCK_SKEW_SECONDS),
+        "release metadata signature is from the future"
+    );
+    let document = read_bounded(document_path)?;
+    ensure!(
+        bundle_hash(&document) == signature.document_sha256,
+        "release metadata signature does not bind this document"
+    );
+    let policy: TrustPolicy = read_json(trust_policy_path.as_ref())?;
+    let trusted =
+        trusted_release_key(&policy, &signature.key_id, signature.issued_at_unix, now_unix)?;
+    let public_key = VerifyingKey::from_bytes(&decode_hex::<32>(&trusted.public_key)?)
+        .context("trusted Ed25519 public key is invalid")?;
+    let signature_bytes = Signature::from_bytes(&decode_hex::<64>(&signature.signature)?);
+    let message = metadata_signature_message(
+        &signature.key_id,
+        signature.issued_at_unix,
+        &signature.document_sha256,
+    );
+    public_key
+        .verify_strict(&message, &signature_bytes)
+        .context("release metadata signature verification failed")?;
+    Ok(signature)
+}
+
 pub fn validate_trust_policy(policy: &TrustPolicy) -> Result<()> {
     ensure!(policy.policy_version == TRUST_POLICY_VERSION, "unsupported trust policy version");
     ensure!(policy.expires_at_unix > policy.issued_at_unix, "trust policy validity is empty");
@@ -246,6 +289,88 @@ pub fn validate_trust_policy(policy: &TrustPolicy) -> Result<()> {
         previous = Some(key.key_id.as_str());
     }
     Ok(())
+}
+
+/// Validates that `successor` is a forward-only evolution of an installed
+/// trust policy. Signature verification must be performed separately.
+pub fn validate_trust_policy_transition(
+    current: &TrustPolicy,
+    successor: &TrustPolicy,
+) -> Result<()> {
+    validate_trust_policy(current).context("current trust policy is invalid")?;
+    validate_trust_policy(successor).context("successor trust policy is invalid")?;
+    ensure!(
+        successor.issued_at_unix > current.issued_at_unix,
+        "successor trust policy does not advance issued_at_unix"
+    );
+
+    for current_key in &current.keys {
+        let Some(successor_key) =
+            successor.keys.iter().find(|key| key.key_id == current_key.key_id)
+        else {
+            match current_key.status {
+                ReleaseKeyStatus::Active => {
+                    anyhow::bail!("active release key was removed without retirement")
+                }
+                ReleaseKeyStatus::Retired => {
+                    let deadline = current_key
+                        .valid_until_unix
+                        .context("retired release key has no retirement deadline")?;
+                    ensure!(
+                        successor.issued_at_unix > deadline,
+                        "retired release key was removed before its retirement deadline"
+                    );
+                }
+                ReleaseKeyStatus::Revoked => {
+                    anyhow::bail!("revoked release-key tombstone was removed")
+                }
+            }
+            continue;
+        };
+
+        ensure!(
+            successor_key.algorithm == current_key.algorithm
+                && successor_key.public_key == current_key.public_key,
+            "trusted release-key identity changed"
+        );
+        ensure!(
+            successor_key.valid_from_unix == current_key.valid_from_unix,
+            "trusted release-key inception changed"
+        );
+        ensure!(
+            key_status_rank(successor_key.status) >= key_status_rank(current_key.status),
+            "trusted release-key status regressed"
+        );
+        if current_key.status != ReleaseKeyStatus::Active {
+            ensure!(
+                successor_key.valid_until_unix == current_key.valid_until_unix,
+                "retired or revoked release-key deadline changed"
+            );
+        } else if let Some(current_deadline) = current_key.valid_until_unix {
+            ensure!(
+                successor_key.valid_until_unix == Some(current_deadline),
+                "trusted release-key deadline changed"
+            );
+        }
+    }
+
+    for successor_key in &successor.keys {
+        if !current.keys.iter().any(|key| key.key_id == successor_key.key_id) {
+            ensure!(
+                successor_key.status == ReleaseKeyStatus::Active,
+                "new release keys must enter the policy as active"
+            );
+        }
+    }
+    Ok(())
+}
+
+const fn key_status_rank(status: ReleaseKeyStatus) -> u8 {
+    match status {
+        ReleaseKeyStatus::Active => 0,
+        ReleaseKeyStatus::Retired => 1,
+        ReleaseKeyStatus::Revoked => 2,
+    }
 }
 
 fn read_signing_key(path: &Path) -> Result<SigningKey> {
@@ -501,6 +626,19 @@ mod tests {
         let signature =
             verify_release_artifact_signature(&artifact, &trust_path, "linux-x64", 1_000).unwrap();
         assert_eq!(signature.target, "linux-x64");
+        let metadata = root.join("release-manifest.json");
+        fs::write(&metadata, b"{\"schemaVersion\":1}\n").unwrap();
+        let metadata_signature =
+            tysel_release_signing::sign_release_metadata(&metadata, &key_path, 1_000).unwrap();
+        verify_release_metadata_signature(&metadata, &metadata_signature, &trust_path, 1_000)
+            .unwrap();
+        fs::write(&metadata, b"{}\n").unwrap();
+        assert!(
+            verify_release_metadata_signature(&metadata, &metadata_signature, &trust_path, 1_000)
+                .unwrap_err()
+                .to_string()
+                .contains("does not bind")
+        );
         assert!(
             verify_release_artifact_signature(&artifact, &trust_path, "linux-arm64", 1_000)
                 .unwrap_err()
@@ -514,6 +652,238 @@ mod tests {
                 .to_string()
                 .contains("does not bind")
         );
+    }
+
+    #[test]
+    fn cross_signed_overlap_rotates_release_keys_without_stranding_clients() {
+        let root = temp_root("cross-signed-rotation");
+        fs::create_dir_all(&root).unwrap();
+        let old_key = write_key(&root, [21; 32]);
+        let new_key = {
+            let path = root.join("new-release.key");
+            fs::write(&path, format!("{}\n", encode_hex(&[22; 32]))).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            path
+        };
+        let old = release_key_info(&old_key).unwrap();
+        let new = release_key_info(&new_key).unwrap();
+        let installed = root.join("installed-trust.json");
+        write_policy(
+            &installed,
+            &TrustPolicy {
+                policy_version: TRUST_POLICY_VERSION,
+                issued_at_unix: 100,
+                expires_at_unix: 3_000,
+                keys: vec![TrustedReleaseKey {
+                    key_id: old.key_id.clone(),
+                    algorithm: old.algorithm.clone(),
+                    public_key: old.public_key.clone(),
+                    status: ReleaseKeyStatus::Active,
+                    valid_from_unix: 0,
+                    valid_until_unix: None,
+                }],
+            },
+        );
+
+        let transition = root.join("transition-trust.json");
+        let mut transition_keys = vec![
+            TrustedReleaseKey {
+                key_id: new.key_id.clone(),
+                algorithm: new.algorithm.clone(),
+                public_key: new.public_key.clone(),
+                status: ReleaseKeyStatus::Active,
+                valid_from_unix: 900,
+                valid_until_unix: None,
+            },
+            TrustedReleaseKey {
+                key_id: old.key_id,
+                algorithm: old.algorithm,
+                public_key: old.public_key,
+                status: ReleaseKeyStatus::Retired,
+                valid_from_unix: 0,
+                valid_until_unix: Some(2_000),
+            },
+        ];
+        transition_keys.sort_by(|left, right| left.key_id.cmp(&right.key_id));
+        write_policy(
+            &transition,
+            &TrustPolicy {
+                policy_version: TRUST_POLICY_VERSION,
+                issued_at_unix: 900,
+                expires_at_unix: 3_000,
+                keys: transition_keys,
+            },
+        );
+        let transition_signature = sign_release_metadata(&transition, &old_key, 1_000).unwrap();
+        verify_release_metadata_signature(&transition, &transition_signature, &installed, 1_000)
+            .unwrap();
+        verify_release_metadata_signature(&transition, &transition_signature, &transition, 1_000)
+            .unwrap();
+        validate_trust_policy_transition(
+            &read_json(&installed).unwrap(),
+            &read_json(&transition).unwrap(),
+        )
+        .unwrap();
+
+        let manifest = root.join("new-key-manifest.json");
+        fs::write(&manifest, b"{\"schemaVersion\":1}\n").unwrap();
+        let manifest_signature = sign_release_metadata(&manifest, &new_key, 1_100).unwrap();
+        verify_release_metadata_signature(&manifest, &manifest_signature, &transition, 1_100)
+            .unwrap();
+
+        let final_policy = root.join("final-trust.json");
+        write_policy(
+            &final_policy,
+            &TrustPolicy {
+                policy_version: TRUST_POLICY_VERSION,
+                issued_at_unix: 2_001,
+                expires_at_unix: 3_000,
+                keys: vec![TrustedReleaseKey {
+                    key_id: new.key_id,
+                    algorithm: new.algorithm,
+                    public_key: new.public_key,
+                    status: ReleaseKeyStatus::Active,
+                    valid_from_unix: 900,
+                    valid_until_unix: None,
+                }],
+            },
+        );
+        let final_signature = sign_release_metadata(&final_policy, &new_key, 2_100).unwrap();
+        verify_release_metadata_signature(&final_policy, &final_signature, &transition, 2_100)
+            .unwrap();
+        verify_release_metadata_signature(&final_policy, &final_signature, &final_policy, 2_100)
+            .unwrap();
+        validate_trust_policy_transition(
+            &read_json(&transition).unwrap(),
+            &read_json(&final_policy).unwrap(),
+        )
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn trust_policy_transitions_are_forward_only() {
+        let root = temp_root("trust-policy-transition");
+        fs::create_dir_all(&root).unwrap();
+        let old = release_key_info(write_key(&root, [31; 32])).unwrap();
+        let new = release_key_info(write_key(&root, [32; 32])).unwrap();
+        let current = TrustPolicy {
+            policy_version: TRUST_POLICY_VERSION,
+            issued_at_unix: 100,
+            expires_at_unix: 1_000,
+            keys: vec![TrustedReleaseKey {
+                key_id: old.key_id.clone(),
+                algorithm: old.algorithm.clone(),
+                public_key: old.public_key.clone(),
+                status: ReleaseKeyStatus::Active,
+                valid_from_unix: 10,
+                valid_until_unix: None,
+            }],
+        };
+
+        let mut renewed = current.clone();
+        renewed.issued_at_unix = 200;
+        renewed.expires_at_unix = 1_100;
+        validate_trust_policy_transition(&current, &renewed).unwrap();
+
+        let mut replay = renewed.clone();
+        replay.issued_at_unix = current.issued_at_unix;
+        assert!(
+            validate_trust_policy_transition(&current, &replay)
+                .unwrap_err()
+                .to_string()
+                .contains("does not advance")
+        );
+
+        let mut removed_active = renewed.clone();
+        removed_active.keys.clear();
+        assert!(validate_trust_policy_transition(&current, &removed_active).is_err());
+
+        let mut transition = renewed.clone();
+        transition.keys[0].status = ReleaseKeyStatus::Retired;
+        transition.keys[0].valid_until_unix = Some(500);
+        transition.keys.push(TrustedReleaseKey {
+            key_id: new.key_id.clone(),
+            algorithm: new.algorithm.clone(),
+            public_key: new.public_key.clone(),
+            status: ReleaseKeyStatus::Active,
+            valid_from_unix: 200,
+            valid_until_unix: None,
+        });
+        transition.keys.sort_by(|left, right| left.key_id.cmp(&right.key_id));
+        validate_trust_policy_transition(&current, &transition).unwrap();
+
+        let mut regressed = transition.clone();
+        let old_key = regressed.keys.iter_mut().find(|key| key.key_id == old.key_id).unwrap();
+        old_key.status = ReleaseKeyStatus::Active;
+        old_key.valid_until_unix = None;
+        regressed.issued_at_unix = 300;
+        assert!(
+            validate_trust_policy_transition(&transition, &regressed)
+                .unwrap_err()
+                .to_string()
+                .contains("status regressed")
+        );
+
+        let mut extended = transition.clone();
+        extended.issued_at_unix = 300;
+        extended.keys.iter_mut().find(|key| key.key_id == old.key_id).unwrap().valid_until_unix =
+            Some(600);
+        assert!(
+            validate_trust_policy_transition(&transition, &extended)
+                .unwrap_err()
+                .to_string()
+                .contains("deadline changed")
+        );
+
+        let mut removed_early = transition.clone();
+        removed_early.issued_at_unix = 500;
+        removed_early.keys.retain(|key| key.key_id != old.key_id);
+        assert!(
+            validate_trust_policy_transition(&transition, &removed_early)
+                .unwrap_err()
+                .to_string()
+                .contains("before its retirement deadline")
+        );
+        removed_early.issued_at_unix = 501;
+        validate_trust_policy_transition(&transition, &removed_early).unwrap();
+
+        let mut revoked = transition.clone();
+        revoked.issued_at_unix = 300;
+        revoked.keys.iter_mut().find(|key| key.key_id == old.key_id).unwrap().status =
+            ReleaseKeyStatus::Revoked;
+        validate_trust_policy_transition(&transition, &revoked).unwrap();
+        let mut removed_tombstone = revoked.clone();
+        removed_tombstone.issued_at_unix = 600;
+        removed_tombstone.keys.retain(|key| key.key_id != old.key_id);
+        assert!(
+            validate_trust_policy_transition(&revoked, &removed_tombstone)
+                .unwrap_err()
+                .to_string()
+                .contains("tombstone was removed")
+        );
+
+        let mut inserted_retired = renewed;
+        inserted_retired.keys.push(TrustedReleaseKey {
+            key_id: new.key_id,
+            algorithm: new.algorithm,
+            public_key: new.public_key,
+            status: ReleaseKeyStatus::Retired,
+            valid_from_unix: 10,
+            valid_until_unix: Some(500),
+        });
+        inserted_retired.keys.sort_by(|left, right| left.key_id.cmp(&right.key_id));
+        assert!(
+            validate_trust_policy_transition(&current, &inserted_retired)
+                .unwrap_err()
+                .to_string()
+                .contains("new release keys must enter")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]

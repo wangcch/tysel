@@ -19,6 +19,7 @@ hyper-util.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tysel-distribution.workspace = true
 tysel-durable = { path = "../tysel-durable" }
 tysel-engine.workspace = true
 tysel-engine-qjs.workspace = true

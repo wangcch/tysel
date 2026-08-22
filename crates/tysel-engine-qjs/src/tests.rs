@@ -64,6 +64,31 @@ fn promise_resolves_from_rust_async_echo() {
 }
 
 #[test]
+fn public_runtime_surface_is_explicit_and_stable() {
+    let value = eval(
+        r#"
+        JSON.stringify({
+          root: Object.keys(tysel).filter((key) => !key.startsWith("_")).sort(),
+          sqlite: Object.keys(tysel.sqlite).sort(),
+          postgres: Object.keys(tysel.postgres).sort(),
+          fs: Object.keys(tysel.fs).sort(),
+          secrets: Object.keys(tysel.secrets).sort(),
+          llm: Object.keys(tysel.llm).sort(),
+          durable: Object.keys(tysel.durable).sort(),
+        })
+        "#,
+        config(),
+    )
+    .expect("inspect public runtime surface");
+    assert_eq!(
+        value,
+        Value::String(
+            r#"{"root":["acceptWebSocket","durable","echo","fs","httpGet","isolateId","llm","postgres","secrets","sleep","sqlite"],"sqlite":["exec","query"],"postgres":["exec","query"],"fs":["read","write"],"secrets":["ref"],"llm":["generate"],"durable":["sendSignal","start"]}"#.into()
+        )
+    );
+}
+
+#[test]
 fn javascript_exceptions_preserve_message_and_stack() {
     let error = eval(
         r#"(async function namedFailure() { throw new Error("preserved failure"); })()"#,
@@ -403,13 +428,9 @@ fn durable_sleep_suspends_and_clears_its_wakeup_on_replay() {
     let store = Arc::new(SqliteStore::in_memory().unwrap());
     let id = TaskId(105);
     let script = r#"(async () => { await tysel.durable.sleep("50ms"); return "awake"; })()"#;
-    let err = eval_durable(
-        script,
-        IsolateConfig { request_timeout_ms: 10, ..config() },
-        DurableSession::new(store.clone(), id).unwrap(),
-    )
-    .expect_err("first run suspends at the durable boundary");
-    assert!(matches!(err, EngineError::Suspended));
+    let err = eval_durable(script, config(), DurableSession::new(store.clone(), id).unwrap())
+        .expect_err("first run suspends at the durable boundary");
+    assert!(matches!(err, EngineError::Suspended), "unexpected error: {err:?}");
     assert_eq!(store.load_history(id).unwrap().events[0].kind, EventKind::Sleep);
     let wakeup = store.wakeup(id).unwrap().expect("persisted wakeup");
     let early = match DurableSession::new(store.clone(), id) {

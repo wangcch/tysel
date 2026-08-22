@@ -13,11 +13,22 @@ fn main() {
 
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
-    let artifact = PathBuf::from(
-        args.next()
-            .context("usage: tysel-release-signer <artifact> --target <target> --key <key>")?,
-    );
+    let first = args.next().context(
+        "usage: tysel-release-signer <artifact> (--target <target> | --metadata) --key <key>",
+    )?;
+    if first == "--key-info" {
+        ensure!(
+            args.next().as_deref() == Some(std::ffi::OsStr::new("--key")),
+            "--key-info requires --key <key>"
+        );
+        let key = PathBuf::from(args.next().context("--key requires a value")?);
+        ensure!(args.next().is_none(), "unexpected key-info argument");
+        println!("{}", serde_json::to_string(&tysel_release_signing::release_key_info(key)?)?);
+        return Ok(());
+    }
+    let artifact = PathBuf::from(first);
     let mut target = None;
+    let mut metadata = false;
     let mut key = None;
     while let Some(argument) = args.next() {
         match argument.to_str() {
@@ -29,17 +40,29 @@ fn run() -> Result<()> {
                 ensure!(key.is_none(), "--key may only be specified once");
                 key = Some(PathBuf::from(args.next().context("--key requires a value")?));
             }
+            Some("--metadata") => {
+                ensure!(!metadata, "--metadata may only be specified once");
+                metadata = true;
+            }
             _ => anyhow::bail!("unknown signer argument {}", argument.to_string_lossy()),
         }
     }
-    let target = target.context("--target is required")?;
+    ensure!(metadata != target.is_some(), "specify exactly one of --target or --metadata");
     let key = key.context("--key is required")?;
     let issued_at_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("system clock predates the Unix epoch")?
         .as_secs();
-    let signature =
-        tysel_release_signing::sign_release_artifact(artifact, &target, key, issued_at_unix)?;
+    let signature = if metadata {
+        tysel_release_signing::sign_release_metadata(artifact, key, issued_at_unix)?
+    } else {
+        tysel_release_signing::sign_release_artifact(
+            artifact,
+            target.as_deref().expect("validated target"),
+            key,
+            issued_at_unix,
+        )?
+    };
     println!("Signature        {}", signature.display());
     Ok(())
 }

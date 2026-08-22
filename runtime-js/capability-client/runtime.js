@@ -235,7 +235,7 @@
   };
   globalThis.tysel.secrets = {
     ref(name) {
-      return tysel.secretRef(String(name));
+      return tysel._secretRef(String(name));
     },
   };
 })();

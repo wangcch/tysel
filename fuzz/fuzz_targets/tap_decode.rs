@@ -26,6 +26,8 @@ fuzz_target!(|data: &[u8]| {
             postgres: Vec::new(),
             fs_read: Vec::new(),
             fs_write: Vec::new(),
+            http1: true,
+            http2: false,
             json_logs: true,
         },
         data.iter().copied().take(64 * 1024).collect(),

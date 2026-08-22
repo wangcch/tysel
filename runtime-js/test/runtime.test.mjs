@@ -113,10 +113,16 @@ test("Web API compatibility inventory is explicit and machine-readable", () => {
   }
 });
 
-test("@tysel/types derives the host surface from runtime-js", () => {
+test("@tysel/types is a standalone public contract for the runtime surface", () => {
   const publicTypes = readFileSync(
     new URL("../../packages/tysel-types/src/index.ts", import.meta.url),
     "utf8",
+  );
+  const packageJson = JSON.parse(
+    readFileSync(
+      new URL("../../packages/tysel-types/package.json", import.meta.url),
+      "utf8",
+    ),
   );
   const capabilities = readFileSync(
     new URL("../capability-client/index.ts", import.meta.url),
@@ -124,12 +130,17 @@ test("@tysel/types derives the host surface from runtime-js", () => {
   );
   const webApi = readFileSync(new URL("../web-api/index.ts", import.meta.url), "utf8");
 
-  assert.match(publicTypes, /@tysel\/runtime-js\/capability-client/);
-  assert.match(publicTypes, /@tysel\/runtime-js\/durable/);
-  assert.match(publicTypes, /@tysel\/runtime-js\/web-api/);
+  assert.equal(packageJson.private, undefined);
+  assert.equal(packageJson.dependencies, undefined);
+  assert.equal(packageJson.types, "./dist/index.d.ts");
+  assert.deepEqual(packageJson.files, ["dist", "LICENSE", "README.md"]);
+  assert.doesNotMatch(publicTypes, /@tysel\/runtime-js/);
+  assert.doesNotMatch(publicTypes, /\b_[A-Za-z][A-Za-z0-9]*\s*\(/);
+  assert.match(publicTypes, /export interface TyselRuntime/);
+  assert.match(publicTypes, /export interface SqlClient/);
+  assert.match(publicTypes, /export interface DurableContext/);
+  assert.match(publicTypes, /export interface LlmGenerateOptions/);
+  assert.match(publicTypes, /interface WebSocket/);
   assert.match(capabilities, /export interface TyselRuntime/);
   assert.match(webApi, /export interface TyselWebApiGlobals/);
-  assert.doesNotMatch(publicTypes, /interface SqlClient/);
-  assert.doesNotMatch(publicTypes, /interface DurableContext/);
-  assert.doesNotMatch(publicTypes, /interface TyselURL/);
 });

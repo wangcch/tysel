@@ -53,7 +53,7 @@ export default {
 #[test]
 fn worker_env_does_not_inherit_supervisor_environment() {
     let mut supervisor = supervisor();
-    let value = supervisor.eval("tysel.envKeys()").expect("eval");
+    let value = supervisor.eval("tysel._envKeys()").expect("eval");
     let Value::String(keys) = value else {
         panic!("expected env key string, got {value:?}");
     };
@@ -293,7 +293,7 @@ fn isolated_http_handler_runs_in_the_worker() {
 fn isolated_http_handler_does_not_see_supervisor_env() {
     let pool = IsolatedHttpPool::spawn(
         worker_exe(),
-        r#"export default { async fetch() { return new Response("ENV:" + tysel.envKeys() + ":END"); } };"#,
+        r#"export default { async fetch() { return new Response("ENV:" + tysel._envKeys() + ":END"); } };"#,
         spec(),
         Vec::new(),
     )

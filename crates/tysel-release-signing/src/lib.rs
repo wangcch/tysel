@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const RELEASE_ARTIFACT_SIGNATURE_VERSION: u32 = 1;
+pub const RELEASE_METADATA_SIGNATURE_VERSION: u32 = 1;
 const MAX_SIGNED_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 const ARTIFACT_SIGNATURE_DOMAIN: &[u8] = b"tysel-release-artifact-signature-v1\0";
+const METADATA_SIGNATURE_DOMAIN: &[u8] = b"tysel-release-metadata-signature-v1\0";
 static TEMP_FILE_IDS: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +26,35 @@ pub struct ReleaseArtifactSignature {
     pub target: String,
     pub artifact_sha256: String,
     pub signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseMetadataSignature {
+    pub signature_version: u32,
+    pub algorithm: String,
+    pub key_id: String,
+    pub issued_at_unix: u64,
+    pub document_sha256: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseKeyInfo {
+    pub key_id: String,
+    pub algorithm: String,
+    pub public_key: String,
+}
+
+pub fn release_key_info(private_key_path: impl AsRef<Path>) -> Result<ReleaseKeyInfo> {
+    let signing_key = read_signing_key(private_key_path.as_ref())?;
+    let public_key = signing_key.verifying_key().to_bytes();
+    Ok(ReleaseKeyInfo {
+        key_id: encode_hex(&Sha256::digest(public_key)),
+        algorithm: "ed25519".into(),
+        public_key: encode_hex(&public_key),
+    })
 }
 
 pub fn sign_release_artifact(
@@ -54,8 +85,36 @@ pub fn sign_release_artifact(
     Ok(signature_path)
 }
 
+pub fn sign_release_metadata(
+    document_path: impl AsRef<Path>,
+    private_key_path: impl AsRef<Path>,
+    issued_at_unix: u64,
+) -> Result<PathBuf> {
+    let document_path = document_path.as_ref();
+    let document_sha256 = hash_file(document_path)?;
+    let signing_key = read_signing_key(private_key_path.as_ref())?;
+    let public_key = signing_key.verifying_key().to_bytes();
+    let key_id = encode_hex(&Sha256::digest(public_key));
+    let message = metadata_signature_message(&key_id, issued_at_unix, &document_sha256);
+    let signature = signing_key.sign(&message);
+    let document = ReleaseMetadataSignature {
+        signature_version: RELEASE_METADATA_SIGNATURE_VERSION,
+        algorithm: "ed25519".into(),
+        key_id,
+        issued_at_unix,
+        document_sha256,
+        signature: encode_hex(&signature.to_bytes()),
+    };
+    let signature_path = sidecar_path(document_path, ".sig.json");
+    write_json_atomically(&signature_path, &document)?;
+    Ok(signature_path)
+}
+
 pub fn validate_release_target(target: &str) -> Result<()> {
-    ensure!(matches!(target, "linux-x64" | "linux-arm64"), "unsupported production release target");
+    ensure!(
+        tysel_distribution::Target::from_canonical(target).is_some(),
+        "unsupported production release target"
+    );
     Ok(())
 }
 
@@ -75,6 +134,22 @@ pub fn artifact_signature_message(
     message.extend_from_slice(target.as_bytes());
     message.push(0);
     message.extend_from_slice(artifact_sha256.as_bytes());
+    message
+}
+
+#[doc(hidden)]
+pub fn metadata_signature_message(
+    key_id: &str,
+    issued_at_unix: u64,
+    document_sha256: &str,
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(160);
+    message.extend_from_slice(METADATA_SIGNATURE_DOMAIN);
+    message.extend_from_slice(key_id.as_bytes());
+    message.push(0);
+    message.extend_from_slice(issued_at_unix.to_string().as_bytes());
+    message.push(0);
+    message.extend_from_slice(document_sha256.as_bytes());
     message
 }
 
@@ -236,7 +311,8 @@ mod tests {
             signature.artifact_sha256,
             encode_hex(&Sha256::digest(fs::read(&artifact).unwrap()))
         );
-        assert!(sign_release_artifact(&artifact, "darwin-arm64", &key, 1_000).is_err());
+        assert!(sign_release_artifact(&artifact, "darwin-arm64", &key, 1_000).is_ok());
+        assert!(sign_release_artifact(&artifact, "windows-x64", &key, 1_000).is_err());
 
         #[cfg(unix)]
         {
@@ -245,6 +321,31 @@ mod tests {
             let error = sign_release_artifact(&artifact, "linux-x64", &key, 1_000).unwrap_err();
             assert!(error.to_string().contains("permissions"));
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn signs_release_metadata_with_a_distinct_domain() {
+        let (root, document, key) = fixture("metadata");
+        let signature_path = sign_release_metadata(&document, &key, 1_001).unwrap();
+        let signature: ReleaseMetadataSignature =
+            serde_json::from_slice(&fs::read(signature_path).unwrap()).unwrap();
+        assert_eq!(signature.signature_version, RELEASE_METADATA_SIGNATURE_VERSION);
+        assert_eq!(signature.issued_at_unix, 1_001);
+        assert_eq!(signature.document_sha256, hash_file(&document).unwrap());
+        assert_ne!(
+            metadata_signature_message(
+                &signature.key_id,
+                signature.issued_at_unix,
+                &signature.document_sha256
+            ),
+            artifact_signature_message(
+                &signature.key_id,
+                signature.issued_at_unix,
+                "linux-x64",
+                &signature.document_sha256
+            )
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

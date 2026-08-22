@@ -3661,12 +3661,18 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "notify",
+ "reqwest",
+ "semver",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tysel-build",
  "tysel-cap-mcp",
  "tysel-capability",
+ "tysel-distribution",
  "tysel-engine",
  "tysel-engine-qjs",
  "tysel-manifest",
@@ -3684,6 +3690,16 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tysel-distribution"
+version = "0.0.1"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -3772,6 +3788,7 @@ dependencies = [
  "libc",
  "serde_json",
  "thiserror",
+ "tysel-distribution",
  "tysel-engine",
  "tysel-engine-qjs",
  "tysel-ipc",
@@ -3827,6 +3844,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tysel-distribution",
 ]
 
 [[package]]
@@ -3848,6 +3866,7 @@ dependencies = [
  "tysel-cap-llm",
  "tysel-cap-mcp",
  "tysel-capability",
+ "tysel-distribution",
  "tysel-durable",
  "tysel-engine",
  "tysel-engine-qjs",
@@ -3904,6 +3923,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tysel-build",
+ "tysel-distribution",
  "tysel-durable",
  "tysel-engine",
  "tysel-engine-qjs",

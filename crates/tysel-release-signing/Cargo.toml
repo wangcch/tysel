@@ -15,6 +15,7 @@ name = "tysel-release-signer"
 path = "src/main.rs"
 
 [dependencies]
+tysel-distribution.workspace = true
 anyhow.workspace = true
 ed25519-dalek.workspace = true
 serde.workspace = true

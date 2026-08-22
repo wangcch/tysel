@@ -1,51 +1,30 @@
-import type { DurableContext } from "@tysel/runtime-js/durable";
+import type {
+  CronTask,
+  DurableHandler,
+  McpTask,
+  QueueTask,
+  TyselApp,
+} from "@tysel/types";
 
-export type { DurableContext, DurableRetryPolicy } from "@tysel/runtime-js/durable";
+export type {
+  AppTask,
+  CronTask,
+  DurableContext,
+  DurableHandler,
+  DurableRetryPolicy,
+  FetchHandler,
+  JsonObject,
+  JsonValue,
+  McpTask,
+  QueueTask,
+  RequestContext,
+  TyselApp,
+} from "@tysel/types";
 
-export interface RequestContext {
-  readonly requestId: string;
-  readonly deadlineMs: number;
-}
+/** @deprecated Use `TyselApp`; retained for source compatibility. */
+export type AppDefinition = TyselApp;
 
-export type FetchHandler = (
-  request: Request,
-  ctx: RequestContext,
-) => Response | Promise<Response>;
-
-export interface CronTask {
-  readonly kind: "cron";
-  readonly expression: string;
-  readonly handler: (ctx: RequestContext) => Promise<void>;
-}
-
-export interface QueueTask<T = unknown> {
-  readonly kind: "queue";
-  readonly name: string;
-  readonly handler: (message: T, ctx: RequestContext) => Promise<void>;
-}
-
-export interface McpTask<I = Record<string, unknown>, O = unknown> {
-  readonly kind: "mcp";
-  readonly description: string;
-  readonly input: Record<string, string>;
-  readonly handler: (input: I, ctx: RequestContext) => Promise<O>;
-}
-
-export type AppTask = CronTask | QueueTask | McpTask;
-
-export interface AppDefinition {
-  fetch?: FetchHandler;
-  tasks?: Record<string, AppTask>;
-  durable?: Record<string, (ctx: DurableContext, input: unknown) => Promise<unknown>>;
-}
-
-export interface DurableStartResult {
-  taskId: string;
-  status: "suspended" | "completed";
-  value?: unknown;
-}
-
-export function defineApp<T extends AppDefinition>(app: T): T {
+export function defineApp<T extends TyselApp>(app: T): T {
   return app;
 }
 
@@ -56,17 +35,17 @@ export function cron(
   return { kind: "cron", expression, handler };
 }
 
-export function queue<T>(
+export function queue<Message>(
   name: string,
-  handler: QueueTask<T>["handler"],
-): QueueTask<T> {
+  handler: QueueTask<Message>["handler"],
+): QueueTask<Message> {
   return { kind: "queue", name, handler };
 }
 
-export function mcp<I extends Record<string, unknown>, O>(
-  spec: { description: string; input: Record<string, string> },
-  handler: McpTask<I, O>["handler"],
-): McpTask<I, O> {
+export function mcp<Input extends object, Output>(
+  spec: { description: string; input: Readonly<Record<string, string>> },
+  handler: McpTask<Input, Output>["handler"],
+): McpTask<Input, Output> {
   return {
     kind: "mcp",
     description: spec.description,
@@ -75,8 +54,9 @@ export function mcp<I extends Record<string, unknown>, O>(
   };
 }
 
-export function durableTask<I, O>(
-  run: (ctx: DurableContext, input: I) => Promise<O>,
-): (ctx: DurableContext, input: I) => Promise<O> {
+export function durableTask<
+  Input,
+  Output,
+>(run: DurableHandler<Input, Output>): DurableHandler<Input, Output> {
   return run;
 }

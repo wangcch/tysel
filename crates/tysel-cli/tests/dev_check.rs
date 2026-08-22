@@ -251,6 +251,13 @@ fn init_writes_a_hello_service_skeleton() {
     let package: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("package.json")).unwrap()).unwrap();
     assert_eq!(package["devDependencies"]["@tysel/test"], "0.0.1");
+    assert_eq!(package["devDependencies"]["@tysel/types"], "0.0.1");
+    let tsconfig: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("tsconfig.json")).unwrap()).unwrap();
+    assert_eq!(
+        tsconfig["compilerOptions"]["types"],
+        serde_json::json!(["@tysel/types", "@tysel/test"])
+    );
     assert!(dir.join(".gitignore").is_file());
     assert!(dir.join("tysel.toml").is_file());
     let check = Command::new(cli_exe())
@@ -979,7 +986,7 @@ listen = "127.0.0.1:0"
         dir.join("src/index.js"),
         r#"export default {
   async fetch() {
-    return new Response("ENV:" + tysel.envKeys() + ":END");
+    return new Response("ENV:" + tysel._envKeys() + ":END");
   },
 };
 "#,

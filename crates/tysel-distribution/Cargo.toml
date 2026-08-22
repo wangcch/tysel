@@ -1,0 +1,21 @@
+[package]
+name = "tysel-distribution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Canonical target and build identity contracts for Tysel distribution."
+
+[lints]
+workspace = true
+
+[dependencies]
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[[bin]]
+name = "tysel-release-metadata"
+path = "src/bin/tysel-release-metadata.rs"

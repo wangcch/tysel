@@ -28,5 +28,9 @@ ed25519-dalek.workspace = true
 name = "tysel-supply-chain"
 path = "src/bin/tysel-supply-chain.rs"
 
+[[bin]]
+name = "tysel-trust-policy"
+path = "src/bin/tysel-trust-policy.rs"
+
 [dev-dependencies]
 wat = "1"

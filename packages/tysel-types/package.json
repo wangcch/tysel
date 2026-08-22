@@ -1,18 +1,24 @@
 {
   "name": "@tysel/types",
   "version": "0.0.1",
-  "private": true,
   "type": "module",
   "license": "Apache-2.0",
   "description": "Shared TypeScript types for Tysel applications and capabilities.",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
-    "check": "tsc --noEmit -p tsconfig.json"
-  },
-  "dependencies": {
-    "@tysel/runtime-js": "workspace:*"
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "prepack": "pnpm run build"
   },
   "devDependencies": {
     "typescript": "7.0.2"

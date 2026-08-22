@@ -139,6 +139,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm test
+      - name: Verify publishable TypeScript packages from an external consumer
+        run: bash .github/scripts/test-types-package.sh
 
   component-sdk-go:
     runs-on: ubuntu-latest

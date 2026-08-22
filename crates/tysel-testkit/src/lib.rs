@@ -428,12 +428,11 @@ pub fn write_benchmark_evidence(
 }
 
 fn benchmark_target() -> String {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => "linux-x64".into(),
-        ("linux", "aarch64") => "linux-arm64".into(),
-        ("macos", "x86_64") => "darwin-x64".into(),
-        ("macos", "aarch64") => "darwin-arm64".into(),
-        (os, arch) => format!("{os}-{arch}"),
+    let target = tysel_distribution::Target::current();
+    if target == tysel_distribution::Target::Unsupported {
+        format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+    } else {
+        target.canonical().into()
     }
 }
 

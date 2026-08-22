@@ -16,11 +16,14 @@ mod build;
 mod check;
 mod compat;
 mod dev;
+mod doctor;
 mod image;
 mod init;
 mod node_scan;
+mod platform;
 mod release;
 mod test_runner;
+mod upgrade;
 
 #[derive(Parser)]
 #[command(
@@ -118,6 +121,45 @@ enum Commands {
         #[command(subcommand)]
         command: release::ReleaseCommand,
     },
+    /// Diagnose the installation, platform, and project without modifying them.
+    Doctor {
+        /// Select a project directory or tysel.toml explicitly.
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Run only checks suitable for installer preflight.
+        #[arg(long)]
+        install: bool,
+        /// Explicitly enable release-network diagnostics.
+        #[arg(long)]
+        network: bool,
+        /// Emit a stable machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Safely check, upgrade, or roll back a managed Tysel installation.
+    Upgrade {
+        /// Check for a newer release without modifying the installation.
+        #[arg(long)]
+        check: bool,
+        /// Select an immutable release version.
+        #[arg(long)]
+        version: Option<String>,
+        /// Select the release channel.
+        #[arg(long, default_value = "stable")]
+        channel: String,
+        /// Confirm mutation without an interactive prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Permit a downgrade or reinstall of the active version.
+        #[arg(long)]
+        force: bool,
+        /// Activate the retained previous release.
+        #[arg(long)]
+        rollback: bool,
+        /// Emit a stable machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the effective capability and permission report.
     Inspect {
         #[arg(long, default_value = "tysel.toml")]
@@ -183,6 +225,10 @@ enum Commands {
 }
 
 fn main() -> ExitCode {
+    if let Some(output) = tysel_distribution::metadata_output("tysel", env!("CARGO_PKG_VERSION")) {
+        println!("{output}");
+        return ExitCode::SUCCESS;
+    }
     if let Ok(capacity) = std::env::var("TYSEL_INTERNAL_TASK_MEMORY") {
         return match capacity
             .parse::<usize>()
@@ -203,7 +249,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let error_format = cli.error_format;
     match run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(err) => {
             match error_format {
                 ErrorFormat::Human => eprintln!("error: {err:#}"),
@@ -222,8 +268,8 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
-    match cli.command {
+fn run(cli: Cli) -> Result<ExitCode> {
+    let result = match cli.command {
         Commands::Inspect { manifest } => inspect(manifest.as_path()),
         Commands::Check { manifest } => check::run(manifest.as_path()),
         Commands::Dev { entry, manifest } => {
@@ -258,6 +304,14 @@ fn run(cli: Cli) -> Result<()> {
             build::run(manifest, entry, stub, output, target, profile, release)
         }
         Commands::Release { command } => release::run(command),
+        Commands::Doctor { project, install, network, json } => {
+            let healthy =
+                doctor::run(doctor::Options { project, install_only: install, network, json })?;
+            return Ok(if healthy { ExitCode::SUCCESS } else { ExitCode::from(1) });
+        }
+        Commands::Upgrade { check, version, channel, yes, force, rollback, json } => {
+            upgrade::run(upgrade::Options { check, version, channel, yes, force, rollback, json })
+        }
         Commands::Init { path } => init::run(&path),
         Commands::Test { paths, manifest, timeout_ms, json } => {
             test_runner::run(&manifest, &paths, timeout_ms, json)
@@ -296,7 +350,9 @@ fn run(cli: Cli) -> Result<()> {
                 allow_unavailable,
             })
         }
-    }
+    };
+    result?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn inspect(path: &Path) -> Result<()> {

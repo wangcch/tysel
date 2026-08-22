@@ -13,7 +13,7 @@ tysel test
 tysel dev
 ```
 
-`init` creates `src/index.ts`, a test under `tests/`, `tysel.toml`, TypeScript configuration, package scripts, and ignore rules. It checks every destination first, never overwrites an existing file, and rolls back files it created if a later write fails. Install dependencies once to activate the shared `@tysel/test` TypeScript contract.
+`init` creates `src/index.ts`, a test under `tests/`, `tysel.toml`, TypeScript configuration, package scripts, and ignore rules. It checks every destination first, never overwrites an existing file, and rolls back files it created if a later write fails. Install the optional dependencies once to activate the pinned `@tysel/types` and `@tysel/test` editor contracts.
 
 `compat` reports four states: known compatible, shim required, unsupported, and unknown. CI can use `tysel compat --json --strict`, adding `--deny-unknown` when unreviewed dependencies must also fail.
 

@@ -2,6 +2,7 @@
 resolver = "3"
 exclude = ["sdk/examples/rust-echo"]
 members = [
+    "crates/tysel-distribution",
     "crates/tysel-cli",
     "crates/tysel-build",
     "crates/tysel-release-signing",
@@ -67,6 +68,7 @@ oxc = { version = "0.146", features = ["semantic", "transformer", "codegen"] }
 oxc_resolver = "11"
 
 tysel-manifest = { path = "crates/tysel-manifest" }
+tysel-distribution = { path = "crates/tysel-distribution" }
 tysel-engine = { path = "crates/tysel-engine" }
 tysel-engine-wasm = { path = "crates/tysel-engine-wasm" }
 tysel-component-sdk = { path = "crates/tysel-component-sdk" }
@@ -91,6 +93,8 @@ tysel-cap-llm = { path = "crates/tysel-cap-llm" }
 unsafe_code = "warn"
 
 [profile.release]
+# O2 reduces release artifact size while preserving cold-start-focused code generation.
+opt-level = 2
 lto = "thin"
 codegen-units = 1
 panic = "abort"

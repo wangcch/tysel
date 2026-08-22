@@ -69,13 +69,13 @@ fn install_inner(
         })?,
     )?;
     tysel.set(
-        "secretRef",
+        "_secretRef",
         Function::new(ctx.clone(), move |ctx, name: String| {
             submit(ctx, &io_secret, |id| IoRequest::SecretRef { id, name })
         })?,
     )?;
     tysel.set(
-        "readBody",
+        "_readBody",
         Function::new(ctx.clone(), move |ctx| {
             submit(ctx, &io_body, |id| IoRequest::ReadBody { id })
         })?,
@@ -110,7 +110,7 @@ fn install_inner(
     tysel
         .set("_cancelOp", Function::new(ctx.clone(), move |id: u64| io_cancel.cancel(OpId(id)))?)?;
     tysel.set(
-        "envKeys",
+        "_envKeys",
         Function::new(ctx.clone(), || {
             std::env::vars().map(|(key, _)| key).collect::<Vec<_>>().join(",")
         })?,

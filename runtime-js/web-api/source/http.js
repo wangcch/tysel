@@ -87,7 +87,7 @@
       if (this._stream) {
         const chunks = [];
         for (;;) {
-          const chunk = await tysel.readBody();
+          const chunk = await tysel._readBody();
           if (chunk == null) break;
           chunks.push(chunk);
         }

@@ -38,7 +38,7 @@ docs/adr/        Architecture decisions
 benchmarks/      Performance harnesses
 ```
 
-## Requirements
+## Contributor requirements
 
 - Rust 1.85+ (`rustup` stable)
 - Node.js 22+
@@ -47,9 +47,14 @@ benchmarks/      Performance harnesses
 
 ## Quick start
 
-Install the developer toolchain so `tysel`, `tysel-service`, and `tysel-worker`
-sit on `PATH` together ([Install](docs/install.md)). After that, use `tysel`
-directly:
+Install the managed developer toolchain ([Install](docs/install.md)); this path
+does not require the contributor dependencies above:
+
+```sh
+curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
+```
+
+After that, use `tysel` directly:
 
 ```bash
 tysel init hello-tysel

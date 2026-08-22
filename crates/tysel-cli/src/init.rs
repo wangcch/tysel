@@ -14,7 +14,7 @@ const TSCONFIG: &str = r#"{
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "types": ["@tysel/test"]
+    "types": ["@tysel/types", "@tysel/test"]
   },
   "include": ["src", "tests"]
 }
@@ -32,6 +32,7 @@ const PACKAGE_JSON: &str = r#"{
   },
   "devDependencies": {
     "@tysel/test": "0.0.1",
+    "@tysel/types": "0.0.1",
     "typescript": "7.0.2"
   }
 }
@@ -213,5 +214,18 @@ mod tests {
             transaction.write(&root.join("src/index.ts"), b"partial").unwrap();
         }
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn generated_project_pins_matching_public_type_packages() {
+        let package: serde_json::Value = serde_json::from_str(PACKAGE_JSON).unwrap();
+        let expected = env!("CARGO_PKG_VERSION");
+        assert_eq!(package["devDependencies"]["@tysel/types"], expected);
+        assert_eq!(package["devDependencies"]["@tysel/test"], expected);
+        let tsconfig: serde_json::Value = serde_json::from_str(TSCONFIG).unwrap();
+        assert_eq!(
+            tsconfig["compilerOptions"]["types"],
+            serde_json::json!(["@tysel/types", "@tysel/test"])
+        );
     }
 }

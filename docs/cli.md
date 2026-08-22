@@ -11,6 +11,8 @@ Install the three binaries first ([Install](install.md)). After `tysel` is on `P
 | `tysel dev` / `run` | Serve with or without source reload. | `--manifest` |
 | `tysel queue name` / `mcp` | Invoke Queue or serve MCP ingress. | See command help. |
 | `tysel inspect` | Print effective capabilities and limits. | `--manifest` |
+| `tysel doctor` | Diagnose managed installation, platform, project, and opt-in release network access. | `--install`, `--project`, `--network`, `--json` |
+| `tysel upgrade` | Check, atomically upgrade, or roll back a managed toolchain. | `--check`, `--version`, `--yes`, `--force`, `--rollback`, `--json` |
 | `tysel build` | Emit one native executable. | `--release`, `--stub`, `--output`, `--target` |
 | `tysel image` | Generate a non-root container context and optionally call Docker. | `--binary`, `--tag`, `--base-image`, `--context-only`, `--force` |
 | `tysel bench <suite>` | Run the roadmap §23 harness (`startup`, `memory`, `isolate`, `task`, `durable`, `http`, or `all`). | `--format human\|json`, `--evidence` (requires release `all` at full scale) |

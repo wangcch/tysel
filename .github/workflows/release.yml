@@ -12,7 +12,6 @@ env:
   CARGO_TERM_COLOR: always
   FUZZ_TARGET: x86_64-unknown-linux-gnu
   FUZZ_TOOLCHAIN: nightly-2026-08-15
-  RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src -C link-arg=-Wl,--build-id=none
 
 jobs:
   policy:
@@ -26,12 +25,21 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: . -> target
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
         with:
           tool: cargo-audit@0.22.2,cargo-deny@0.20.2,cargo-fuzz@0.13.2
       - name: Run source and dependency policy gates
         run: |
           cargo fmt --all -- --check
+          bash -n install.sh .github/scripts/*.sh
+          bash .github/scripts/check-version-sync.sh
+          bash .github/scripts/test-types-package.sh
           cargo run --locked -p tysel-build --bin tysel-supply-chain -- --check
           cargo audit --deny warnings
           cargo deny check
@@ -76,12 +84,35 @@ jobs:
           path: target/release-policy/security-policy-evidence.json
           if-no-files-found: error
 
-  build:
+  package-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Pack and test external npm consumers
+        run: bash .github/scripts/test-types-package.sh
+      - name: Create immutable npm artifacts
+        run: |
+          mkdir -p target/npm-packages
+          pnpm --dir packages/tysel-types pack --pack-destination "$PWD/target/npm-packages"
+          pnpm --dir packages/tysel-test pack --pack-destination "$PWD/target/npm-packages"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-packages
+          path: target/npm-packages/*.tgz
+          if-no-files-found: error
+
+  build-linux:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             target: linux-x64
           - runner: ubuntu-24.04-arm
             target: linux-arm64
@@ -117,35 +148,15 @@ jobs:
           cargo test --locked --workspace --all-targets
       - name: Build and package two independent release trees
         shell: bash
+        run: >-
+          bash .github/scripts/package-release-target.sh
+          "${{ matrix.target }}" "$SOURCE_DATE_EPOCH"
+      - name: Run local installer fixture
+        shell: bash
         run: |
-          set -euo pipefail
-          rm -rf target/release-output
-          mkdir -p target/release-output
-          version="${GITHUB_REF_NAME:-snapshot}"
-          version="${version//\//-}"
-          archive="tysel-${version}-${{ matrix.target }}.tar.gz"
-          bash .github/scripts/reproducible-release.sh 1 "$version" "${{ matrix.target }}" "$SOURCE_DATE_EPOCH"
-          bash .github/scripts/reproducible-release.sh 2 "$version" "${{ matrix.target }}" "$SOURCE_DATE_EPOCH"
-          mv "target/${archive%.gz}.1.tar.gz" "target/release-output/${archive}"
-          mv "target/${archive%.gz}.2.tar.gz" "target/${archive}.second"
-          first_command="bash .github/scripts/reproducible-release.sh 1 ${version} ${{ matrix.target }} ${SOURCE_DATE_EPOCH}"
-          second_command="bash .github/scripts/reproducible-release.sh 2 ${version} ${{ matrix.target }} ${SOURCE_DATE_EPOCH}"
-          target/repro-1/release/tysel release reproduce \
-            "target/release-output/${archive}" "target/${archive}.second" \
-            --source-commit "$GITHUB_SHA" \
-            --target "${{ matrix.target }}" \
-            --toolchain "$(rustc --version)" \
-            --lockfile Cargo.lock \
-            --command "$first_command" \
-            --command "$second_command" \
-            --output "target/release-output/${archive}.repro.json"
-          target/repro-1/release/tysel release verify-reproducibility \
-            "target/release-output/${archive}" \
-            --evidence "target/release-output/${archive}.repro.json" \
-            --lockfile Cargo.lock \
-            --target "${{ matrix.target }}"
-          sha256sum "target/release-output/${archive}" | awk '{print $1}' \
-            > "target/release-output/${archive}.sha256"
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          bash .github/scripts/test-installer.sh \
+            "$version" "${{ matrix.target }}" target/release-output
       - name: Record target benchmark evidence
         env:
           TYSEL_STUB: target/repro-1/release/tysel-service
@@ -160,8 +171,48 @@ jobs:
           path: target/release-output/*
           if-no-files-found: error
 
+  build-darwin:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: darwin-x64
+          - runner: macos-15
+            target: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Record deterministic build epoch
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+      - name: Run Darwin production acceptance suite
+        run: |
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace --all-targets
+      - name: Build and package two independent Darwin release trees
+        shell: bash
+        run: >-
+          bash .github/scripts/package-release-target.sh
+          "${{ matrix.target }}" "$SOURCE_DATE_EPOCH"
+      - name: Run local installer fixture
+        shell: bash
+        run: |
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          bash .github/scripts/test-installer.sh \
+            "$version" "${{ matrix.target }}" target/release-output
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-release-${{ matrix.target }}
+          path: target/release-output/*
+          if-no-files-found: error
+
   sign:
-    needs: [policy, build]
+    needs: [policy, build-linux, build-darwin]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -183,35 +234,68 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME:-snapshot}"
-          version="${version//\//-}"
+          version="$(bash .github/scripts/check-version-sync.sh)"
           bash .github/scripts/assemble-security-evidence.sh \
             target/release-policy/security-policy-evidence.json \
             target/release-output "$version" "$GITHUB_SHA" Cargo.lock "$FUZZ_TOOLCHAIN"
-      - name: Build the isolated release signer
-        run: cargo build --locked --release -p tysel-release-signing --bin tysel-release-signer
+      - name: Build isolated release metadata tools
+        run: >-
+          cargo build --locked --release
+          -p tysel-release-signing --bin tysel-release-signer
+          -p tysel-build --bin tysel-trust-policy
+          -p tysel-distribution --bin tysel-release-metadata
       - name: Sign deterministic release evidence
         shell: bash
         env:
           TYSEL_RELEASE_KEY_HEX: ${{ secrets.TYSEL_RELEASE_KEY_HEX }}
+          TYSEL_RELEASE_PREVIOUS_KEY_HEX: ${{ secrets.TYSEL_RELEASE_PREVIOUS_KEY_HEX }}
+          TYSEL_RELEASE_KEY_VALID_FROM_UNIX: ${{ vars.TYSEL_RELEASE_KEY_VALID_FROM_UNIX }}
+          TYSEL_RELEASE_PREVIOUS_KEY_VALID_FROM_UNIX: ${{ vars.TYSEL_RELEASE_PREVIOUS_KEY_VALID_FROM_UNIX }}
+          TYSEL_RELEASE_PREVIOUS_KEY_VALID_UNTIL_UNIX: ${{ vars.TYSEL_RELEASE_PREVIOUS_KEY_VALID_UNTIL_UNIX }}
         run: |
           set -euo pipefail
           if [[ ! "$TYSEL_RELEASE_KEY_HEX" =~ ^[0-9a-f]{64}$ ]]; then
             echo "TYSEL_RELEASE_KEY_HEX must contain one canonical 32-byte Ed25519 seed" >&2
             exit 1
           fi
+          if [[ ! "$TYSEL_RELEASE_KEY_VALID_FROM_UNIX" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            echo "TYSEL_RELEASE_KEY_VALID_FROM_UNIX must be the key's persistent inception time" >&2
+            exit 1
+          fi
           key_path="${RUNNER_TEMP}/tysel-release.key"
-          trap 'rm -f "$key_path"' EXIT
+          previous_key_path="${RUNNER_TEMP}/tysel-release-previous.key"
+          trap 'rm -f "$key_path" "$previous_key_path"' EXIT
           install -m 600 /dev/null "$key_path"
           printf '%s\n' "$TYSEL_RELEASE_KEY_HEX" > "$key_path"
-          version="${GITHUB_REF_NAME:-snapshot}"
-          version="${version//\//-}"
-          for target in linux-x64 linux-arm64; do
+          if [[ -n "$TYSEL_RELEASE_PREVIOUS_KEY_HEX" ]]; then
+            if [[ ! "$TYSEL_RELEASE_PREVIOUS_KEY_HEX" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "TYSEL_RELEASE_PREVIOUS_KEY_HEX must contain one canonical Ed25519 seed" >&2
+              exit 1
+            fi
+            [[ "$TYSEL_RELEASE_PREVIOUS_KEY_HEX" != "$TYSEL_RELEASE_KEY_HEX" ]] || {
+              echo "current and previous release keys must be different" >&2
+              exit 1
+            }
+            if [[ ! "$TYSEL_RELEASE_PREVIOUS_KEY_VALID_FROM_UNIX" =~ ^(0|[1-9][0-9]*)$ ]]; then
+              echo "TYSEL_RELEASE_PREVIOUS_KEY_VALID_FROM_UNIX must preserve the old key inception" >&2
+              exit 1
+            fi
+            if [[ ! "$TYSEL_RELEASE_PREVIOUS_KEY_VALID_UNTIL_UNIX" =~ ^(0|[1-9][0-9]*)$ ]]; then
+              echo "TYSEL_RELEASE_PREVIOUS_KEY_VALID_UNTIL_UNIX must be a fixed retirement deadline" >&2
+              exit 1
+            fi
+            install -m 600 /dev/null "$previous_key_path"
+            printf '%s\n' "$TYSEL_RELEASE_PREVIOUS_KEY_HEX" > "$previous_key_path"
+          fi
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
             archive="target/release-output/tysel-${version}-${target}.tar.gz"
             target/release/tysel-release-signer "$archive" \
               --target "$target" --key "$key_path"
             target/release/tysel-release-signer "${archive}.repro.json" \
               --target "$target" --key "$key_path"
+          done
+          for target in linux-x64 linux-arm64; do
             target/release/tysel-release-signer \
               "target/release-output/benchmark-evidence-${target}.json" \
               --target "$target" --key "$key_path"
@@ -219,15 +303,122 @@ jobs:
               "target/release-output/security-evidence-${target}.json" \
               --target "$target" --key "$key_path"
           done
+          published_unix="$(date -u +%s)"
+          (( TYSEL_RELEASE_KEY_VALID_FROM_UNIX <= published_unix )) || {
+            echo "current release key inception is in the future" >&2
+            exit 1
+          }
+          if [[ -f "$previous_key_path" ]]; then
+            (( TYSEL_RELEASE_PREVIOUS_KEY_VALID_FROM_UNIX <= published_unix )) || {
+              echo "previous release key inception is in the future" >&2
+              exit 1
+            }
+            (( published_unix < TYSEL_RELEASE_PREVIOUS_KEY_VALID_UNTIL_UNIX )) || {
+              echo "previous release key has reached its fixed retirement deadline" >&2
+              exit 1
+            }
+          fi
+          published_at="$(date -u -d "@${published_unix}" +%Y-%m-%dT%H:%M:%SZ)"
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}"
+          bash .github/scripts/assemble-release-manifest.sh \
+            target/release-output "$version" "$GITHUB_SHA" "$published_at" \
+            "$base_url" target/release-output/release-manifest.json
+          target/release/tysel-release-metadata release \
+            target/release-output/release-manifest.json
+          target/release/tysel-release-signer \
+            target/release-output/release-manifest.json --metadata --key "$key_path"
+          key_info="$(target/release/tysel-release-signer --key-info --key "$key_path")"
+          expires_at_unix="$((published_unix + 7776000))"
+          if [[ -f "$previous_key_path" ]]; then
+            previous_key_info="$(target/release/tysel-release-signer --key-info --key "$previous_key_path")"
+            jq -n \
+              --argjson key "$key_info" \
+              --argjson previous "$previous_key_info" \
+              --argjson issuedAtUnix "$published_unix" \
+              --argjson expiresAtUnix "$expires_at_unix" \
+              --argjson keyValidFrom "$TYSEL_RELEASE_KEY_VALID_FROM_UNIX" \
+              --argjson previousValidFrom "$TYSEL_RELEASE_PREVIOUS_KEY_VALID_FROM_UNIX" \
+              --argjson previousValidUntil "$TYSEL_RELEASE_PREVIOUS_KEY_VALID_UNTIL_UNIX" \
+              '{policy_version: 1, issued_at_unix: $issuedAtUnix,
+                expires_at_unix: $expiresAtUnix,
+                keys: [
+                  {key_id: $key.key_id, algorithm: $key.algorithm,
+                    public_key: $key.public_key, status: "active",
+                    valid_from_unix: $keyValidFrom},
+                  {key_id: $previous.key_id, algorithm: $previous.algorithm,
+                    public_key: $previous.public_key, status: "retired",
+                    valid_from_unix: $previousValidFrom,
+                    valid_until_unix: $previousValidUntil}
+                ] | sort_by(.key_id)}' \
+              > target/release-output/trust.json
+            trust_signing_key="$previous_key_path"
+          else
+            jq -n \
+              --argjson key "$key_info" \
+              --argjson issuedAtUnix "$published_unix" \
+              --argjson expiresAtUnix "$expires_at_unix" \
+              --argjson keyValidFrom "$TYSEL_RELEASE_KEY_VALID_FROM_UNIX" \
+              '{policy_version: 1, issued_at_unix: $issuedAtUnix,
+                expires_at_unix: $expiresAtUnix,
+                keys: [{key_id: $key.key_id, algorithm: $key.algorithm,
+                  public_key: $key.public_key, status: "active",
+                  valid_from_unix: $keyValidFrom}]}' \
+              > target/release-output/trust.json
+            trust_signing_key="$key_path"
+          fi
+          target/release/tysel-release-signer \
+            target/release-output/trust.json --metadata --key "$trust_signing_key"
+          prior_trust="${RUNNER_TEMP}/published-trust.json"
+          trust_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/trust.json"
+          trust_status="$(curl -sS -L -o "$prior_trust" -w '%{http_code}' "$trust_url")"
+          if [[ "$trust_status" == 200 ]]; then
+            target/release/tysel-trust-policy verify-transition \
+              "$prior_trust" target/release-output/trust.json \
+              target/release-output/trust.json.sig.json "$published_unix"
+          elif [[ "$trust_status" == 404 ]]; then
+            [[ ! -f "$previous_key_path" ]] || {
+              echo "a previous key cannot be configured for the first published trust policy" >&2
+              exit 1
+            }
+            target/release/tysel-trust-policy validate target/release-output/trust.json
+          else
+            echo "cannot read current published trust policy: HTTP $trust_status" >&2
+            exit 1
+          fi
+          manifest_sha256="$(sha256sum target/release-output/release-manifest.json | awk '{print $1}')"
+          manifest_size="$(wc -c < target/release-output/release-manifest.json | tr -d '[:space:]')"
+          jq -n \
+            --arg version "$version" \
+            --arg publishedAt "$published_at" \
+            --arg manifestUrl "${base_url}/release-manifest.json" \
+            --argjson manifestByteSize "$manifest_size" \
+            --arg manifestSha256 "$manifest_sha256" \
+            --arg signatureUrl "${base_url}/release-manifest.json.sig.json" \
+            --arg keyId "$(jq -er '.key_id' target/release-output/release-manifest.json.sig.json)" \
+            '{schemaVersion: 1, channel: "stable", version: $version,
+              publishedAt: $publishedAt, manifestUrl: $manifestUrl,
+              manifestByteSize: $manifestByteSize, manifestSha256: $manifestSha256,
+              manifestSignature: {algorithm: "ed25519", url: $signatureUrl, keyId: $keyId},
+              requiredFeatures: ["atomic-bin-link", "build-info-v1", "ed25519-manifest"]}' \
+            > target/release-output/channel-pointer.json
+          target/release/tysel-release-metadata channel \
+            target/release-output/channel-pointer.json
+          target/release/tysel-release-signer \
+            target/release-output/channel-pointer.json --metadata --key "$key_path"
+          printf '%s\n' "$version" > target/release-output/stable-version
+          install -m 644 install.sh target/release-output/install.sh
+          sha256sum target/release-output/install.sh \
+            | awk '{print $1}' > target/release-output/install.sh.sha256
+          bash .github/scripts/verify-release-assets.sh target/release-output "$version"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signed-release
           path: target/release-output/*
           if-no-files-found: error
 
-  publish:
+  stage-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: sign
+    needs: [sign, package-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -237,7 +428,74 @@ jobs:
         with:
           name: signed-release
           path: target/publish
-      - name: Publish immutable tag assets
+      - name: Stage and verify immutable assets in a draft release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" target/publish/* --verify-tag --generate-notes
+        run: |
+          set -euo pipefail
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          bash .github/scripts/verify-release-assets.sh target/publish "$version"
+          if gh release view "$GITHUB_REF_NAME" --json isDraft > target/release-state.json 2>/dev/null; then
+            jq -e '.isDraft == true' target/release-state.json > /dev/null || {
+              echo "release is already public and immutable" >&2
+              exit 1
+            }
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" target/publish/* --clobber
+          find target/publish -maxdepth 1 -type f -exec basename {} \; | sort > target/local-assets
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort \
+            > target/remote-assets
+          diff -u target/local-assets target/remote-assets
+
+  publish-npm:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: stage-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-packages
+          path: target/npm-packages
+      - name: Publish or verify matching npm packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          bash .github/scripts/publish-npm-packages.sh target/npm-packages "$version"
+
+  promote-stable:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [stage-release, publish-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Publish the verified draft as the stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          for package in '@tysel/types' '@tysel/test'; do
+            [[ "$(npm view "${package}@${version}" version)" == "$version" ]]
+          done
+          gh release view "$GITHUB_REF_NAME" --json isDraft \
+            --jq '.isDraft' | grep -Fx true > /dev/null
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          install_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh"
+          checksum_url="${install_url}.sha256"
+          curl -fsSL --retry 3 "$install_url" > target/install.sh
+          expected="$(curl -fsSL --retry 3 "$checksum_url" | tr -d '[:space:]')"
+          actual="$(sha256sum target/install.sh | awk '{print $1}')"
+          [[ "$actual" == "$expected" ]]

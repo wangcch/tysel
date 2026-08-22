@@ -13,7 +13,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@tysel/runtime-js": "workspace:*"
+    "@tysel/types": "workspace:*"
   },
   "devDependencies": {
     "typescript": "7.0.2"

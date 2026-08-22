@@ -75,9 +75,9 @@ importers:
 
   packages/tysel:
     dependencies:
-      '@tysel/runtime-js':
+      '@tysel/types':
         specifier: workspace:*
-        version: link:../../runtime-js
+        version: link:../tysel-types
     devDependencies:
       typescript:
         specifier: 7.0.2
@@ -90,16 +90,16 @@ importers:
         version: 7.0.2
 
   packages/tysel-test:
+    dependencies:
+      '@tysel/types':
+        specifier: workspace:*
+        version: link:../tysel-types
     devDependencies:
       typescript:
         specifier: 7.0.2
         version: 7.0.2
 
   packages/tysel-types:
-    dependencies:
-      '@tysel/runtime-js':
-        specifier: workspace:*
-        version: link:../../runtime-js
     devDependencies:
       typescript:
         specifier: 7.0.2

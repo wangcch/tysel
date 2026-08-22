@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "pnpm -r --if-present check",
+    "check": "pnpm --filter @tysel/types build && pnpm -r --if-present check",
     "test": "pnpm -r --if-present test",
     "cli": "cargo run -p tysel-cli --"
   },

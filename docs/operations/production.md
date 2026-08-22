@@ -124,6 +124,11 @@ can be enabled independently.
    compromised key `revoked` immediately; retirement is not a compromise
    response.
 
+Record the old key's grace-window deadline once as
+`TYSEL_RELEASE_PREVIOUS_KEY_VALID_UNTIL_UNIX`; never extend or reset it on a
+later release. Publication must validate each successor against the currently
+published policy. Revoked-key tombstones remain in the policy.
+
 Rotate before trust-policy expiry. Keep offline audit records of key IDs,
 policy digests, activation, retirement, and revocation times, but never copy a
 private seed into those records.

@@ -31,7 +31,8 @@ pub use signing::{
     RELEASE_ARTIFACT_SIGNATURE_VERSION, RELEASE_SIGNATURE_VERSION, ReleaseArtifactSignature,
     ReleaseKeyInfo, ReleaseKeyStatus, ReleaseSignature, TRUST_POLICY_VERSION, TrustPolicy,
     TrustedReleaseKey, release_key_info, sign_release_artifact, sign_release_evidence,
-    validate_trust_policy, verify_release_artifact_signature, verify_release_signature,
+    sign_release_metadata, validate_trust_policy, validate_trust_policy_transition,
+    verify_release_artifact_signature, verify_release_metadata_signature, verify_release_signature,
 };
 pub use supply_chain::{
     CycloneDxBom, LicenseInventory, RuntimeInventory, SUPPLY_CHAIN_VERSION, SupplyChainComponent,

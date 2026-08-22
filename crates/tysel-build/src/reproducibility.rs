@@ -193,7 +193,7 @@ fn validate_provenance(
         valid_lower_hex(source_commit, &[40, 64]),
         "source commit must be 40 or 64 lowercase hex characters"
     );
-    ensure!(matches!(target, "linux-x64" | "linux-arm64"), "unsupported production release target");
+    tysel_release_signing::validate_release_target(target)?;
     validate_single_line("toolchain", toolchain)?;
     ensure!(commands.len() == 2, "reproducibility evidence requires exactly two build commands");
     for command in commands {
@@ -305,15 +305,13 @@ mod tests {
             .contains("not reproducible")
         );
         assert!(validate_provenance("main", "linux-x64", "rustc 1.97.1", &commands).is_err());
-        assert!(
-            validate_provenance(
-                "0123456789abcdef0123456789abcdef01234567",
-                "darwin-arm64",
-                "rustc 1.97.1",
-                &commands
-            )
-            .is_err()
-        );
+        validate_provenance(
+            "0123456789abcdef0123456789abcdef01234567",
+            "darwin-arm64",
+            "rustc 1.97.1",
+            &commands,
+        )
+        .unwrap();
     }
 
     #[test]

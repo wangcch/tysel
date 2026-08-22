@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
+use tysel_distribution::Target;
 use tysel_manifest::Manifest;
 
 use crate::check::{Typecheck, typecheck};
@@ -16,13 +17,13 @@ pub fn run(
 ) -> Result<()> {
     let manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-    let host = host_target();
+    let host = Target::current();
     if let Some(requested) = target.as_deref()
-        && !target_allowed(requested, host.aliases)
+        && !host.accepts(requested)
     {
         return Err(anyhow!(
             "cross-compilation is not implemented; this host is {} (omit --target)",
-            host.label
+            host.canonical()
         ));
     }
     if let Some(requested) = profile.as_deref()
@@ -73,7 +74,7 @@ pub fn run(
         .with_context(|| format!("failed to write {}", output.display()))?;
     let release_sidecars = if release {
         Some(
-            tysel_build::write_release_evidence(&output, host.label)
+            tysel_build::write_release_evidence(&output, host.canonical())
                 .context("failed to write release evidence")?,
         )
     } else {
@@ -85,7 +86,7 @@ pub fn run(
     println!("Capabilities     {}", capability_summary(&manifest));
     println!("Runtime          {}", manifest.app.profile);
     println!("Executable       {}", format_bytes(executable));
-    println!("Target           {}", host.label);
+    println!("Target           {}", host.canonical());
     println!("Output           {}", output.display());
     if let Some(sidecars) = release_sidecars {
         println!("Checksum         {}", sidecars.checksum.display());
@@ -95,52 +96,6 @@ pub fn run(
         println!("Evidence         {}", sidecars.evidence.display());
     }
     Ok(())
-}
-
-struct HostTarget {
-    label: &'static str,
-    aliases: &'static [&'static str],
-}
-
-fn host_target() -> HostTarget {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        HostTarget {
-            label: "darwin-arm64",
-            aliases: &["darwin-arm64", "macos-arm64", "aarch64-apple-darwin"],
-        }
-    }
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        HostTarget {
-            label: "darwin-x64",
-            aliases: &["darwin-x64", "macos-x64", "x86_64-apple-darwin"],
-        }
-    }
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        HostTarget {
-            label: "linux-x64",
-            aliases: &["linux-x64", "linux-amd64", "x86_64-unknown-linux-gnu"],
-        }
-    }
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    {
-        HostTarget { label: "linux-arm64", aliases: &["linux-arm64", "aarch64-unknown-linux-gnu"] }
-    }
-    #[cfg(not(any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "macos", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64"),
-    )))]
-    {
-        HostTarget { label: "unknown", aliases: &[] }
-    }
-}
-
-fn target_allowed(requested: &str, aliases: &[&str]) -> bool {
-    aliases.iter().any(|alias| alias.eq_ignore_ascii_case(requested))
 }
 
 fn capability_summary(manifest: &Manifest) -> String {
@@ -262,12 +217,12 @@ mod tests {
 
     #[test]
     fn host_target_accepts_its_aliases() {
-        let host = host_target();
-        assert!(target_allowed(host.label, host.aliases));
-        for alias in host.aliases {
-            assert!(target_allowed(alias, host.aliases), "{alias}");
+        let host = Target::current();
+        assert!(host.accepts(host.canonical()));
+        for alias in host.aliases() {
+            assert!(host.accepts(alias), "{alias}");
         }
-        assert!(!target_allowed("linux-riscv64", host.aliases));
+        assert!(!host.accepts("linux-riscv64"));
     }
 
     #[test]

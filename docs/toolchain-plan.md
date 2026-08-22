@@ -1,6 +1,7 @@
 # Developer toolchain iteration plan
 
-Status: proposed implementation contract.
+Status: active implementation contract; T0–T5 are implemented in the repository
+and await the full four-runner release gate before public endpoint promotion.
 
 This plan covers four connected deliverables:
 
@@ -12,7 +13,21 @@ This plan covers four connected deliverables:
 The user-facing installation instructions remain in [Install](install.md). This
 document defines the target experience together with the architecture,
 sequencing, safety properties, and release gates required to deliver it.
-Commands described as future milestones are not available yet.
+
+Current implementation snapshot (2026-08-22):
+
+- T0 distribution identity, strict metadata/layout contracts, and synchronized
+  versions are implemented;
+- T1 public declaration-only `@tysel/types`, deduplicated SDK/test types, and
+  external packed-consumer tests are implemented;
+- T2 local and explicit authenticated network doctor checks are implemented;
+- T3 has a four-target Linux/Darwin release workflow; Darwin arm64 has also
+  passed a local two-tree byte-for-byte reproducibility run;
+- T4 installer transaction and local real-archive fault fixture are implemented;
+- T5 signed resolution, check, staging, atomic activation, post-check recovery,
+  and rollback are implemented; broader cross-version fault injection remains a
+  release gate rather than an assumed result;
+- T6 remains future work.
 
 ## Product outcome
 
@@ -20,7 +35,7 @@ A new user should be able to reach a passing Tysel project from a clean machine
 without Rust, Node, npm, or administrator access:
 
 ```sh
-curl -fsSL https://tysel.dev/install.sh | sh
+curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
 tysel init hello-tysel
 cd hello-tysel
 tysel check
@@ -48,7 +63,10 @@ Tysel has two separate distribution products:
 `cargo install` and `npm install --global` remain unsupported native-toolchain
 distribution paths because they cannot preserve the three-binary contract.
 
-## Repository assessment
+## Baseline repository assessment
+
+This section records the gaps found before the iteration began. The implementation
+snapshot above and milestone gates below are authoritative for current status.
 
 ### Distribution
 
@@ -236,9 +254,9 @@ after bootstrap, `tysel upgrade` owns lifecycle management.
 ### User interface
 
 ```sh
-curl -fsSL https://tysel.dev/install.sh | sh
-curl -fsSL https://tysel.dev/install.sh | sh -s -- --version 0.1.0
-curl -fsSL https://tysel.dev/install.sh | sh -s -- --no-modify-path
+curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh -s -- --version 0.1.0
+curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh -s -- --no-modify-path
 ```
 
 Initial inputs:
@@ -365,12 +383,15 @@ with owner-specific remediation.
 1. Acquire `upgrade.lock` with a bounded wait.
 2. Run installation doctor and reject an unsafe base.
 3. Resolve and authenticate channel and immutable manifest using the currently
-   trusted CLI's trust root.
+   trusted CLI's trust root. Authenticate the release's signed trust policy with
+   the installed policy first, then use the refreshed policy for channel and
+   manifest verification.
 4. Enforce semver, target, minimum updater, and compatibility rules.
 5. Download and stage the complete release unit.
 6. Verify archive/binary hashes, signature, identity, permissions, and policy.
 7. Run install doctor against staging.
-8. Atomically switch `bin` and update state.
+8. Atomically switch `bin`, update state, and rotate the authenticated trust
+   policy.
 9. Run post-switch doctor; restore prior link/state on failure.
 10. Retain previous version and delete only older inactive verified versions.
 
@@ -384,6 +405,11 @@ the new link. Upgrade never migrates application durable data.
 - Every verification/post-switch failure leaves the prior install runnable.
 - Reject replayed/expired/revoked trust data, wrong target, malformed schema,
   mixed versions, and unsupported minimum updater.
+- Require policy issue time to advance; preserve key identity and inception;
+  prevent status regression, retirement-deadline changes, premature retired-key
+  removal, and deletion of revoked-key tombstones. Release automation stores a
+  fixed previous-key retirement deadline and validates each successor against
+  the currently published policy.
 - Discard partial downloads unless resumable chunks are cryptographically bound.
 - Require no Node, Rust, npm, or administrator access.
 
@@ -472,7 +498,7 @@ architectures; an explicitly labeled Linux preview can ship earlier.
 | Distribution model | Shared Rust module/crate for targets, identity, manifests, state, validation; remove private target duplication |
 | Companions | Early build-info argument paths in service/worker binaries |
 | Release | Separate platform build, portable archive, evidence, and centralized signing stages in release workflow/scripts |
-| Installer | Reviewed POSIX script published byte-for-byte to `tysel.dev`; local fixture tests |
+| Installer | Reviewed POSIX script published byte-for-byte in the promoted GitHub Release; `tysel.dev` remains a later verified mirror |
 | Doctor | CLI module with reusable result types and independent human/JSON renderers |
 | Upgrade | CLI module plus injectable retrieval, verification, locking, staging, and activation services |
 | Types | Expand `packages/tysel-types`; update SDK/test/init/examples; add package and consumer fixtures |

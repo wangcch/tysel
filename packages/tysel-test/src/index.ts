@@ -1,5 +1,7 @@
+import type { MaybePromise } from "@tysel/types";
+
 export async function invokeFetch(
-  handler: (request: Request) => Response | Promise<Response>,
+  handler: (request: Request) => MaybePromise<Response>,
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
