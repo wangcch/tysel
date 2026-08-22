@@ -21,12 +21,6 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
-  examples/hello-service:
-    devDependencies:
-      typescript:
-        specifier: 7.0.2
-        version: 7.0.2
-
   examples/hono-api:
     dependencies:
       hono:
