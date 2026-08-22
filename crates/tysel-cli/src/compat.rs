@@ -119,7 +119,8 @@ fn collect_deps(value: &Value, names: &mut Vec<String>) {
 }
 
 fn classify(name: &str) -> Finding {
-    let bare = if node_scan::is_node_builtin(name) {
+    let node_builtin = node_scan::is_node_builtin(name);
+    let bare = if node_builtin {
         node_scan::builtin_root(name).unwrap_or(name)
     } else {
         package_root(name)
@@ -134,7 +135,7 @@ fn classify(name: &str) -> Finding {
             reason: "requires a Web/Tysel shim",
         };
     }
-    if node_scan::is_node_builtin(bare) {
+    if node_builtin {
         return Finding {
             name: name.into(),
             kind: CompatKind::Unsupported,
@@ -215,5 +216,8 @@ mod tests {
             assert_eq!(classify(builtin).kind, CompatKind::Unsupported);
         }
         assert_eq!(classify("node:path/posix").kind, CompatKind::Shim);
+        for builtin in ["node:test", "node:timers/promises", "node:sqlite", "timers/promises"] {
+            assert_eq!(classify(builtin).kind, CompatKind::Unsupported);
+        }
     }
 }

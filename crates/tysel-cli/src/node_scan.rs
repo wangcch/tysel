@@ -7,11 +7,27 @@ const NODE_PREFIX: &str = "node:";
 /// classification. Keep this as the single catalog so the two paths cannot
 /// silently disagree about a builtin import.
 const BUILTINS: &[&str] = &[
+    "_http_agent",
+    "_http_client",
+    "_http_common",
+    "_http_incoming",
+    "_http_outgoing",
+    "_http_server",
+    "_stream_duplex",
+    "_stream_passthrough",
+    "_stream_readable",
+    "_stream_transform",
+    "_stream_wrap",
+    "_stream_writable",
+    "_tls_common",
+    "_tls_wrap",
     "assert",
     "async_hooks",
     "buffer",
     "child_process",
     "cluster",
+    "console",
+    "constants",
     "crypto",
     "dgram",
     "diagnostics_channel",
@@ -35,12 +51,16 @@ const BUILTINS: &[&str] = &[
     "repl",
     "stream",
     "string_decoder",
+    "sys",
+    "timers",
     "tls",
+    "trace_events",
     "tty",
     "url",
     "util",
     "v8",
     "vm",
+    "wasi",
     "worker_threads",
     "zlib",
 ];
@@ -62,6 +82,10 @@ pub fn scan_source(path: &Path, source: &str) -> Result<Vec<String>> {
 }
 
 pub fn is_node_builtin(specifier: &str) -> bool {
+    let specifier = specifier.trim();
+    if specifier.starts_with(NODE_PREFIX) {
+        return builtin_root(specifier).is_some();
+    }
     builtin_root(specifier).is_some_and(|root| BUILTINS.contains(&root))
 }
 
@@ -114,6 +138,42 @@ mod tests {
                 "punycode".to_string(),
                 "repl".to_string(),
                 "string_decoder".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn detects_reserved_node_namespace_and_bare_builtin_roots() {
+        for builtin in [
+            "node:test",
+            "node:timers/promises",
+            "node:sqlite",
+            "console",
+            "timers/promises",
+            "_http_agent",
+        ] {
+            assert!(is_node_builtin(builtin), "missed builtin {builtin}");
+        }
+        assert!(!is_node_builtin("node:"));
+        assert!(!is_node_builtin("application-package"));
+
+        let found = scan_source(
+            Path::new("example.ts"),
+            r#"
+            import "node:test";
+            import "node:sqlite";
+            import "node:timers/promises";
+            import "timers/promises";
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            found,
+            vec![
+                "node:sqlite".to_string(),
+                "node:test".to_string(),
+                "node:timers/promises".to_string(),
+                "timers/promises".to_string(),
             ]
         );
     }

@@ -309,6 +309,34 @@ fn check_rejects_node_builtin_imports() {
 }
 
 #[test]
+fn reserved_node_namespace_reaches_check_and_strict_compat() {
+    let dir = temp_app("check-node-prefix");
+    write_js_app(
+        &dir,
+        "import \"node:test\";\nexport default { async fetch() { return new Response(\"ok\"); } };\n",
+    );
+    fs::write(dir.join("package.json"), r#"{"name":"check-node-prefix","private":true}"#).unwrap();
+
+    let check = Command::new(cli_exe())
+        .args(["check", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!check.status.success());
+
+    let report =
+        Command::new(cli_exe()).current_dir(&dir).args(["compat", "--json"]).output().unwrap();
+    assert!(report.status.success(), "{}", String::from_utf8_lossy(&report.stderr));
+    let value: serde_json::Value = serde_json::from_slice(&report.stdout).unwrap();
+    assert_eq!(value["summary"]["unsupported"], 1);
+    assert_eq!(value["packages"][0]["name"], "node:test");
+    assert_eq!(value["packages"][0]["status"], "unsupported");
+
+    let strict =
+        Command::new(cli_exe()).current_dir(&dir).args(["compat", "--strict"]).output().unwrap();
+    assert!(!strict.status.success());
+}
+
+#[test]
 fn compat_classifies_project_dependencies() {
     let dir = temp_app("compat-deps");
     write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
