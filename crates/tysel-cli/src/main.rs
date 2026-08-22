@@ -33,7 +33,7 @@ mod upgrade;
 #[command(
     name = "tysel",
     version,
-    about = "A lightweight native runtime for TypeScript services and agents.",
+    about = "A lightweight native TypeScript runtime for services and AI agents.",
     arg_required_else_help = true
 )]
 struct Cli {

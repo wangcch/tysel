@@ -9,4 +9,5 @@ Idle memory is sampled after listen, before any request.
 cargo run -p tysel-testkit --bin tysel-bench --release
 ```
 
-Gate: ≤ 32MB (roadmap §23). Linux PSS is the gate of record; the CI job `linux-pss` runs `tysel-bench` on `ubuntu-latest`. macOS RSS is a local proxy only.
+Gate: ≤ 32MB. Linux PSS is the gate of record; the CI job `linux-pss` runs
+`tysel-bench` on `ubuntu-latest`. macOS RSS is a local proxy only.

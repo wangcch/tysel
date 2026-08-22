@@ -1,21 +1,59 @@
 site_name: Tysel Documentation
-site_description: Build TypeScript services and durable agents as native executables.
+site_description: A lightweight native TypeScript runtime for services and AI agents.
+site_url: https://tysel.dev/docs/
 docs_dir: docs
+repo_name: wangcch/tysel
+repo_url: https://github.com/wangcch/tysel
+edit_uri: edit/main/docs/
+strict: true
 exclude_docs: |
-  toolchain-plan.md
   website-plan.md
-  architecture/*acceptance.md
+  documentation-roadmap.md
 theme:
   name: readthedocs
+plugins:
+  - search
 nav:
   - Home: index.md
-  - Getting started: getting-started.md
-  - CLI: cli.md
-  - Runtime API: api/runtime.md
-  - Capability matrix: capabilities/README.md
-  - npm compatibility: compatibility/README.md
-  - Production operations: operations/production.md
-  - Architecture: architecture/README.md
+  - Get started:
+      - Installation: install.md
+      - First service: getting-started.md
+  - Guides:
+      - Choose a guide: guides/index.md
+      - Example gallery: guides/examples.md
+  - Learn:
+      - How Tysel works: concepts/how-tysel-works.md
+      - Projects and configuration: concepts/projects-and-configuration.md
+      - Execution profiles: concepts/execution-profiles.md
+      - Durable execution: concepts/durable-execution.md
+  - Build:
+      - Runtime API: api/runtime.md
+      - Capabilities: capabilities/README.md
+      - npm compatibility: compatibility/README.md
+  - Reference:
+      - Overview: reference/index.md
+      - CLI: cli.md
+      - Manifest: reference/manifest.md
+  - Operate:
+      - Security: security/README.md
+      - Production: operations/production.md
+      - Performance: performance/README.md
+  - Internals:
+      - Architecture: architecture/README.md
+      - Decision records: adr/index.md
+      - JavaScript APIs: architecture/javascript-runtime-compatibility.md
+      - Runtime ownership: architecture/javascript-runtime-convergence.md
+      - Decisions:
+          - Rust core: adr/001-runtime-core-rust.md
+          - QuickJS engine: adr/002-quickjs-ng-engine.md
+          - Web API first: adr/003-web-api-first.md
+          - Single executable: adr/004-build-once-ship-one-file.md
+          - Deny by default: adr/005-deny-by-default.md
+          - Process isolation: adr/006-process-isolation.md
+          - Durable replay: adr/007-durable-replay.md
+          - WIT capability ABI: adr/008-wit-capability-abi.md
+          - No AOT requirement: adr/009-no-aot-on-v1-path.md
+          - TypeScript frontend: adr/010-static-typescript-parallel.md
 markdown_extensions:
   - tables
   - fenced_code

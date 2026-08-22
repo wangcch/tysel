@@ -6,7 +6,8 @@ executes with explicit limits. The isolated profile moves application execution 
 restricted worker process on Linux. Durable tasks use a persisted event log and leased
 scheduler lifecycle so work can suspend and resume without replaying completed effects.
 
-Accepted design decisions are recorded in the [architecture decision records](../adr/).
+Accepted design decisions are recorded in the
+[architecture decision records](../adr/index.md).
 The main system boundaries are:
 
 - Packaging: bundle, manifest, TAP trailer, and native service stub

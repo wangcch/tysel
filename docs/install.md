@@ -9,24 +9,44 @@ Tysel's developer toolchain contains three native executables from one release:
 Install and upgrade them as one unit. Copying only `tysel` produces an incomplete
 installation.
 
-## Quick install
+## Current availability
 
-The managed installer supports Linux and macOS on x64 and arm64. It does not
-require Rust, Node.js, npm, administrator access, or `sudo`.
+Tysel has not published a tagged binary release yet. The current installation
+path is a source build with Rust, Node.js 22+, pnpm 11+, and the pinned
+workspace dependencies:
+
+```sh
+git clone https://github.com/wangcch/tysel.git
+cd tysel
+pnpm install
+cargo build --locked --release \
+  -p tysel-cli --bin tysel \
+  -p tysel-runtime --bin tysel-service \
+  -p tysel-isolate --bin tysel-worker
+export PATH="$PWD/target/release:$PATH"
+tysel doctor
+```
+
+Keep all three binaries together. Doctor reports this as an unmanaged source
+installation.
+
+## Managed installer
+
+The managed installer is implemented for Linux and macOS on x64 and arm64, but
+the `latest` URL becomes usable only after the first tagged release publishes
+`install.sh` and signed platform archives.
+
+After that release exists, the install command will be:
 
 ```sh
 curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
 ```
 
-Restart the shell if the installer updated its startup file, then verify the
-toolchain:
+The managed installation does not require Rust, Node.js, npm, administrator
+access, or `sudo`. Restart the shell if the installer changes its startup file,
+then run `tysel doctor --install`.
 
-```sh
-tysel --version
-tysel doctor --install
-```
-
-Create the first project:
+Create a project:
 
 ```sh
 tysel init hello-tysel
@@ -35,16 +55,17 @@ tysel check
 tysel test
 ```
 
-Node.js is optional. Install the generated development dependencies only when
-editor declarations and TypeScript compiler feedback are wanted; the native
-runtime and a production executable do not need `node_modules`.
+Node.js is optional after a managed installation. Once the matching npm
+packages are published, generated dependencies provide editor declarations and
+compiler feedback; the native runtime and packaged production executable do
+not need `node_modules`.
 
 ## Installer options
 
-Install one immutable version:
+After releases are available, select an immutable version:
 
 ```sh
-curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh -s -- --version 0.1.0
+curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh -s -- --version VERSION
 ```
 
 Preview target, paths, and URLs without changing the machine:
@@ -123,11 +144,12 @@ changed, `upgrade` asks before applying a `trust-refresh`. JSON output reports
 that mutation with `action: "trust-refresh"` and `changed: true`; `--check`
 never changes `trust.json`.
 
-Select an immutable version. Downgrades additionally require `--force`:
+Select an immutable published version. Downgrades additionally require
+`--force`:
 
 ```sh
-tysel upgrade --version 0.2.0
-tysel upgrade --version 0.1.0 --force
+tysel upgrade --version VERSION
+tysel upgrade --version OLDER_VERSION --force
 ```
 
 Return to the retained previous release:
@@ -162,23 +184,6 @@ official bootstrap. A compromised signing key still requires suspending
 publication and an out-of-band bootstrap recovery; rotation is not a substitute
 for an offline root of trust.
 
-## Build from source
-
-Contributors can build all three executables with Rust:
-
-```sh
-git clone https://github.com/wangcch/tysel.git
-cd tysel
-cargo build --locked --release \
-  -p tysel-cli --bin tysel \
-  -p tysel-runtime --bin tysel-service \
-  -p tysel-isolate --bin tysel-worker
-```
-
-Keep the resulting executables in the same directory on `PATH`. Doctor reports
-this as an unmanaged source build; `tysel upgrade` deliberately refuses to
-modify it.
-
 ## Security boundary
 
 The preview bootstrap model uses HTTPS plus the release SHA-256 before executing
@@ -190,8 +195,6 @@ channel, manifest, and archive metadata. Stable publication accepts only final
 publishes matching `@tysel/types` and `@tysel/test` artifacts, and only then
 makes the complete GitHub Release public. Prereleases therefore cannot advance
 the stable pointer, and native releases cannot generate projects whose matching
-npm contracts are unavailable. See the internal
-developer toolchain iteration plan in the source repository for the threat
-model, release gates, and future independent-bootstrap work.
+npm contracts are unavailable.
 
 Windows native archives are not currently supported. Use WSL on Windows.

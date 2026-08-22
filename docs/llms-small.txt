@@ -1,0 +1,26 @@
+# Tysel
+
+> Write TypeScript. Ship a binary.
+
+Tysel is a lightweight native TypeScript runtime for services and AI agents.
+It ships an application and its runtime as one executable, grants host
+capabilities explicitly, and supports durable work that can suspend and resume.
+
+Important boundaries:
+
+- Tysel is Web-API-first, not a general Node.js compatibility layer.
+- The `service` profile is for trusted first-party code.
+- The `isolated` profile uses a worker process; Linux is its production security target.
+- The Component profile is experimental.
+- Builds currently target the host platform; cross-compilation is not implemented.
+- There is no tagged binary release yet; install from source.
+
+Start with:
+
+- Documentation: https://tysel.dev/docs/
+- Getting started: https://tysel.dev/docs/getting-started/
+- Guides: https://tysel.dev/docs/guides/
+- Reference: https://tysel.dev/docs/reference/
+- Security: https://tysel.dev/docs/security/
+- Production operations: https://tysel.dev/docs/operations/production/
+- Source: https://github.com/wangcch/tysel

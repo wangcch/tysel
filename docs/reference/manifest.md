@@ -54,6 +54,39 @@ metrics = "http://127.0.0.1:4318/v1/metrics"
 
 `schema_version` defaults to `1` for older manifests that omit it. An
 unsupported newer version fails with an upgrade diagnostic.
+Unknown fields are rejected in both formats.
+
+## JSON format
+
+The same configuration can be represented as JSON:
+
+```json
+{
+  "schema_version": 1,
+  "app": {
+    "name": "orders",
+    "entry": "src/index.ts",
+    "profile": "service"
+  },
+  "server": {
+    "listen": "127.0.0.1:3000",
+    "http1": true,
+    "http2": false,
+    "websocket": false
+  },
+  "tasks": {
+    "verify": {
+      "description": "Check and test",
+      "steps": [["check"], ["test"]]
+    }
+  }
+}
+```
+
+Use `tysel config show` to inspect expanded defaults, `tysel config convert`
+to convert formats, and `tysel config schema` to print the bundled JSON Schema.
+The [projects and configuration guide](../concepts/projects-and-configuration.md)
+documents discovery and safe file creation.
 
 ## `[app]`
 
@@ -149,8 +182,16 @@ Dependencies run once in dependency order. Cycles, missing dependencies,
 empty steps, duplicate dependencies, and unsupported commands are rejected
 while loading the manifest. Steps do not invoke a shell and cannot call
 `init`, `upgrade`, `release`, `doctor`, `bench`, `config`, or another task.
+They also cannot use `-C`, `--project`, or `--manifest` to escape the selected
+project. Supported step commands are `check`, `test`, `build`, `inspect`,
+`compat`, `run`, `dev`, `mcp`, `queue`, and `image`.
 
 ```sh
 tysel task --list
 tysel task verify
 ```
+
+Use `tysel config schema` for the machine-readable schema bundled with the
+installed CLI. Continue with [projects and configuration](../concepts/projects-and-configuration.md)
+for project discovery and conversion workflows, or the
+[CLI reference](../cli.md) for command behavior.

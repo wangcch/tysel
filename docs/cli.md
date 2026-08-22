@@ -18,9 +18,17 @@ tysel run --manifest examples/sqlite-worker/tysel.toml
 `-C` and `--manifest` are mutually exclusive. If both manifest formats exist
 in one directory, implicit discovery fails instead of choosing one.
 
+Project commands switch to the discovered project root before reading entries
+or runtime-relative paths. For `init`, `-C` acts as the base directory for a
+relative path:
+
+```sh
+tysel -C services init api --template http --yes
+```
+
 | Command | Purpose | Common options |
 | --- | --- | --- |
-| `tysel init [path]` | Create or safely add Tysel to a project. | `--template`, `--manifest-format`, `--entry`, `--package-json`, `--no-tests`, `--dry-run` |
+| `tysel init [path]` | Create or safely add Tysel to a project. | `--template`, `--manifest-format`, `--entry`, `--package-json`, `--add-scripts`, `--no-tests`, `--dry-run`, `--yes`, `--no-interactive` |
 | `tysel config ...` | Locate, validate, convert, and inspect configuration. | `path`, `validate`, `show`, `convert`, `schema` |
 | `tysel task [name]` | List or run manifest-native task workflows. | `--list`, `--manifest` |
 | `tysel check` | Validate manifest, bundle, TypeScript, capabilities, and Node builtin usage. | `--manifest` |
@@ -45,7 +53,9 @@ steps = [["build", "--release"]]
 
 Run them with `tysel task verify` or list them with `tysel task --list`.
 Each step is a Tysel argument vector, not a shell command, so quoting and
-execution are consistent across supported platforms.
+execution are consistent across supported platforms. Dependencies execute once
+in dependency order, a failed step stops the workflow, and every step inherits
+the task's project root and manifest.
 
 | Command | Purpose |
 | --- | --- |
@@ -72,6 +82,11 @@ already exist, and the filename extension must match `--to`.
 
 `config path` only performs discovery, so it can still locate a malformed
 manifest for troubleshooting. Other config commands load and validate it.
+`config show` expands omitted defaults. `config schema` does not require a
+project and prints the bundled Draft 2020-12 JSON Schema.
+
+See [Projects and configuration](concepts/projects-and-configuration.md) for
+init adoption behavior, path resolution, and task restrictions.
 
 ## Packaging and release
 

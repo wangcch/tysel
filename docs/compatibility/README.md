@@ -1,12 +1,59 @@
-# npm compatibility
+# npm and Node.js compatibility
 
-Tysel is Web-API-first and does not attempt general Node.js compatibility. `tysel compat` scans direct package dependencies plus Node builtin imports visible in the entry.
+Tysel is Web-API-first. It does not attempt general Node.js compatibility, and
+an npm package is usable only when its runtime assumptions fit Tysel's
+supported Web and ECMAScript surface.
+
+## Check a project
+
+```sh
+tysel compat
+tysel compat --json
+tysel compat --strict
+tysel compat --strict --deny-unknown
+```
+
+The report scans direct package dependencies and Node builtin imports visible
+from the application entry.
 
 | Status | Meaning |
 | --- | --- |
-| `compatible` | In the reviewed compatibility catalog. |
-| `shim` | Requires an explicit Web/Tysel shim. |
-| `unsupported` | Requires an unavailable builtin, native addon, or runtime model. |
-| `unknown` | Not reviewed; never reported as compatible. |
+| `compatible` | Reviewed against the current Tysel contract. |
+| `shim` | Requires an explicit Web/Tysel adapter. |
+| `unsupported` | Depends on an unavailable builtin, native addon, or runtime model. |
+| `unknown` | Not reviewed and never treated as compatible automatically. |
 
-`--strict` rejects unsupported dependencies. `--deny-unknown` extends the policy to unknown packages. `--json` emits schema version 1 with counts and reasons. Package classification is only an early warning; use `tysel check` and tests as the acceptance gate.
+`--strict` rejects unsupported dependencies. `--deny-unknown` also rejects
+unreviewed packages. `--json` emits schema version 1 with counts and reasons.
+
+## What usually works
+
+Packages are good candidates when they are ESM, use standard JavaScript and Web
+APIs, and do not inspect or mutate the host environment. Routers, schema
+validators, pure data transformations, and protocol libraries often fit this
+model.
+
+## What does not work
+
+- `node:*` builtins such as `fs`, `net`, `child_process`, and `worker_threads`;
+- native Node addons;
+- subprocess and shell execution;
+- dynamic library loading;
+- CommonJS loader hooks and Node-specific module resolution behavior;
+- dependencies that require ambient filesystem, network, process, or
+  environment access.
+
+Tysel provides storage, network, secrets, and filesystem operations through
+explicit host capabilities instead of Node APIs.
+
+Classification is an early warning, not proof. The adoption gate is:
+
+```sh
+tysel compat --strict
+tysel check
+tysel test
+```
+
+Also review the
+[JavaScript runtime compatibility matrix](../architecture/javascript-runtime-compatibility.md)
+for the exact Web API subset.

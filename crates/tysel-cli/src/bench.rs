@@ -60,7 +60,7 @@ pub fn run(options: Options) -> Result<()> {
     if let Some(path) = &options.evidence {
         let baseline = baseline.as_ref().expect("all includes baseline measurement");
         if !suites_passed(&suites) {
-            bail!("one or more roadmap §23 release gates failed");
+            bail!("one or more benchmark release gates failed");
         }
         let source_commit = match options.source_commit {
             Some(value) => value,
@@ -74,7 +74,7 @@ pub fn run(options: Options) -> Result<()> {
     }
 
     if !suites_passed(&suites) {
-        bail!("one or more roadmap §23 release gates failed");
+        bail!("one or more benchmark release gates failed");
     }
     Ok(())
 }

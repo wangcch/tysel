@@ -1,4 +1,4 @@
-//! Bounded Wasmtime Component execution engine (M4).
+//! Bounded Wasmtime Component execution engine.
 //!
 //! Components receive no application capabilities by default. A small WASI
 //! runtime profile may be linked for language support, with closed stdio, no

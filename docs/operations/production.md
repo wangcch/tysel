@@ -1,6 +1,6 @@
 # Production operations
 
-This runbook is the deployment contract for Tysel Production v1. Linux x86-64
+This runbook describes the current production deployment contract. Linux x86-64
 (`linux-x64`) and Linux arm64 (`linux-arm64`) are the supported production
 targets. Treat the release archive, its reproducibility proof, signatures,
 checksum, benchmark evidence, security evidence, and the deployment trust
@@ -67,8 +67,10 @@ resolved against it.
 
 Before starting a service:
 
-- review the embedded manifest with `tysel inspect --manifest tysel.toml` before
-  building, and review the release `.compat.json` after building;
+- run `tysel config validate` and review expanded defaults with
+  `tysel config show` before building;
+- review effective authority with `tysel inspect`, and review the release
+  `.compat.json` after building;
 - expose only the configured `[server].listen` address, normally behind a TLS
   terminating reverse proxy;
 - inject declared secrets and `TYSEL_POSTGRES_<NAME>` values through the service

@@ -1,0 +1,51 @@
+# Tysel
+
+> Tysel is a lightweight native TypeScript runtime for services and AI agents. It packages an application and its runtime into one executable with explicit host capabilities and durable execution.
+
+Tysel is Web-API-first and does not promise general Node.js compatibility.
+There is no tagged binary release yet; the current installation path is a
+source build. Do not infer stable public API status from internal milestone or
+architecture records.
+
+## Start
+
+- [Documentation overview](https://tysel.dev/docs/): Choose a learning path and see the product contract at a glance.
+- [Install Tysel](https://tysel.dev/docs/install/): Build from source now; understand the managed installer, diagnosis, upgrades, and rollback contract.
+- [Getting started](https://tysel.dev/docs/getting-started/): Create, test, run, and package a Fetch-style HTTP service.
+- [Guides](https://tysel.dev/docs/guides/): Find task-oriented paths for development, services, agents, shipping, and operations.
+- [Example gallery](https://tysel.dev/docs/guides/examples/): Choose a complete runnable example by workload and execution profile.
+
+## Learn
+
+- [How Tysel works](https://tysel.dev/docs/concepts/how-tysel-works/): Follow source, validation, packaging, runtime ownership, and delivery.
+- [Projects and configuration](https://tysel.dev/docs/concepts/projects-and-configuration/): Understand discovery, adoption, TOML/JSON manifests, conversion, and project tasks.
+- [Execution profiles](https://tysel.dev/docs/concepts/execution-profiles/): Choose service, isolated, or experimental Component execution.
+- [Durable execution](https://tysel.dev/docs/concepts/durable-execution/): Use replay-safe steps, effects, sleep, retry, signals, and persisted storage.
+
+## Build
+
+- [Runtime API](https://tysel.dev/docs/api/runtime/): Application exports, Web APIs, host capabilities, protocols, durable context, and errors.
+- [Capability matrix](https://tysel.dev/docs/capabilities/): Availability of network, secrets, storage, files, WebSocket, LLM, and durable features by profile.
+- [npm and Node.js compatibility](https://tysel.dev/docs/compatibility/): Dependency classification, unsupported runtime assumptions, and adoption checks.
+
+## Reference
+
+- [Reference index](https://tysel.dev/docs/reference/): Find the authoritative surface for commands, configuration, APIs, and operational behavior.
+- [CLI reference](https://tysel.dev/docs/cli/): Commands, common options, structured output, and exit behavior.
+- [Manifest reference](https://tysel.dev/docs/reference/manifest/): Complete TOML/JSON schema concepts, permissions, limits, durable settings, and tasks.
+- [JavaScript API compatibility](https://tysel.dev/docs/architecture/javascript-runtime-compatibility/): Exact supported server-side Web API subset and exclusions.
+
+## Operate and evaluate
+
+- [Security model](https://tysel.dev/docs/security/): Effective authority, trust boundaries, deployment responsibilities, and non-goals.
+- [Production operations](https://tysel.dev/docs/operations/production/): Release admission, deployment, secrets, backup, restore, capacity, monitoring, and incident response.
+- [Performance and evidence](https://tysel.dev/docs/performance/): Benchmark gates, methodology, raw evidence, and claim restrictions.
+- [Architecture](https://tysel.dev/docs/architecture/): System boundaries and current implementation map.
+- [Architecture decisions](https://tysel.dev/docs/adr/): Design rationale for the runtime core, engine, Web API contract, delivery, capabilities, isolation, and durability.
+
+## Source contracts
+
+- [Tysel repository](https://github.com/wangcch/tysel): Source, schemas, examples, tests, and release tooling.
+- [Manifest JSON Schema](https://github.com/wangcch/tysel/blob/main/crates/tysel-manifest/schema/tysel-manifest-v1.schema.json): Machine-readable application configuration contract.
+- [TypeScript types](https://github.com/wangcch/tysel/tree/main/packages/tysel-types): Application-facing runtime declarations.
+- [Runtime compatibility inventory](https://github.com/wangcch/tysel/blob/main/runtime-js/web-api/compatibility.json): Machine-readable Web API support data.

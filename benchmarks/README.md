@@ -1,7 +1,7 @@
 # Benchmarks
 
-The harness measures the implemented roadmap §23 matrix and keeps release gates separate
-from observational measurements.
+The harness measures the maintained performance matrix and keeps release gates
+separate from observational measurements.
 
 ```bash
 cargo build -p tysel-runtime --bin tysel-service --release
@@ -52,6 +52,6 @@ cargo run -p tysel-cli --release -- bench all \
 | `http/` | HTTP/1.1 keep-alive, HTTP/2, JSON sizes, streaming, WebSocket, SSE and protocol-specific concurrency |
 
 Cold start must be ≤15ms, idle memory ≤32MB, packaged binary ≤20MB, warm isolate
-creation ≤5ms, and Durable Task resume ≤10ms. Other values are observations until
-the roadmap defines a reproducible baseline subtraction or threshold. Linux PSS is
-the memory gate of record; macOS RSS is a proxy.
+creation ≤5ms, and Durable Task resume ≤10ms. Other values are observational
+until a reproducible baseline and threshold are documented. Linux PSS is the
+memory gate of record; macOS RSS is a proxy.

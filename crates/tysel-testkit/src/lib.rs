@@ -1,4 +1,4 @@
-//! Shared helpers and the M0 §30 measurement harness (`tysel-bench`).
+//! Shared helpers and the release measurement harness (`tysel-bench`).
 
 #![allow(dead_code)]
 

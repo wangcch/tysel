@@ -1,37 +1,81 @@
-# tysel.dev website plan
+# tysel.dev website plan v2
 
-Status: content and information-architecture draft
+Status: implementation-ready content, information architecture, and experience plan
 Domain: `tysel.dev`
+Canonical launch language: English
 Primary audience: TypeScript backend developers, agent builders, and platform engineers
+Stack: Next.js App Router, Fumadocs Core, MDX, and custom visual components
 
-## 1. Product story
+This is an internal website plan. It may contain workstreams, open decisions, and a
+content backlog. Those sections must not be published as product documentation. Public
+pages describe only behavior available in a named release and use explicit stability and
+platform labels.
+
+## 1. Current product truth
+
+The website must start from the implemented product rather than completed internal plans.
+The repository has completed its production engineering acceptance scope and the
+developer-experience milestone, but that internal milestone is not itself a public stable
+version. The workspace version remains `0.0.1` until the release process assigns a public
+version and channel.
+
+### Implemented surface
+
+- TypeScript services, tasks, and agents packaged as one native application executable
+- Web-standard `Request`, `Response`, `fetch`, streams, URL, encoding, timers, and Web Crypto
+- HTTP/1.1, cleartext HTTP/2, inbound WebSocket, and allowlisted outbound WebSocket
+- Explicit grants for network, secrets, filesystem, SQLite, and Postgres
+- Service, isolated, and experimental Component execution profiles
+- Linux isolated workers with process separation, Landlock, seccomp, and best-effort
+  cgroup memory enforcement
+- Cron, Queue, MCP, LLM, and durable handlers using the bounded TaskRPC lifecycle
+- Durable steps, effects, sleep, retry, signals, persisted wakeups, and restart recovery
+- Project creation, checking, compatibility reporting, isolated tests, source-mapped
+  failures, development reload, packaging, and container-image generation
+- Managed diagnostics, authenticated upgrades, rollback, release evidence, signing,
+  reproducibility, SBOMs, and benchmark harnesses
+- Postgres durable storage, redacted OTLP export, and a production runbook
+
+### Boundaries that must remain visible
+
+- Tysel is Web-API-first and does not promise general Node.js compatibility.
+- Node native addons, ambient host authority, subprocesses, and arbitrary POSIX behavior
+  are not part of the runtime contract.
+- `tysel build` embeds the application bundle and native runtime into one executable. It
+  does not claim arbitrary TypeScript AOT compilation to machine code.
+- The developer toolchain installs `tysel`, `tysel-service`, and `tysel-worker`. A built
+  application is still delivered as one executable.
+- `tysel build --target` does not currently cross-compile. The target must match the host.
+- Container packaging on a non-Linux host requires an existing Linux executable.
+- Linux is the production security gate for the isolated profile. macOS is a supported
+  development platform, not an equivalent sandbox claim.
+- Implemented Durable behavior does not automatically make every public API stable.
+- Tysel does not provide a hosted cloud platform.
+
+## 2. Product story
 
 Tysel should not present itself as another general-purpose JavaScript toolchain. Its
-strongest story is narrower and more defensible:
+strongest story is:
 
-> Write TypeScript. Ship a binary.
+> **Write TypeScript. Ship a binary.**
 
-> A lightweight native runtime for TypeScript services and AI agents.
+> A lightweight native TypeScript runtime for services and AI agents.
 
-The website should make three promises, in this order:
+The website makes three promises, in this order:
 
-1. **Simple delivery** — turn a TypeScript service or agent into one native executable.
-2. **Bounded execution** — capabilities are explicit, secrets stay opaque, and isolated
-   workloads have a smaller authority surface.
-3. **Durable agents** — LLM calls, retries, signals, human approval, and restart recovery
-   use one durable task model.
+1. **Ship one executable** — turn a TypeScript workload into one production artifact.
+2. **Bound every capability** — grant only the resources code needs.
+3. **Resume durable work** — persist effects, retries, signals, and suspension so work can
+   continue after a restart.
 
-The first visit should answer four questions quickly:
+The first visit should answer:
 
 - What is Tysel?
-- Why would I use it instead of Node.js, Bun, or Deno?
-- Can I run a useful example in a few minutes?
-- Is it credible enough to evaluate for production?
+- How is its production contract different from Node.js, Bun, and Deno?
+- Can I build and run a useful example in a few minutes?
+- What evidence and limits should I inspect before adopting it?
 
 ### Core transformation
-
-The deeper positioning is not “another faster JavaScript runtime.” Tysel changes three
-developer contracts:
 
 | Before | With Tysel | Meaning |
 | --- | --- | --- |
@@ -47,584 +91,707 @@ Public English form:
 
 > Tysel makes TypeScript directly shippable—as a single, capability-bounded executable.
 
-This is the narrative spine for the homepage, launch post, and project README. Use the
-shorter “Write TypeScript. Ship a binary.” as the memorable expression of the same idea.
+The short slogan is the memorable expression. The longer statement explains it rather
+than competing with it.
 
 ### Message hierarchy
 
-1. **Category statement:** A native runtime for TypeScript services and AI agents.
-2. **Transformation:** From deploying an environment to shipping one executable.
-3. **Trust model:** Treat code as untrusted; trust explicit boundaries.
-4. **Execution model:** Durable work can suspend, release resources, and resume.
-5. **Proof:** Reproducible artifact, startup, memory, isolation, and recovery evidence.
+1. Lightweight native TypeScript runtime for services and AI agents
+2. Deploy one artifact instead of a JavaScript environment
+3. Explicit capabilities and bounded execution profiles
+4. Durable work that can suspend and resume
+5. Compatibility, isolation, recovery, and release evidence
 
-The AI-era framing belongs after the product is understood. Lead with a concrete
-delivery model, then explain why cheap isolation and durable execution matter for
-generated code at scale.
+The AI-era framing comes after the runtime is understood. Lead with delivery, then show
+why inexpensive isolation and durable execution matter for generated or third-party code.
 
-## 2. What to borrow from Bun and Deno
+### Competitive frame
 
-### From Bun
+> Bun and Deno optimize the general JavaScript runtime and toolchain. Tysel is designed
+> around a narrower production contract: small deployable artifacts, capability-bounded
+> execution, and durable TypeScript services and AI agents.
 
-- Put a concrete install or quick-start command in the hero.
-- Show the product through real commands and real code, not feature adjectives.
-- Organize product capabilities into understandable groups.
-- Put benchmark methodology next to benchmark claims.
-- Keep guides and reference material distinct.
+Do not describe Tysel as an all-in-one toolchain, package manager, Node.js replacement,
+browser runtime, or hosted agent platform.
 
-### From Deno
+## 3. Public status and claims
 
-- Provide task-oriented guides, conceptual documentation, and precise reference pages.
-- Make security and permissions a first-class concept rather than an appendix.
-- Support AI-assisted documentation with `llms.txt` and a Markdown representation of
-  every page.
-- Give migration and compatibility questions their own clear entry point.
-- Let users navigate by intent: get started, build, deploy, diagnose, and reference.
+### Release labels
 
-### What Tysel should not copy
+The website reads the public version and channel from release metadata. It must not derive
+a public label from internal milestone or acceptance-document names.
 
-- Bun's all-in-one toolchain story: Tysel does not replace a package manager, formatter,
-  linter, and the entire JavaScript workflow.
-- Deno's ecosystem breadth: the first release should not look larger than the available
-  runtime and documentation.
-- Unqualified speed claims: publish only reproducible measurements already backed by the
-  repository's benchmark harnesses.
-- Customer-logo walls before there are public, approved production users.
+- Do not show a production version label until a corresponding public release exists.
+- Hide the announcement bar when there is no meaningful public announcement.
+- Hide the documentation version selector until two supported public versions exist.
+- Examples that depend on release behavior link to the version they were verified against.
 
-## 3. Site model
+### Stability badges
 
-### Existing baseline
+- **Stable** — supported public contract for the current release line
+- **Experimental** — may change without the stable compatibility guarantee
+- **Platform-specific** — behavior or guarantees differ by operating system
+- **Linux production** — security or operational guarantee validated only on Linux
 
-The repository already contains a small MkDocs site with a Read the Docs theme,
-top-level navigation, getting-started content, CLI documentation, and a runtime API
-page. Treat this as the content bootstrap and link-validation baseline. Preserve its
-working URLs during the first implementation pass, but do not let the current theme or
-flat navigation determine the final product experience.
+Each reference page also states its execution profile and required capability.
 
-Use one domain and one coherent navigation system:
+### Safe factual claims
+
+- Produces one native application executable.
+- Production does not require Node.js, V8, npm, or `node_modules`.
+- Host resources are deny-by-default and explicitly granted.
+- The Linux isolated profile adds a worker process, Landlock, seccomp, and best-effort
+  cgroup memory enforcement.
+- Durable handlers persist suspension, signals, retries, and replayable effects.
+- Release builds can emit deterministic evidence, compatibility, SBOM, license, and
+  checksum sidecars.
+
+Every claim still links to the relevant contract or evidence.
+
+### Claims requiring named release evidence
+
+- Exact executable size, cold-start time, memory usage, or isolate creation time
+- Comparison with Docker, Node.js, Bun, Deno, or another sandbox
+- Density or scale claims such as running 1,000 isolated functions
+- Security claims beyond the documented threat model
+
+Every quantitative claim appears in a benchmark card containing:
+
+- Tysel version and source commit
+- OS, architecture, CPU, and build profile
+- Workload and artifact contents
+- Metric definition, raw samples, and aggregation
+- Comparison versions and equivalent configuration, when applicable
+- Reproduction command and evidence download
+
+The repository currently uses release-admission thresholds of at most 20 MiB artifact
+size, 15 ms median cold start, 32 MiB idle Linux PSS, 5 ms warm isolate creation p50, and
+10 ms durable resume p50. These are gates, not measured marketing results.
+
+### Wording to avoid
+
+- “The only runtime that…”
+- “Node, Bun, and Deno have no isolation.”
+- “Process-level security” without Linux scope
+- “Persistence is a TypeScript language feature.”
+- “Native compilation” when the intended claim is a native executable containing the
+  runtime and application bundle
+- “Exactly once” without naming the persisted boundary and external side-effect contract
+
+## 4. Website architecture
+
+### Technology stack
 
 ```text
-tysel.dev/                 Product homepage
-tysel.dev/docs/            Documentation home
-tysel.dev/guides/          Task-oriented tutorials
-tysel.dev/examples/        Runnable examples
-tysel.dev/reference/       CLI and API reference
-tysel.dev/benchmarks/      Reproducible performance evidence
-tysel.dev/blog/            Releases and engineering notes
+Next.js App Router
+├── Marketing and documentation routes
+├── Metadata, sitemap, social cards, and redirects
+└── Content and search endpoints where needed
+
+Fumadocs Core
+├── Documentation source and navigation model
+├── Article layout and table of contents
+├── Search integration
+└── Generated page metadata
+
+MDX
+├── Hand-authored guides and concepts
+├── Runnable examples and expected output
+└── Custom documentation components
+
+Custom visual system
+├── Brand tokens and themes
+├── Marketing sections
+├── Terminal playback
+├── Capability and durable-flow diagrams
+└── Benchmark and evidence cards
 ```
 
-Recommended global navigation:
+Fumadocs provides documentation structure, not the final identity. Navigation, search,
+code blocks, callouts, badges, and article layout share Tysel components with marketing.
+
+### Content model
+
+- MDX is canonical for public narrative content.
+- CLI, manifest, runtime API, and compatibility tables are generated from code or schemas
+  where practical. Manifest reference uses the bundled Draft 2020-12 schema; project
+  discovery and task semantics use their CLI sources.
+- Generated reference is never a second editable source of truth.
+- Existing MkDocs content is migration input and a link-validation baseline only.
+- Completed planning and acceptance records stay outside the public content collection.
+
+### Route model
 
 ```text
-Tysel | Docs | Guides | Examples | Benchmarks | Blog | GitHub
+tysel.dev/                         Product homepage
+tysel.dev/docs/                    Documentation home
+tysel.dev/docs/getting-started/    First successful application
+tysel.dev/docs/guides/             Task-oriented learning paths
+tysel.dev/docs/concepts/           Mental models and guarantees
+tysel.dev/docs/reference/          CLI, manifest, API, compatibility, and limits
+tysel.dev/examples/                Runnable example gallery
+tysel.dev/benchmarks/              Evidence and methodology
+tysel.dev/blog/                    Releases and engineering notes, when populated
 ```
+
+Preserve useful old URLs with permanent redirects. Do not duplicate a guide under both
+`/guides/` and `/docs/guides/`.
+
+### Global navigation
+
+```text
+Tysel | Docs | Examples | Benchmarks | GitHub
+```
+
+Add Blog only when it has durable content. Guides and Reference live inside Docs.
 
 Global utilities:
 
-- Search / command menu (`⌘K` or `Ctrl K`)
-- Version selector
+- Search and command menu (`⌘K` / `Ctrl K`)
 - Theme selector
-- GitHub link and star count, when a public repository is ready
-- Persistent primary CTA: **Get started**
+- GitHub link
+- Persistent **Get started** action on marketing pages
+- Version selector only when multiple supported versions exist
+- GitHub star count only after the public organization and repository are final
 
-Do not split marketing and documentation across separate subdomains at launch. A single
-origin makes search, analytics, linking, and versioning easier and helps a small project
-feel like one product.
+Marketing and docs remain on one origin so search, navigation, metadata, analytics, and
+visual language feel like one product.
 
-## 4. Homepage content
+## 5. Homepage experience
 
-### 4.1 Announcement bar
+The homepage moves from comprehension to evidence:
 
-Reserve for the latest stable release or a major capability. Avoid a generic welcome
-message.
+```text
+Understand the artifact
+→ See the trust boundary
+→ See durable continuation
+→ Choose a workload
+→ Complete the developer loop
+→ Inspect production evidence
+```
 
-Example:
+### 5.1 Announcement bar
 
-> Tysel Production v1 — durable agents, bounded capabilities, and reproducible binaries.
+Render only for a real release or major available capability. Source its label and link
+from release content. Do not use a generic welcome message or internal milestone name.
 
-### 4.2 Hero
-
-Primary copy:
+### 5.2 Hero
 
 > **Write TypeScript. Ship a binary.**
 >
-> Tysel turns TypeScript services and AI agents into a single, capability-bounded
-> executable—with durable work built in.
+> Build TypeScript services and AI agents as a single executable—with explicit
+> capabilities and durable execution.
 
 Primary CTA: **Get started**
 Secondary CTA: **View on GitHub**
 
-The interactive object should demonstrate the whole proposition in one compact flow:
+The interactive object shows one complete flow:
 
 1. A small `fetch` handler in `src/index.ts`
-2. `tysel build`
-3. A single output artifact
+2. `tysel build --release`
+3. One named executable with an expandable release-evidence view
 
-Implement this as a deterministic, user-controlled playback generated from captured
-output of a named Tysel release. It should not execute a build in the visitor's browser.
-Show the version and platform beside the result, and provide replay and step controls.
+Use deterministic, user-controlled playback captured from a named release. It must not
+run a build in the browser. Show release, platform, output name, and result. Provide play,
+pause, replay, and direct step controls.
 
-The hero must not imply ahead-of-time compilation to native machine code. Use “single
-native executable” or “one executable,” matching the product contract.
+If an install command appears in the hero, use the current official release location. Do
+not publish `https://tysel.dev/install.sh` until that endpoint exists and redirects to
+authenticated release artifacts.
 
-The sentence about making TypeScript “directly shippable” can appear immediately below
-the first demonstration, where there is enough room to explain what is embedded in the
-artifact.
+Include this clarification near the demo:
 
-### 4.3 Immediate proof strip
+> The developer toolchain installs three native binaries. Your application ships as one.
 
-Use short, factual statements:
+Do not imply arbitrary TypeScript AOT compilation.
+
+### 5.3 Immediate proof
 
 - Web API first
-- No Node.js, V8, or `node_modules` in production
-- Explicit capabilities
-- Durable task replay
+- No Node.js or `node_modules` in production
+- Deny-by-default capabilities
+- Durable restart recovery
 
-Each statement should link to an explanatory documentation page.
+Each item links to a relevant page. Do not place point measurements here.
 
-Do not put unverified point measurements in this strip. Artifact size, cold-start time,
-and idle memory must come from release evidence for a named version, platform, build
-profile, workload, and commit.
-
-### 4.4 Three product pillars
+### 5.4 Three product contracts
 
 #### Ship one executable
 
-Show `tysel dev`, `tysel check`, and `tysel build` as one short development-to-delivery
-path. Link to the service quick start and build guide.
+Show `tysel check` → `tysel test` → `tysel build --release`. Let users inspect the
+executable, checksum, compatibility report, SBOM, and evidence index without suggesting
+that sidecars are separately deployed runtimes.
 
 #### Bound every capability
 
-Show a minimal `tysel.toml` permission block beside a service call. Explain deny-by-
-default access, opaque secret handles, and the isolated profile without turning the
-homepage into a threat-model document.
+Show a small TOML manifest grant beside the code that uses it, with a JSON-format switch
+for teams that standardize on JSON. Demonstrate one allowed and one denied operation. The
+homepage introduces service and isolated profiles; the threat model lives in documentation.
 
-The public contrast is “trust boundaries, not application code.” Avoid saying competing
-runtimes have no permissions or isolation. The defensible distinction is Tysel's layered
-Linux isolated profile, its supervisor-held secrets, its restricted capability surface,
-and its integration with the single-artifact delivery model.
+The public contrast is “trust boundaries, not application code.” The defensible story is
+the combination of explicit capabilities, supervisor-held secrets, restricted host APIs,
+the Linux isolated worker, and single-artifact delivery.
 
-#### Build agents that survive restarts
+#### Resume durable work
 
-Show the durable-agent golden path: LLM call → persisted effect → human approval →
-restart → resume exactly once. Link to a runnable example and the durable execution
-concept page.
+```text
+LLM call → persisted effect → human approval → restart → resume → save once
+```
 
-Describe durability as a **runtime primitive** or **programming-model capability**, not
-a new TypeScript language feature. The developer experience may look like ordinary
-`async`/`await`, while the documentation must still explain deterministic boundaries and
-side-effect rules.
+Describe durability as a runtime primitive and programming model. Link to the runnable
+example and explain deterministic boundaries and side-effect rules in its concept page.
 
-### 4.5 “Five minutes with Tysel”
+### 5.5 Workload selector
 
-Use a stepper with real commands:
+- **HTTP service** — Fetch handlers, HTTP/1.1 and HTTP/2, WebSocket, SQLite, Postgres
+- **AI agent** — LLM gateway, durable effects, signals, approvals, restart recovery
+- **Task worker** — Cron, Queue, MCP, TaskRPC leases, retry, timeout, cancellation
 
-1. Create a service: `tysel init my-service`
-2. Develop with reload: `tysel dev`
-3. Validate permissions and types: `tysel check`
-4. Run tests: `tysel test`
-5. Build one executable: `tysel build --release`
+Each tab contains realistic code, required permissions, its execution profile, and one
+guide action. Keyboard focus and screen-reader state follow the selection.
 
-Each step should show expected output and link to a focused guide.
+### 5.6 Five minutes with Tysel
 
-### 4.6 Workload selector
+1. Verify installation: `tysel doctor --install`
+2. Create: `tysel init hello-tysel`
+3. Resolve configuration: `tysel config validate`
+4. Validate: `tysel task verify`
+5. Run and package: `tysel dev`, then `tysel task release`
 
-Use three tabs rather than a long feature grid:
+Show expected output from a named release. Node.js is optional for editor declarations and
+TypeScript compiler feedback, not required by the runtime or packaged application.
 
-- **HTTP service** — Request/Response, fetch, WebSocket, SQLite/Postgres
-- **AI agent** — native LLM gateway, durable effects, signals, approvals
-- **Task worker** — Cron, Queue, MCP tools, TaskRPC scheduling
+### 5.7 Production evidence
 
-This becomes the bridge from the homepage into the documentation.
-
-### 4.7 Production evidence
-
-Show four evidence categories with direct links:
-
-- Reproducible release artifacts and SBOMs
-- Offline signing and verification
-- Security and isolation boundaries
+- Compatibility and release evidence
+- SBOM, licenses, checksums, and signatures
+- Reproducible Linux archives
+- Security and isolation contract
+- Benchmark methodology and raw samples
 - Production operations runbook
 
-Benchmarks belong below product comprehension. Every chart must identify the version,
+Benchmarks come after product comprehension. Every chart identifies release, artifact,
 hardware, workload, sample method, and reproduction command.
 
-### 4.8 Final CTA
+### 5.8 Final CTA
 
 > From TypeScript source to one production artifact.
 
-Actions: **Build your first service** and **Run the durable agent example**.
+Primary: **Build your first service**
+Secondary: **Run the durable agent example**
 
-## 5. Documentation information architecture
+## 6. Documentation information architecture
 
-The left navigation should use progressive disclosure. Keep the first level short and
-move exhaustive lists into reference pages.
+Use progressive disclosure. Keep first-level groups short and exhaustive detail in
+Reference.
 
-### Get started
+### Start
 
 - Welcome to Tysel
-- Install
+- Install and verify
 - Quick start: HTTP service
 - Quick start: durable agent
 - How Tysel works
 - Project structure
+- Project discovery and `-C`
+- TOML and JSON configuration
+- Choose an execution profile
 
 ### Build services
 
 - Request and Response handlers
+- HTTP/1.1 and HTTP/2
 - Outbound fetch
-- WebSockets
-- Timers, streams, encoding, and crypto
-- SQLite
-- Postgres
-- Filesystem access
+- Inbound and outbound WebSocket
+- Timers, streams, encoding, and Web Crypto
+- SQLite, Postgres, and filesystem access
 
 ### Build agents and tasks
 
-- Agent overview
+- Task model overview
 - LLM generation gateway
 - Durable execution
 - Steps and effects
-- Sleep, retry, and deterministic time
+- Sleep, retry, and deterministic values
 - Signals and human approval
-- Cron handlers
-- Queue handlers
-- MCP tools
-- Task lifecycle and cancellation
+- Cron, Queue, and MCP handlers
+- Leases, cancellation, fencing, and late-result rejection
 
 ### Capabilities and security
 
-- Capability model
-- Manifest permissions
-- Secrets
+- Capability model and manifest permissions
+- Secrets and opaque handles
 - Service and isolated profiles
 - Linux isolation boundary
+- Component profile and stability
 - Resource limits
-- Threat model
+- Threat model and non-goals
 
 ### Develop and test
 
-- `tysel.toml`
+- Project discovery and root-relative execution
+- `tysel.toml` and `tysel.json`
+- Interactive and non-interactive `tysel init`
+- `tysel config` inspection, conversion, and JSON Schema
+- Manifest-native `tysel task` workflows
 - Development server and reload
 - Type checking and capability scanning
 - Test runner
-- npm compatibility
-- Debugging
-- Observability and local logs
+- npm and Web API compatibility
+- Structured errors, source maps, logs, and debugging
 
 ### Build and ship
 
-- Build a single executable
-- Build targets and profiles
+- Build one executable
+- Host targets and profiles
 - Container images
 - Release evidence and SBOMs
 - Sign and verify artifacts
 - Reproducible builds
 - CI guide
 
+The target guide states that cross-compilation is not implemented. Container guides
+distinguish building on Linux from supplying a Linux ELF on another host.
+
+### Install and manage
+
+- Managed toolchain layout
+- Diagnose with `tysel doctor`
+- Upgrade and trust refresh
+- Roll back
+- Release channels and immutable versions
+- Build from source
+
 ### Operate
 
 - Production checklist
 - Configuration and secrets
+- TLS termination and ingress
 - Durable Postgres
 - Backup and restore
-- Capacity planning
+- Capacity and resource sizing
 - OpenTelemetry
-- Upgrade and rollback
-- Monitoring and alerts
-- Incident response
+- Upgrade and application rollback
+- Monitoring, alerts, and incident response
 
 ### Reference
 
-- CLI
-- Manifest schema
-- Tysel runtime API
+- CLI: `init`, `config`, `task`, `check`, `compat`, `test`, `dev`, `run`, `queue`,
+  `mcp`, `inspect`, `doctor`, `upgrade`, `build`, `image`, `bench`, and `release`
+- Project discovery and path-resolution rules
+- TOML/JSON Manifest schema and conversion
+- Runtime and Durable APIs
 - Supported Web APIs
+- HTTP and WebSocket behavior
 - Environment variables
 - Capability matrix
-- Compatibility catalog
-- Limits
-- Error codes
+- npm compatibility catalog
+- Limits and defaults
+- Error codes and machine-readable schemas
 - Release compatibility guarantees
 
 ### Internals
 
 - Architecture overview
 - TAP format
-- Capability ABI
+- Capability ABI and WIT
 - TaskRPC
 - Durable event model
 - Architecture decision records
 - Contributing
 
-## 6. Guide strategy
+Internal acceptance records never appear in public navigation or search.
 
-Reference documentation describes every surface. Guides should solve complete jobs.
-Launch with these guides:
+## 7. Guide strategy
+
+Reference pages describe surfaces. Guides complete jobs. The first learning paths are:
 
 1. Build and package a JSON API
-2. Connect a service to Postgres without exposing credentials to JavaScript
+2. Connect Postgres without exposing credentials to JavaScript
 3. Build an approval-based durable AI agent
 4. Expose a TypeScript function as an MCP tool
-5. Process queue messages with retries and cancellation
+5. Process a Queue message with retry and cancellation
 6. Schedule a Cron task
-7. Run untrusted plugin code with the isolated profile
+7. Run untrusted plugin code with the Linux isolated profile
 8. Sign, verify, and ship a release artifact
 9. Deploy a Tysel executable with systemd
-10. Package a Tysel service as a container image
+10. Package a Tysel service as a non-root container image
 
-Every guide should contain:
+Every guide includes:
 
-- Outcome and prerequisites
-- Complete runnable files
+- Outcome and approximate completion time
+- Supported release, operating system, and execution profile
+- Prerequisites and complete runnable files
 - Commands and expected output
 - Permission explanation
-- Failure and recovery path
-- Link to the relevant API reference
-- Link to the example directory and source revision
+- Verification, failure, and recovery path
+- API reference and versioned example source
 
-## 7. Page templates
+## 8. Page templates
 
-### Concept page
+### Concept
 
-Use: durable execution, capability security, TaskRPC.
-
-1. One-sentence definition
+1. Definition
 2. Why it exists
 3. Mental model
 4. Smallest useful example
 5. Guarantees
 6. Limits and non-goals
-7. Related guides and reference
+7. Stability and platform scope
+8. Related guides and reference
 
-### API/reference page
+### API and manifest reference
 
 1. Signature or schema
-2. Availability by profile
-3. Required permission
-4. Parameters and return value
-5. Limits
-6. Errors
-7. Minimal example
-8. Production example
+2. Stability
+3. Execution profile and platform
+4. Required capability
+5. Parameters and return value
+6. Limits and defaults
+7. Errors
+8. Minimal and production examples
 
-### CLI page
+### CLI reference
 
 1. Synopsis
 2. Arguments and flags
-3. Exit behavior
-4. Machine-readable output
-5. Examples
-6. Related configuration
+3. Platform requirements
+4. Output and side effects
+5. Exit behavior and machine-readable output
+6. Examples and related configuration
 
-### Guide page
+### Guide
 
-1. Visible finished outcome
-2. Time estimate
+1. Finished outcome
+2. Supported release and time estimate
 3. Prerequisites
 4. Sequential steps
 5. Verification
-6. Troubleshooting
+6. Troubleshooting and rollback
 7. Next step
 
-## 8. Visual direction
+## 9. Documentation experience
 
-Build on the existing Tysel brand instead of adopting Bun's mascot-led personality or
-Deno's illustrated editorial style.
+- Search across docs, guides, examples, APIs, manifest fields, and CLI commands
+- Keyboard-accessible command menu
+- Copy button and filename label on every code block
+- Accessible announcement when copy succeeds
+- OS tabs only when commands differ
+- Stable heading links and visible focus targets
+- Previous/next navigation based on learning order
+- “Edit this page” and source revision links
+- Stability, profile, and platform badges
+- Copy page as Markdown
+- `/llms.txt`, `/llms-small.txt`, and Markdown for every public page
+- Machine-readable manifest, CLI, evidence, and API schemas where available
+- No documentation chatbot at launch; authoritative search comes first
+
+Search prioritizes task pages for natural-language queries and exact reference pages for
+commands, flags, APIs, and manifest tokens.
+
+## 10. Visual system
+
+Use the existing Tysel identity. Do not adopt a mascot, editorial illustration system, or
+generic purple AI gradients.
+
+### Brand idea
+
+The identity is built around **compression and continuity**:
+
+- Familiar TypeScript becomes one compact executable.
+- Explicit boundaries constrain authority.
+- Durable intent continues across suspension and restart.
 
 ### Character
 
 - Infrastructure-native, compact, and precise
-- Monochrome-first with controlled flashes of Tysel Blue and Byte Lime
-- Code and terminal output are the main visual material
-- Motion should communicate source compression, isolation boundaries, and durable
-  continuation
+- Confident rather than decorative
+- Monochrome-first with controlled Tysel Blue and Byte Lime
+- Code and terminal output as primary visual material
+- Motion that explains compression, boundaries, suspension, and continuation
 
-### Existing palette
+### Brand anchors
 
 | Role | Token | Value |
 | --- | --- | --- |
 | Primary dark | Binary Ink | `#111318` |
 | Primary light | Runtime White | `#FFFFFF` |
 | Brand accent | Tysel Blue | `#5B5CE2` |
-| Success/output | Byte Lime | `#C9FF63` |
+| Completion/output | Byte Lime | `#C9FF63` |
 | Light surface | Runtime Mist | `#F1F3F7` |
 
-### Layout principles
+These are anchors, not a complete UI palette. Derive tested text, border, muted, warning,
+error, focus, syntax, and interaction-state tokens before implementation.
 
-- Homepage: wide editorial sections with one strong demonstration per section
-- Docs: three-column desktop layout — navigation, article, table of contents
-- Reading width: approximately 70–78 characters for prose
-- Code blocks: slightly wider than prose and never horizontally clipped on common laptop
-  widths
-- Borders before shadows; small radii; restrained layering
-- Dark mode is a first-class theme, not a simple color inversion
+### Layout
+
+- Wide editorial homepage sections with one primary demonstration each
+- Three-column docs layout on wide screens
+- Prose width of approximately 70–78 characters
+- Code wider than prose without clipping at common laptop widths
+- Borders before shadows, small radii, restrained layering
+- Independently designed light and dark themes
+- The same information order on mobile, without hiding proof or limitations
 
 ### Graphic motif
 
-Use a “source → boundary → binary” flow derived from the existing line-field brand
-asset. The boundary can become a recurring visual language for permissions, isolates,
-and durable checkpoints. Do not introduce an unrelated mascot.
+```text
+source → boundary → executable
+event → checkpoint → continuation
+```
 
-## 9. Documentation UX
+Use the brand line field and wordmark logic. Use the full wordmark in navigation and the
+`ty` mark only where the full name cannot fit.
 
-- Full-text search across docs, guides, examples, and CLI commands
-- Copy button on every code block
-- File-name labels on multi-file examples
-- OS tabs only when commands actually differ
-- Stable permalinks for headings
-- Previous/next navigation based on learning order
-- “Edit this page” and source revision links
-- Version and stability badges: Stable, Experimental, Platform-specific
-- Per-page profile badges: Service, Isolated, Linux production gate
-- Copy page as Markdown
-- `/llms.txt` plus a concise `/llms-small.txt`
-- Machine-readable manifest and API schemas when available
-- No chat widget in the MVP; high-quality searchable pages are the priority
+## 11. Accessibility
 
-## 10. Content source map
+Target WCAG 2.2 AA for the implemented site.
 
-Existing repository material can seed the site:
+- Navigation, search, tabs, playback, copy, and theme controls work by keyboard with a
+  visible focus indicator.
+- Pages have one `h1`, ordered headings, landmarks, and a skip link.
+- Text, controls, diagrams, syntax, and badges meet contrast targets in both themes.
+- Color is never the only signal for permission, denial, stability, or completion.
+- Terminal playback has pause, replay, step controls, and a static transcript.
+- `prefers-reduced-motion` removes nonessential motion without removing explanation.
+- State changes expose accessible names and restrained announcements.
+- Code and diagrams remain operable at 200% zoom.
+- Touch targets are at least 24 by 24 CSS pixels and larger for primary actions.
+- Content remains readable when custom fonts are unavailable.
 
-| Website section | Current source |
+Acceptance requires keyboard, screen-reader, contrast, zoom, reduced-motion, and
+responsive testing. A static design review alone cannot establish compliance.
+
+## 12. Content source map
+
+| Website area | Current source |
 | --- | --- |
 | Product overview | `README.md` |
-| Current docs entry and navigation | `docs/index.md`, `mkdocs.yml` |
-| Current onboarding | `docs/getting-started.md` |
-| Current CLI reference | `docs/cli.md` |
-| Current runtime API reference | `docs/api/runtime.md` |
-| Brand and visual system | `brand/README.md`, `brand/logo/` |
-| Engineering design history (internal only) | `roadmap.md`, acceptance records |
-| Capability model | `docs/capabilities/README.md` |
-| npm compatibility | `docs/compatibility/README.md` |
-| Architecture | `docs/architecture/`, `docs/adr/` |
-| Production operations | `docs/operations/production.md` |
-| Durable agent guide | `examples/durable-agent/README.md` |
-| Benchmark evidence | `benchmarks/`, `docs/performance/README.md` |
-| CLI reference | `crates/tysel-cli/src/main.rs` |
-| Manifest reference | manifest crate types and example `tysel.toml` files |
-| Runtime APIs | `packages/tysel-types/`, `runtime-js/`, `wit/` |
+| Existing entry and URL map | `docs/index.md`, `mkdocs.yml` |
+| Installation and lifecycle | `docs/install.md`, CLI doctor and upgrade sources |
+| Getting started | `docs/getting-started.md` |
+| Projects and configuration | `docs/concepts/projects-and-configuration.md`, CLI project/init/task sources |
+| CLI reference | `docs/cli.md`, `crates/tysel-cli/src/main.rs` |
+| Manifest reference | `docs/reference/manifest.md`, bundled manifest JSON Schema |
+| Runtime APIs | `docs/api/runtime.md`, `packages/tysel-types/`, `runtime-js/`, `wit/` |
+| Capability and security | `docs/capabilities/`, `docs/security/`, ADRs |
+| npm compatibility | `docs/compatibility/`, compatibility source |
+| Performance | `docs/performance/`, `benchmarks/` |
+| Operations | `docs/operations/production.md` |
+| Examples | `examples/` |
+| Brand | `brand/README.md`, `brand/logo/` |
+| Internal history | Completed planning and acceptance records; never public navigation |
 
-Generated reference pages should be produced from source types or schemas where
-possible. Narrative guides should remain hand-authored.
+Before visual implementation, commit the approved brand assets and reconcile references
+to assets that do not exist in the repository.
 
-## 11. Publication plan (internal)
+## 13. Technical requirements
 
-This section plans the documentation project and must not be published as product
-documentation. Public pages describe current released behavior and use stability labels
-instead of project phases.
+### Content and search
 
-### Launch — credible evaluation
+- Type-check MDX components and validate internal links in CI.
+- Fail on duplicate slugs, missing required metadata, or public links to internal docs.
+- Index headings, aliases, CLI flags, API names, and manifest keys.
+- Generate `llms.txt`, Markdown pages, sitemap, RSS, and canonical URLs from the same graph.
+
+### Performance
+
+- Prefer server components and static generation for content.
+- Isolate homepage interaction to small client components.
+- Do not ship a browser terminal emulator when deterministic playback is sufficient.
+- Reserve layout space for fonts, diagrams, code, and charts.
+- Set budgets for JavaScript, fonts, images, and Core Web Vitals before acceptance.
+
+### SEO and sharing
+
+- Unique titles, descriptions, canonical URLs, Open Graph images, and structured metadata
+  for product, guide, reference, example, benchmark, and release pages
+- Social cards generated from the real wordmark and page metadata
+- No reference to a social asset until it exists in the repository
+
+### Analytics and privacy
+
+Measure the evaluation path:
+
+```text
+Homepage → Get started → Install → Quick-start verification → Build guide
+```
+
+Track outbound GitHub/evidence links, zero-result searches, and guide completion signals.
+Never capture source code, command input, secrets, or selected documentation content.
+
+## 14. Internal implementation workstreams
+
+This section is never published.
+
+### Foundation
+
+- Create the Next.js and Fumadocs application in the repository.
+- Implement tokens, fonts, themes, navigation, search, metadata, and redirects.
+- Migrate public Markdown into MDX without exposing internal planning documents.
+
+### Credible evaluation path
 
 - Homepage
-- Documentation shell and search
 - Install and HTTP quick start
-- Durable agent quick start
-- Testing guide and `tysel test` reference
-- Capability and security overview
-- Build a single executable
-- CLI and manifest reference
-- Compatibility and limits pages
-- Existing production runbook migrated into readable sections
-- `llms.txt`, sitemap, metadata, and social cards
+- Durable-agent quick start
+- Capability, security, compatibility, and limits pages
+- Build-one-executable guide
+- CLI, manifest, runtime, and durable reference
+- Production evidence and operations entry points
+- `llms.txt`, Markdown pages, sitemap, and social metadata
 
-### Next — complete product learning paths
+### Complete learning paths
 
-- All service, task, agent, and capability guides
-- Runnable example gallery
-- Versioned documentation
-- Benchmark explorer with reproducible methodology
-- Generated API and configuration reference
+- Service, task, agent, security, shipping, and operations guides
+- Runnable examples
+- Generated reference and schema validation
+- Benchmark explorer with evidence downloads
 
-### Later — ecosystem and trust
+### Ecosystem content
 
 - Release notes and engineering blog
-- Public adoption stories
-- Framework integration guides
-- Deployment provider guides
+- Approved, evidence-backed adoption stories
+- Framework and deployment-provider guides
 - Community and contribution hub
 
-## 12. Success criteria
+## 15. Success criteria
 
-- A new user can understand Tysel's unique value in under one minute.
-- The HTTP quick start can be completed in under five minutes from a supported machine.
-- The durable-agent guide demonstrates restart recovery and exactly-once saved output.
-- Every public capability states its profile, required permission, limits, and failure
-  behavior.
-- Every homepage performance or security claim links to reproducible evidence or an
-  explicit design contract.
-- A developer can find any CLI command or manifest option in two navigation actions or
-  one search.
-- Documentation is useful to both humans and coding agents without maintaining separate
-  prose sources.
+- A new visitor understands the artifact, capability, and durable-work contracts in under
+  one minute.
+- A supported machine reaches a verified HTTP response in under five minutes using a named
+  public release.
+- The durable-agent guide demonstrates approval, restart recovery, and the exact boundary
+  that prevents the saved result from repeating.
+- Every capability states stability, profile, permission, limits, and failure behavior.
+- Every homepage security or performance claim links to a contract or reproducible evidence.
+- Any command, flag, API, or manifest option is reachable through one search or two
+  navigation actions.
+- Documentation works for developers and coding agents without duplicate prose sources.
+- Keyboard, responsive, contrast, zoom, and reduced-motion acceptance passes for the
+  homepage, search, docs shell, and primary quick starts.
 
-## 13. Claim and evidence policy
+## 16. Decisions
 
-The manifesto may be bold; product claims must be reproducible.
+### Resolved
 
-### Safe launch claims
+- Domain: `tysel.dev`
+- One origin for marketing and documentation
+- Stack: Next.js App Router, Fumadocs Core, MDX, custom visual components
+- Primary story: “Write TypeScript. Ship a binary.”
+- Existing lowercase wordmark and compression/continuity brand direction
+- Implementation workstreams remain internal
+- Managed three-binary developer toolchain; one-executable application delivery
 
-- Produces one native executable.
-- Production does not require Node.js, V8, or `node_modules`.
-- Capabilities are deny-by-default and explicitly granted.
-- The Linux isolated profile adds process separation, Landlock, seccomp, and best-effort
-  cgroup memory enforcement.
-- Durable tasks persist suspension, signals, retries, and replayable effects.
+### Open before public launch
 
-### Claims requiring release evidence
-
-- Exact executable size such as `3.87 MB`
-- Exact cold-start result such as `8 ms`
-- Exact idle memory result such as `8 MB`
-- Comparisons with Docker, Node.js, Bun, Deno, or another sandbox
-- Scale claims such as “run 1,000 isolated functions”
-
-Publish these only as a benchmark card with:
-
-- Tysel version and source commit
-- OS, architecture, CPU, and build profile
-- Workload and artifact contents
-- Metric definition, raw samples, and aggregation
-- Competitor versions and equivalent configuration when applicable
-- Reproduction command and evidence download
-
-The current repository contract uses release gates of at most 20 MiB artifact size,
-15 ms median cold start, and 32 MiB idle Linux PSS. These are admission thresholds, not
-the measured `3.87 MB / 8 ms / 8 MB` results in the manifesto. Keep the sharper figures
-out of production copy until matching evidence is checked in.
-
-### Wording to avoid
-
-- “The only runtime that…” — difficult to maintain and unnecessary.
-- “Node/Bun/Deno have no isolation” — collapses different permission and sandbox models
-  into an inaccurate absolute.
-- “Process-level security” without platform scope — Linux is the production isolation
-  gate; macOS is not.
-- “Persistence is a language feature” — Tysel provides a runtime programming model, not
-  a change to the TypeScript language.
-
-### Recommended competitive frame
-
-> Bun and Deno optimize the general JavaScript runtime and toolchain. Tysel is designed
-> around a narrower production contract: small deployable artifacts, capability-bounded
-> execution, and durable TypeScript services and agents.
-
-## 14. Open decisions before visual implementation
-
-1. ~~Confirm the initial installation and binary distribution method.~~ **Decided:**
-   developer install is the three binaries `tysel`, `tysel-service`, and
-   `tysel-worker` in one directory (default `~/.tysel/bin`), verified by SHA-256,
-   later by the existing release signatures. The public hero is
-   `curl -fsSL https://tysel.dev/install.sh | sh` only after Darwin archives exist.
-   Production still ships one application executable and must not require a Tysel
-   runtime package (`roadmap.md` §7.3). `cargo install` and `npm i -g` are not
-   product distribution. See [Install](install.md).
-2. Confirm the public release label and documentation versioning policy.
-3. Confirm the public GitHub repository URL and release artifact locations.
-4. Decide whether Chinese is launch scope. Recommendation: launch canonical English
-   content first, then add `/zh/` without mixing languages inside a page.
-5. Choose the first visual mock target: homepage desktop plus mobile, followed by the
-   docs article template.
+1. Assign the public release version and channel from an actual tagged release.
+2. Finalize the GitHub organization, repository URL, and release-asset location.
+3. Decide when `tysel.dev/install.sh` becomes a supported authenticated entry point.
+4. Publish the stability map for Durable and Component APIs.
+5. Commit the complete brand assets, including social-card source and exports.
+6. Decide whether Chinese follows the canonical English launch under `/zh/`.
+7. Approve website performance budgets and analytics implementation.
 
 ## References
 

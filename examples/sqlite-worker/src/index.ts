@@ -1,6 +1,6 @@
 import type {} from "@tysel/types";
 
-/** SQLite worker demo (M1). */
+/** SQLite-backed counter service. */
 export default {
   async fetch(request: Request): Promise<Response> {
     await tysel.sqlite.exec(
