@@ -7,13 +7,20 @@ network or filesystem authority.
 
 ## Run
 
-Build the CLI and worker, then start the example:
+Build the CLI and worker from the repository root, expose their absolute paths,
+then enter this example directory:
 
 ```bash
 cargo build -p tysel-cli -p tysel-isolate --bin tysel --bin tysel-worker
-TYSEL_WORKER=target/debug/tysel-worker \
-  target/debug/tysel run --manifest examples/isolated-plugin/tysel.toml
+export PATH="$PWD/target/debug:$PATH"
+export TYSEL_WORKER="$PWD/target/debug/tysel-worker"
+cd examples/isolated-plugin
+tysel config validate
+tysel run
 ```
+
+The worker path remains valid after entering the project directory because it
+was exported as an absolute path.
 
 The command prints the selected address as `tysel listen HOST:PORT`. Use it in
 the following requests:

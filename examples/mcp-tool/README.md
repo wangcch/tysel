@@ -7,10 +7,15 @@ supervisor and is never returned to the tool caller.
 
 ## Run the stdio demonstration
 
-Build the CLI and worker:
+Build the CLI and worker from the repository root, then enter this example
+directory:
 
 ```bash
 cargo build -p tysel-cli -p tysel-isolate --bin tysel --bin tysel-worker
+export PATH="$PWD/target/debug:$PATH"
+export TYSEL_WORKER="$PWD/target/debug/tysel-worker"
+cd examples/mcp-tool
+tysel config validate
 ```
 
 Then send discovery, listing, and invocation requests. Each input line produces
@@ -23,9 +28,10 @@ printf '%s\n' \
   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{$META}}" \
   "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{$META}}" \
   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"lookup\",\"arguments\":{\"customerId\":\"customer-42\"},$META}}" \
-  | TYSEL_WORKER=target/debug/tysel-worker \
-      target/debug/tysel mcp --manifest examples/mcp-tool/tysel.toml
+  | tysel mcp
 ```
+
+The absolute `TYSEL_WORKER` path remains valid from the example directory.
 
 The tool result contains `customerId`, `isolated: true`, and the opaque handle
 `secret:OPENAI_API_KEY`; it must not contain `sk-demo-must-not-appear`.

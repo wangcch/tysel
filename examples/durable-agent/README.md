@@ -16,13 +16,14 @@ wakeups, and immutable task programs.
 
 ## Run the complete demonstration
 
-Set a real OpenAI-compatible endpoint, model, and credential:
+From this example directory, set a real OpenAI-compatible endpoint, model, and
+credential:
 
 ```bash
 export TYSEL_LLM_ENDPOINT=https://api.openai.com/v1/responses
 export TYSEL_LLM_MODEL=YOUR_MODEL
 export OPENAI_API_KEY=YOUR_KEY
-bash examples/durable-agent/demo.sh
+./demo.sh
 ```
 
 `demo.sh` builds the CLI, starts a run, verifies that it is waiting for
