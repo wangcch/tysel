@@ -1,55 +1,181 @@
 # Getting started
 
-Put `tysel` on your `PATH` first. See [Install](install.md). After that, every command below is `tysel`; you do not need `cargo run -p tysel-cli`.
+This guide creates, tests, runs, and packages a small HTTP service.
 
-## Create an application
+## Prerequisites
 
-```bash
+Tysel has not published a binary release yet. Build all three tools from source
+and add their directory to `PATH`:
+
+```sh
+git clone https://github.com/wangcch/tysel.git
+cd tysel
+pnpm install
+cargo build --locked --release \
+  -p tysel-cli --bin tysel \
+  -p tysel-runtime --bin tysel-service \
+  -p tysel-isolate --bin tysel-worker
+export PATH="$PWD/target/release:$PATH"
+tysel doctor
+```
+
+See [Installation](install.md) for prerequisites and the managed install,
+upgrade, and rollback contract that activates after a tagged release exists.
+
+## Create a project
+
+```sh
+cd ..
 tysel init hello-tysel
 cd hello-tysel
+```
+
+In an interactive terminal, `init` offers a recommended quick start and a
+customized flow. Customize can select an HTTP service, queue worker, MCP tool,
+or minimal template, along with manifest/package/test choices. Use `--yes` to
+accept explicit choices without prompting or `--no-interactive` in automation;
+every prompt also has a corresponding command-line option.
+
+`init` creates:
+
+```text
+hello-tysel/
+├── src/index.ts
+├── tests/app.test.ts
+├── package.json
+├── tsconfig.json
+└── tysel.toml
+```
+
+It checks all destinations before writing and does not overwrite existing
+files.
+
+Choose JSON explicitly, preview changes, or omit a newly generated
+`package.json`:
+
+```sh
+tysel init hello-json --manifest-format json
+tysel init hello-native --package-json none --dry-run
+tysel init hello-mcp --template mcp --package-json none --no-tests --yes
+```
+
+Inside an existing Node project, `init` preserves `package.json` and existing
+source files and creates a separate `src/tysel.ts` entry and
+`tsconfig.tysel.json` by default. The Tysel-specific config keeps application
+checking isolated from the existing Node compiler configuration:
+
+```sh
+tysel init .
+tysel init . --add-scripts # optionally add tysel:* package scripts
+```
+
+With `--no-tests`, Init also omits test dependencies, package scripts, and the
+`test` step from the generated `verify` task.
+
+The generated project pins `@tysel/types` and `@tysel/test` to the native
+toolchain version. Those npm packages are not public yet, so do not install the
+generated dependencies from the registry. Runtime and test commands work
+without them; `tysel check` reports that TypeScript checking was skipped.
+
+To enable editor and compiler declarations during source development, build
+and add the local packages from the adjacent Tysel checkout:
+
+```sh
+pnpm --dir ../tysel --filter @tysel/types build
+pnpm --dir ../tysel --filter @tysel/test build
+pnpm add -D \
+  ../tysel/packages/tysel-types \
+  ../tysel/packages/tysel-test \
+  typescript@7.0.2
+```
+
+## Write a Fetch handler
+
+The generated entry exports a Fetch-style application:
+
+```ts
+export default {
+  async fetch(request: Request): Promise<Response> {
+    return Response.json({
+      message: "Hello from Tysel",
+      path: new URL(request.url).pathname,
+    });
+  },
+};
+```
+
+Validate the manifest, TypeScript, capabilities, and imports:
+
+```sh
 tysel check
 tysel compat
+```
+
+`compat` is an early dependency report, not a substitute for tests. See
+[npm compatibility](compatibility/README.md).
+
+## Test and run
+
+```sh
 tysel test
 tysel dev
 ```
 
-`init` creates `src/index.ts`, a test under `tests/`, `tysel.toml`, TypeScript configuration, package scripts, and ignore rules. It checks every destination first, never overwrites an existing file, and rolls back files it created if a later write fails. Install the optional dependencies once to activate the pinned `@tysel/types` and `@tysel/test` editor contracts.
+The generated manifest also includes native `verify` and `release` workflows:
 
-`compat` reports four states: known compatible, shim required, unsupported, and unknown. CI can use `tysel compat --json --strict`, adding `--deny-unknown` when unreviewed dependencies must also fail.
-
-## Write tests
-
-Files ending in `.test.ts`, `.test.mts`, `.test.js`, or `.test.mjs` are discovered recursively under `tests/` by default.
-
-```ts
-test("returns a greeting", async () => {
-  const response = await app.fetch(new Request("http://localhost/hello"));
-  assert.equal(response.status, 200);
-});
+```sh
+tysel task verify
+tysel task release
 ```
 
-Each test runs in a fresh QuickJS isolate. Tests run in declaration order and may be asynchronous. The built-in API includes `assert(value)`, `assert.equal(actual, expected)`, and `assert.deepEqual(actual, expected)`. `--timeout-ms` is enforced by the engine for each test, including synchronous loops; a timed-out test does not prevent later tests from running. Any failure makes the command exit unsuccessfully.
+`dev` watches the application and reloads it after source changes. Call the
+address printed by the server:
 
-## Build and containerize
+```sh
+curl http://127.0.0.1:3000/hello
+```
 
-```bash
+Test files ending in `.test.ts`, `.test.mts`, `.test.js`, or `.test.mjs` are
+discovered recursively under `tests/`. Each test runs in a fresh QuickJS
+isolate. The built-in contract includes `test`, `assert`, `assert.equal`, and
+`assert.deepEqual`.
+
+## Grant a capability
+
+Outbound resources are denied until declared. For example:
+
+```toml
+[permissions]
+fetch = ["api.example.com"]
+secrets = ["API_TOKEN"]
+```
+
+The manifest requests authority; the execution profile and deployment policy
+can reduce it further. Review the [manifest reference](reference/manifest.md)
+and [capability matrix](capabilities/README.md).
+
+## Build one executable
+
+```sh
+tysel build --release
+./dist/hello-tysel
+```
+
+The output contains the application and runtime. The target machine does not
+need Node.js or `node_modules`. Builds currently target the host platform;
+cross-compilation is not implemented.
+
+For a container, set the listener to `0.0.0.0:3000` and use `tysel image` on
+Linux. See [production operations](operations/production.md) before deploying.
+
+## Use in CI
+
+```sh
+tysel --error-format json check
+tysel compat --json --strict
+tysel test --json
 tysel build --release
 ```
 
-For containers, change `[server].listen` to `0.0.0.0:3000`. On Linux, `tysel image` builds the executable and image. On another host, pass an existing Linux ELF:
-
-```bash
-tysel image --tag hello-tysel:latest
-tysel image --binary dist/linux/hello-tysel --context-only
-```
-
-The generated image runs as UID/GID `65532`. Supplied binaries must be little-endian ELF64 for x86_64 or AArch64 and either statically linked or use the glibc `ld-linux` interpreter expected by the default distroless base. Docker receives the matching `linux/amd64` or `linux/arm64` platform. Pin a release base with `--base-image registry/image@sha256:…`. Existing generated files are preserved unless `--force` is explicit.
-
-## Machine-readable failures
-
-```bash
-tysel --error-format json check
-tysel --error-format json test --json
-```
-
-Fatal CLI errors use `{ "error": { "code", "message" } }`. HTTP runtime failures add `requestId` and map JavaScript stack frames back to the current TypeScript source map. Test JSON is schema version 1 and includes mapped source stacks.
+Fatal JSON errors are written to stderr. Command reports such as test and
+compatibility results are written to stdout.
