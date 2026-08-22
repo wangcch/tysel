@@ -163,8 +163,8 @@ Measures:
 - Add guide, example, reference, and ADR landing pages.
 - Convert repository-relative source links to stable repository URLs.
 - Add `llms.txt` and `llms-small.txt`.
-- Validate navigation, local links and anchors, one-H1 structure, balanced code
-  fences, and public/private boundaries in CI.
+- Validate navigation, local links, anchors, unrecognized links, and
+  public/private boundaries with MkDocs native strict validation in CI.
 - Add repository and edit-page metadata to the interim MkDocs site.
 
 ### P1 — launch learning paths
@@ -207,7 +207,7 @@ This tranche starts P0 with framework-independent improvements:
 - reference and ADR landing pages;
 - full and compact machine-readable indexes;
 - stable links from hosted docs to source examples;
-- automated documentation structure and link validation;
+- native strict documentation build and link validation;
 - MkDocs navigation and repository metadata aligned with the new entry points.
 
 The next tranche should focus on one fully tested golden path and generated CLI

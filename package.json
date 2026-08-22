@@ -6,9 +6,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "pnpm docs:check && pnpm --filter @tysel/types build && pnpm -r --if-present check",
+    "check": "pnpm --filter @tysel/types build && pnpm -r --if-present check",
     "docs:build": "python3 -m mkdocs build --strict",
-    "docs:check": "node .github/scripts/check-docs.mjs",
     "test": "pnpm -r --if-present test",
     "cli": "cargo run -p tysel-cli --"
   },

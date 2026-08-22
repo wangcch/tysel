@@ -6,6 +6,11 @@ repo_name: wangcch/tysel
 repo_url: https://github.com/wangcch/tysel
 edit_uri: edit/main/docs/
 strict: true
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
 exclude_docs: |
   website-plan.md
   documentation-roadmap.md
