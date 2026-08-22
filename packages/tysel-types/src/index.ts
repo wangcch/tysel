@@ -7,7 +7,7 @@ export interface JsonObject {
 }
 
 export type MaybePromise<T> = T | Promise<T>;
-export type ExecutionProfile = "service" | "isolate";
+export type ExecutionProfile = "service" | "isolated" | "component";
 export type TrustMode = "trusted-service" | "isolated-task";
 
 export interface CapabilityRequirement {
