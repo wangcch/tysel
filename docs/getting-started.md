@@ -69,8 +69,8 @@ tysel init .
 tysel init . --add-scripts # optionally add tysel:* package scripts
 ```
 
-With `--no-tests`, Init also omits test dependencies, package scripts, and the
-`test` step from the generated `verify` task.
+With `--no-tests`, Init also omits test dependencies, the `test` package script,
+and the `test` step from the generated `verify` task.
 
 The generated project pins `@tysel/types` and `@tysel/test` to the native
 toolchain version. Those npm packages are not public yet, so do not install the

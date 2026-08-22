@@ -19,7 +19,7 @@
         "entry": {
           "type": "string",
           "minLength": 1,
-          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000-\\u001F]+$"
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!\\.(?:/\\.)*/?$)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000-\\u001F]+$"
         },
         "profile": {
           "type": "string",
@@ -81,12 +81,12 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "memory_mb": { "type": "integer", "minimum": 0, "default": 128 },
-        "cpu_ms_per_turn": { "type": "integer", "minimum": 0, "default": 50 },
-        "request_timeout_ms": { "type": "integer", "minimum": 0, "default": 30000 },
-        "max_in_flight": { "type": "integer", "minimum": 0, "default": 1000 },
-        "max_response_mb": { "type": "integer", "minimum": 0, "default": 16 },
-        "max_request_mb": { "type": "integer", "minimum": 0, "default": 16 }
+        "memory_mb": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 128 },
+        "cpu_ms_per_turn": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615, "default": 50 },
+        "request_timeout_ms": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615, "default": 30000 },
+        "max_in_flight": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 1000 },
+        "max_response_mb": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 16 },
+        "max_request_mb": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 16 }
       }
     },
     "durable": {

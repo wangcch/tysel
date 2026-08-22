@@ -800,7 +800,7 @@ entry = "src/index.ts"
         .unwrap_err();
         assert!(unsafe_name.to_string().contains("app.name"), "{unsafe_name}");
 
-        for entry in ["../outside.ts", "/tmp/outside.ts", "C:/outside.ts", "."] {
+        for entry in ["../outside.ts", "/tmp/outside.ts", "C:/outside.ts", ".", "./", "././."] {
             let error = Manifest::parse(&format!(
                 r#"
 [app]
@@ -899,6 +899,49 @@ steps = [["check", "-C/tmp/other-project"]]
         assert_eq!(schema["$id"], "https://tysel.dev/schemas/manifest-v1.json");
         assert_eq!(schema["properties"]["schema_version"]["const"], 1);
         assert!(schema["properties"]["tasks"].is_object());
+
+        let entry_pattern = schema["properties"]["app"]["properties"]["entry"]["pattern"]
+            .as_str()
+            .expect("app.entry pattern");
+        assert!(
+            entry_pattern.contains(r"(?!\.(?:/\.)*/?$)"),
+            "schema must reject paths made only from current-directory components"
+        );
+
+        for (field, maximum) in [
+            ("memory_mb", u64::from(u32::MAX)),
+            ("cpu_ms_per_turn", u64::MAX),
+            ("request_timeout_ms", u64::MAX),
+            ("max_in_flight", u64::from(u32::MAX)),
+            ("max_response_mb", u64::from(u32::MAX)),
+            ("max_request_mb", u64::from(u32::MAX)),
+        ] {
+            assert_eq!(
+                schema["properties"]["limits"]["properties"][field]["maximum"], maximum,
+                "limits.{field} must match its runtime integer representation"
+            );
+        }
+    }
+
+    #[test]
+    fn json_limits_reject_values_above_their_schema_maximum() {
+        for (field, overflow) in [
+            ("memory_mb", "4294967296"),
+            ("cpu_ms_per_turn", "18446744073709551616"),
+            ("request_timeout_ms", "18446744073709551616"),
+            ("max_in_flight", "4294967296"),
+            ("max_response_mb", "4294967296"),
+            ("max_request_mb", "4294967296"),
+        ] {
+            let raw = format!(
+                r#"{{
+  "app": {{ "name": "limits", "entry": "src/index.ts" }},
+  "limits": {{ "{field}": {overflow} }}
+}}"#
+            );
+            let error = Manifest::parse_with_format(&raw, ManifestFormat::Json).unwrap_err();
+            assert!(error.to_string().contains("invalid json"), "{field}: {error}");
+        }
     }
 
     #[test]
