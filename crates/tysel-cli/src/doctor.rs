@@ -14,6 +14,7 @@ use tysel_distribution::{
 use tysel_manifest::Manifest;
 
 use crate::check::{self, Typecheck};
+use crate::integrity::hash_file;
 use crate::platform;
 
 pub const DOCTOR_SCHEMA_VERSION: u32 = 1;
@@ -807,20 +808,6 @@ fn is_executable(path: &Path) -> bool {
     }
     #[cfg(not(unix))]
     true
-}
-
-fn hash_file(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {

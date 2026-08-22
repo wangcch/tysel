@@ -19,6 +19,7 @@ mod dev;
 mod doctor;
 mod image;
 mod init;
+mod integrity;
 mod node_scan;
 mod platform;
 mod release;

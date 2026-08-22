@@ -6,9 +6,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use sha2::{Digest, Sha256};
 use tysel_distribution::{BuildInfo, ReleaseManifest, Target};
 
+use crate::integrity::hash_file;
 use crate::platform;
 
 #[derive(Subcommand)]
@@ -276,20 +276,6 @@ fn read_build_info_with_timeout(path: &Path, binary: &str, timeout: Duration) ->
     anyhow::ensure!(status.success(), "{binary} rejected build identity query");
     anyhow::ensure!(output.len() <= 64 * 1024, "{binary} build identity is oversized");
     Ok(output)
-}
-
-fn hash_file(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn now_unix() -> Result<u64> {
