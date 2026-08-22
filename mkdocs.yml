@@ -2,6 +2,7 @@ site_name: Tysel Documentation
 site_description: Build TypeScript services and durable agents as native executables.
 docs_dir: docs
 exclude_docs: |
+  toolchain-plan.md
   website-plan.md
   architecture/*acceptance.md
 theme:

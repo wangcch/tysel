@@ -191,7 +191,7 @@ publishes matching `@tysel/types` and `@tysel/test` artifacts, and only then
 makes the complete GitHub Release public. Prereleases therefore cannot advance
 the stable pointer, and native releases cannot generate projects whose matching
 npm contracts are unavailable. See the internal
-[developer toolchain iteration plan](toolchain-plan.md) for the threat model,
-release gates, and future independent-bootstrap work.
+developer toolchain iteration plan in the source repository for the threat
+model, release gates, and future independent-bootstrap work.
 
 Windows native archives are not currently supported. Use WSL on Windows.
