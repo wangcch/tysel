@@ -1,0 +1,61 @@
+# Testing API
+
+`@tysel/test` provides a small test registration and assertion surface for
+files executed by `tysel test`.
+
+## `test`
+
+```ts
+test(name: string, body: () => unknown | Promise<unknown>): void
+```
+
+Register a named test. Test files run in fresh QuickJS isolates, so module
+state is not shared across files.
+
+## `assert`
+
+```ts
+assert(condition: unknown, message?: string): asserts condition
+assert.equal(actual: unknown, expected: unknown, message?: string): void
+assert.deepEqual(actual: unknown, expected: unknown, message?: string): void
+```
+
+`assert` checks truthiness, `equal` checks scalar equality, and `deepEqual`
+compares structured values. A failed assertion fails the test and makes the
+CLI exit non-zero.
+
+## `invokeFetch`
+
+```ts
+invokeFetch(
+  handler: FetchHandler,
+  input: Request | string | URL,
+  init?: RequestInit,
+): Promise<Response>
+```
+
+Invoke an application fetch handler without starting a listener.
+
+```ts
+import { assert, invokeFetch, test } from "@tysel/test";
+import app from "../src/index.ts";
+
+test("health endpoint", async () => {
+  assert(app.fetch, "fetch handler is registered");
+  const response = await invokeFetch(app.fetch, "http://local/health");
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+});
+```
+
+Run the suite with:
+
+```sh
+tysel test
+tysel test tests/health.test.ts --timeout-ms 10000 --json
+```
+
+The default path is `tests/` and the default per-test timeout is `5000`
+milliseconds. See [`tysel test`](../cli/development.md#tysel-test) for CLI
+output and exit behavior.

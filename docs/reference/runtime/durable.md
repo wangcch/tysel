@@ -1,0 +1,84 @@
+# Durable API
+
+Durable handlers record effect boundaries so interrupted work can resume
+without repeating already committed external actions.
+
+```ts
+interface DurableContext {
+  step<T>(name: string, operation: () => MaybePromise<T>): Promise<T>;
+  effect<T>(name: string, operation: () => MaybePromise<T>): Promise<T>;
+  sleep(duration: number | string): Promise<void>;
+  waitForSignal<T = JsonValue>(name: string): Promise<T>;
+  retry<T>(policy: DurableRetryPolicy,
+    operation: (attempt: number) => MaybePromise<T>): Promise<T>;
+  now(): Date;
+  random(): number;
+}
+```
+
+## Boundaries
+
+| Method | Recorded contract |
+| --- | --- |
+| `step` | Persist a replayable computation result. |
+| `effect` | Persist the outcome of an external side effect. |
+| `sleep` | Persist suspension for a numeric or string duration. |
+| `waitForSignal` | Suspend until a named JSON signal arrives. |
+| `retry` | Record each bounded attempt under a retry policy. |
+| `now` | Return a replay-safe `Date`. |
+| `random` | Return a replay-safe random value. |
+
+Names passed to `step` and `effect`, plus signal names, are part of persisted
+history. Keep them stable and await durable boundaries sequentially. Inputs,
+boundary results, signals, and handler results must be JSON serializable.
+
+## Retry policy
+
+```ts
+interface DurableRetryPolicy {
+  maxAttempts?: number;
+  delay?: number | string;
+  factor?: number;
+  maxDelay?: number | string;
+}
+```
+
+Numeric `delay` and `maxDelay` values are milliseconds; both also accept the
+runtime's duration-string form. `factor` controls backoff growth.
+
+## Handler example
+
+```ts
+import type { DurableContext, TyselApp } from "@tysel/types";
+
+const app: TyselApp = {
+  durable: {
+    async provision(ctx: DurableContext, input) {
+      const id = await ctx.step("allocate-id", () => ({ value: cryptoValue() }));
+      await ctx.effect("notify", () => notifyOwner(id));
+      const approval = await ctx.waitForSignal("approval");
+      return { id, approval };
+    },
+  },
+};
+
+export default app;
+```
+
+The example's application functions must themselves be deterministic where
+their results are not wrapped by a recorded boundary.
+
+## Control API
+
+```ts
+const status = tysel.durable.start("provision", input);
+tysel.durable.sendSignal(status.taskId, "approval", { approved: true });
+```
+
+`start` returns either a completed result or a suspended status.
+`sendSignal` appends a JSON signal for a waiting workflow.
+
+Durable inputs and results are limited to 1 MiB, with additional history,
+signal, and program bounds listed under [Limits and defaults](../limits-and-defaults.md).
+Read [Durable execution](../../concepts/durable-execution.md) before changing a
+handler that has in-flight instances.

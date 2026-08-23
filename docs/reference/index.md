@@ -1,39 +1,52 @@
 # Reference
 
-Use these pages to look up exact commands, configuration, APIs, support, and
-operational limits. For a complete workflow, start with [Guides](../guides/index.md).
+Reference pages describe exact interfaces: accepted values, defaults, side
+effects, errors, and stability boundaries. Start with a [guide](../guides/index.md)
+when you want a workflow rather than a contract.
 
-## Product reference
+## Find a contract
 
-| Surface | Reference | Source of truth |
+| I need to look up… | Start here | Authoritative source |
 | --- | --- | --- |
-| Commands, options, output, and exit behavior | [CLI reference](../cli.md) | Native CLI command definitions |
-| TOML and JSON application configuration | [Manifest reference](manifest.md) | Bundled Draft 2020-12 JSON Schema |
-| Application exports and host APIs | [Runtime API](../api/runtime.md) | Runtime implementation and `@tysel/types` |
-| Web and JavaScript APIs | [JavaScript compatibility](../architecture/javascript-runtime-compatibility.md) | Runtime compatibility inventory |
-| Grants by execution profile | [Capability matrix](../capabilities/README.md) | Manifest, profile, and host enforcement |
-| npm and Node.js assumptions | [npm compatibility](../compatibility/README.md) | Compatibility catalog plus project scan |
+| A command or option | [CLI](cli/index.md) | Installed command definitions and `tysel <command> --help` |
+| A manifest key | [Manifest](manifest/index.md) | Bundled Draft 2020-12 JSON Schema |
+| An application export or TypeScript symbol | [Runtime](runtime/index.md) | `@tysel/types` and the runtime implementation |
+| A required host setting | [Environment variables](environment.md) | Installer, CLI, and host adapters |
+| A default or hard bound | [Limits and defaults](limits-and-defaults.md) | Schema defaults and native implementation constants |
+| An exit code or error envelope | [Errors and machine output](errors-and-output.md) | CLI and HTTP response implementations |
+| A browser-style JavaScript API | [JavaScript API compatibility](../architecture/javascript-runtime-compatibility.md) | Versioned compatibility inventory |
+| A grant available to an execution profile | [Capability matrix](../capabilities/README.md) | Manifest, profile, and host enforcement |
+| An npm or Node.js assumption | [npm compatibility](../compatibility/README.md) | Compatibility catalog and project scan |
 
-## Operational reference
+## Lookup by symbol
 
-| Need | Reference |
+| Symbol or command | Reference |
 | --- | --- |
-| Install, diagnose, upgrade, or roll back | [Installation](../install.md) |
-| Understand trust boundaries and deployment responsibilities | [Security model](../security/README.md) |
-| Deploy, back up, restore, monitor, or respond to incidents | [Production operations](../operations/production.md) |
-| Reproduce and interpret benchmark evidence | [Performance and evidence](../performance/README.md) |
+| `JsonValue`, `MaybePromise`, `ExecutionProfile`, `TrustMode` | [Core types](runtime/types.md) |
+| `TyselApp`, `FetchHandler`, `RequestContext` | [Application module](runtime/application.md) |
+| `tysel.secrets`, `tysel.sqlite`, `tysel.postgres`, `tysel.fs`, `tysel.llm` | [Host capabilities](runtime/capabilities.md) |
+| `DurableContext`, `tysel.durable` | [Durable API](runtime/durable.md) |
+| `test`, `assert`, `invokeFetch` | [Testing API](runtime/testing.md) |
+| `tysel init`, `tysel config` | [Project and configuration commands](cli/project.md) |
+| `tysel check`, `compat`, `test`, `dev`, `run`, `inspect` | [Develop and test commands](cli/development.md) |
+| `tysel task`, `queue`, `mcp` | [Tasks and protocols](cli/tasks.md) |
+| `tysel build`, `image` | [Build and image](cli/delivery.md) |
+| `tysel doctor`, `upgrade` | [Installation lifecycle](cli/installation.md) |
+| `tysel bench`, `release` | [Benchmarks and release evidence](cli/evidence.md) |
 
-## Quick lookup
+## Version-local truth
+
+The reference describes the source tree that produced this documentation. For
+an installed binary, its help and bundled schema are authoritative:
 
 ```sh
+tysel --version
 tysel --help
-tysel <command> --help
 tysel config schema
 tysel config show --format json
 tysel inspect
-tysel compat --json
 ```
 
-The installed CLI and bundled schema are authoritative for that binary. The
-website must not imply a stable public release until a matching tagged release
-exists.
+Unknown manifest fields are errors. APIs or environment variables not listed
+here should be treated as implementation details unless a release note promotes
+them to a public contract.

@@ -1,0 +1,48 @@
+# Installation lifecycle commands
+
+## `tysel doctor`
+
+Diagnose installation, platform, and project state.
+
+```text
+tysel doctor [-C PROJECT_OR_MANIFEST] [--install] [--network] [--json]
+```
+
+| Option | Behavior |
+| --- | --- |
+| `--install` | Focus on managed-installation health. |
+| `--network` | Opt in to network diagnostics; the default check is local. |
+| `--json` | Write a machine-readable diagnostic report to stdout. |
+
+For backward compatibility, the command also accepts `--project` as either a
+project directory or an explicit manifest path. Other commands use global `-C`
+for a directory and `--manifest` for an exact file.
+
+## `tysel upgrade`
+
+Check, update, or roll back a managed installation atomically.
+
+```text
+tysel upgrade [OPTIONS]
+```
+
+| Option | Default | Behavior |
+| --- | --- | --- |
+| `--check` | Off | Report whether an update is available without installing it. |
+| `--version <version>` | Latest channel version | Select an exact version. |
+| `--channel <channel>` | `stable` | Select the update channel. |
+| `--yes` | Off | Confirm without prompting. |
+| `--force` | Off | Reinstall even when normal guards would skip it. |
+| `--rollback` | Off | Restore the managed previous installation. |
+| `--json` | Off | Write a machine-readable result to stdout. |
+
+```sh
+tysel doctor --install
+tysel upgrade --check --json
+tysel upgrade --version 0.1.0 --yes
+tysel upgrade --rollback
+```
+
+`upgrade` applies only to managed installations. See [Installation](../../install.md)
+for paths, verification, and platform support, and [Environment variables](../environment.md)
+for mirror and installation-root controls.

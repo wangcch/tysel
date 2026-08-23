@@ -31,14 +31,36 @@ nav:
       - Projects and configuration: concepts/projects-and-configuration.md
       - Execution profiles: concepts/execution-profiles.md
       - Durable execution: concepts/durable-execution.md
-  - Build:
-      - Runtime API: api/runtime.md
-      - Capabilities: capabilities/README.md
-      - npm compatibility: compatibility/README.md
   - Reference:
       - Overview: reference/index.md
-      - CLI: cli.md
-      - Manifest: reference/manifest.md
+      - CLI:
+          - Overview: reference/cli/index.md
+          - Project and configuration: reference/cli/project.md
+          - Develop and test: reference/cli/development.md
+          - Tasks and protocols: reference/cli/tasks.md
+          - Build and image: reference/cli/delivery.md
+          - Installation lifecycle: reference/cli/installation.md
+          - Benchmarks and release: reference/cli/evidence.md
+      - Manifest:
+          - Overview: reference/manifest/index.md
+          - Application and server: reference/manifest/app-server.md
+          - Permissions: reference/manifest/permissions.md
+          - Limits: reference/manifest/limits.md
+          - Durable and observability: reference/manifest/durable-observability.md
+          - Tasks: reference/manifest/tasks.md
+      - Runtime:
+          - Overview: reference/runtime/index.md
+          - Core types: reference/runtime/types.md
+          - Application module: reference/runtime/application.md
+          - Host capabilities: reference/runtime/capabilities.md
+          - Durable API: reference/runtime/durable.md
+          - Testing API: reference/runtime/testing.md
+      - Environment variables: reference/environment.md
+      - Limits and defaults: reference/limits-and-defaults.md
+      - Errors and machine output: reference/errors-and-output.md
+      - Capability matrix: capabilities/README.md
+      - JavaScript APIs: architecture/javascript-runtime-compatibility.md
+      - npm compatibility: compatibility/README.md
   - Operate:
       - Security: security/README.md
       - Production: operations/production.md
@@ -46,7 +68,6 @@ nav:
   - Internals:
       - Architecture: architecture/README.md
       - Decision records: adr/index.md
-      - JavaScript APIs: architecture/javascript-runtime-compatibility.md
       - Runtime ownership: architecture/javascript-runtime-convergence.md
       - Decisions:
           - Rust core: adr/001-runtime-core-rust.md

@@ -212,3 +212,40 @@ This tranche starts P0 with framework-independent improvements:
 
 The next tranche should focus on one fully tested golden path and generated CLI
 reference rather than adding more broad overview prose.
+
+## Reference tranche update — 2026-08-23
+
+The hand-authored reference foundation is now implemented on stable,
+search-oriented routes:
+
+- CLI reference split by project setup, development, task protocols, delivery,
+  installation lifecycle, and release evidence;
+- manifest reference split by application/server, permissions, limits,
+  durable/observability, and task schema;
+- runtime reference split by application exports, host capabilities, durable
+  APIs, and `@tysel/test`;
+- cross-cutting environment-variable, limits/defaults, and error/output indexes;
+- `llms.txt`, site navigation, and existing public links updated to the same
+  route graph;
+- all pages validated by the existing MkDocs strict build in CI, avoiding a
+  second overlapping documentation checker.
+
+The source audit also exposed contract gaps that the previous dense pages hid:
+`max_in_flight` and `max_response_mb` are schema-visible but not yet propagated
+through the package format; manifest trace and metric endpoints are likewise
+not yet runtime controls. The reference labels those facts explicitly.
+
+G3 is therefore partially complete: public lookup and source reconciliation are
+in place, but drift can still occur silently. The next reference work should be
+generation and comparison, in this order:
+
+1. export the Clap command graph and compare command/option inventory in CI;
+2. render manifest field tables from the bundled JSON Schema;
+3. render JavaScript compatibility from the versioned JSON inventory;
+4. extract public signatures from `@tysel/types` and compile reference snippets;
+5. fail the existing `docs:build` job when generated artifacts differ.
+
+This should remain one strict documentation job. Separate bespoke link and
+navigation scripts are not useful while MkDocs already validates those
+properties; additional CI earns its cost only when it checks source-to-reference
+drift that MkDocs cannot see.

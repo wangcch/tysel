@@ -8,7 +8,7 @@ executable without Node.js or `node_modules` in production.
 
 | Your goal | Start with | Then read |
 | --- | --- | --- |
-| Build an HTTP service | [Create your first service](getting-started.md) | [Runtime API](api/runtime.md) |
+| Build an HTTP service | [Create your first service](getting-started.md) | [Runtime API](reference/runtime/index.md) |
 | Add Tysel to an existing project | [Create or adopt a project](concepts/projects-and-configuration.md#create-or-adopt-a-project) | [npm compatibility](compatibility/README.md) |
 | Run generated or third-party code | [Choose an execution profile](concepts/execution-profiles.md) | [Security model](security/README.md) |
 | Build work that survives restarts | [Durable execution](concepts/durable-execution.md) | [Durable agent example](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) |
@@ -72,10 +72,10 @@ run [`tysel compat`](compatibility/README.md) before adopting a dependency.
   [projects and configuration](concepts/projects-and-configuration.md),
   [execution profiles](concepts/execution-profiles.md), and
   [durable execution](concepts/durable-execution.md).
-- **Build:** [runtime API](api/runtime.md),
+- **Build:** [runtime API](reference/runtime/index.md),
   [capability matrix](capabilities/README.md), and
   [runnable examples](guides/examples.md).
-- **Look up:** [CLI](cli.md), [manifest](reference/manifest.md),
+- **Look up:** [CLI](reference/cli/index.md), [manifest](reference/manifest/index.md),
   [compatibility](compatibility/README.md), and
   [supported JavaScript APIs](architecture/javascript-runtime-compatibility.md).
 - **Operate:** [installation and upgrades](install.md),

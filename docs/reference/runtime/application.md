@@ -1,0 +1,103 @@
+# Application module
+
+An application default-exports a `TyselApp` object. Every member is optional,
+but the selected command or protocol requires the corresponding handler.
+
+```ts
+interface TyselApp {
+  fetch?: FetchHandler;
+  tasks?: Record<string, CronTask | QueueTask | McpTask>;
+  durable?: Record<string, DurableHandler>;
+}
+```
+
+## HTTP handler
+
+```ts
+type FetchHandler = (request: Request) => Response | Promise<Response>;
+```
+
+The runtime calls `fetch` for inbound HTTP requests. It must return a
+`Response` or a promise of one. Request and response bodies are bounded and
+single-use according to the [JavaScript API compatibility matrix](../../architecture/javascript-runtime-compatibility.md).
+
+```ts
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    return Response.json({ method: request.method, path: url.pathname });
+  },
+} satisfies TyselApp;
+```
+
+## Request context
+
+Non-HTTP task handlers receive:
+
+```ts
+interface RequestContext {
+  requestId: string;
+  deadlineMs: number;
+}
+```
+
+`deadlineMs` is an absolute deadline in milliseconds, not a duration. Propagate
+`requestId` into application logs when correlating work.
+
+## Cron tasks
+
+```ts
+interface CronTask {
+  kind: "cron";
+  expression: string;
+  handler(context: RequestContext): void | Promise<void>;
+}
+```
+
+```ts
+tasks: {
+  cleanup: {
+    kind: "cron",
+    expression: "0 * * * *",
+    async handler(context) {
+      console.log("cleanup", context.requestId);
+    },
+  },
+}
+```
+
+## Queue tasks
+
+```ts
+interface QueueTask {
+  kind: "queue";
+  name: string;
+  handler(message: JsonValue, context: RequestContext): unknown | Promise<unknown>;
+}
+```
+
+Messages and results must be JSON serializable. Use [`tysel queue`](../cli/tasks.md#tysel-queue)
+to invoke a registered handler from the CLI.
+
+## MCP tasks
+
+```ts
+interface McpTask {
+  kind: "mcp";
+  description: string;
+  input: Record<string, string>;
+  handler(input: object, context: RequestContext): unknown | Promise<unknown>;
+}
+```
+
+`input` describes named tool inputs for discovery. Handler input and result
+must be JSON serializable. Each schema value is one of `string`, `number`,
+`integer`, `boolean`, `object`, or `array`, and every declared property is
+required by the current protocol adapter. [`tysel mcp`](../cli/tasks.md#tysel-mcp)
+serves the registered tools over newline-delimited stdio.
+
+## Durable handlers
+
+Durable handler values receive a `DurableContext` plus JSON input and return a
+JSON value. Their replay rules are stricter than ordinary task handlers; see
+the [Durable API](durable.md) before changing a deployed workflow.

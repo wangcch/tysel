@@ -151,7 +151,7 @@ secrets = ["API_TOKEN"]
 ```
 
 The manifest requests authority; the execution profile and deployment policy
-can reduce it further. Review the [manifest reference](reference/manifest.md)
+can reduce it further. Review the [manifest reference](reference/manifest/index.md)
 and [capability matrix](capabilities/README.md).
 
 ## Build one executable

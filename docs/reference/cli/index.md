@@ -1,0 +1,54 @@
+# CLI reference
+
+The `tysel` executable manages projects, validates compatibility, runs
+applications, and produces delivery evidence. This section documents the
+current command surface; the installed binary remains authoritative.
+
+## Global syntax
+
+```text
+tysel [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--error-format <human|json>` | `human` | Format fatal CLI errors written to stderr. |
+| `-C, --project <directory>` | Current directory | Discover and run from another project directory. `--project-dir` is an alias. |
+| `-h, --help` | — | Print help. |
+| `-V, --version` | — | Print the installed version. |
+
+Global options are accepted before or after the subcommand. `-C` and a
+command-level `--manifest` cannot be combined.
+
+## Project selection
+
+Project commands search upward for exactly one `tysel.toml` or `tysel.json`.
+If both exist in one directory, discovery fails instead of guessing. After
+discovery, relative entries, stores, and filesystem roots resolve from the
+manifest directory.
+
+```sh
+tysel -C examples/sqlite-worker check
+tysel run --manifest examples/sqlite-worker/tysel.toml
+```
+
+## Command groups
+
+| Group | Commands |
+| --- | --- |
+| Project setup | [`init`, `config`](project.md) |
+| Development | [`check`, `compat`, `test`, `dev`, `run`, `inspect`](development.md) |
+| Tasks and protocols | [`task`, `queue`, `mcp`](tasks.md) |
+| Delivery | [`build`, `image`](delivery.md) |
+| Installation | [`doctor`, `upgrade`](installation.md) |
+| Evidence | [`bench`, `release`](evidence.md) |
+
+## Exit and stream contract
+
+Successful commands exit with status `0`; validation, policy, test, build,
+benchmark-gate, and runtime failures exit non-zero. Human diagnostics and fatal
+JSON errors go to stderr. Command reports requested with flags such as
+`test --json`, `compat --json`, and `bench --format json` go to stdout.
+
+See [Errors and machine output](../errors-and-output.md) before parsing CLI
+output in automation.

@@ -24,5 +24,5 @@ security gate.
 
 Use `tysel inspect` to see effective permissions and limits. See
 [execution profiles](../concepts/execution-profiles.md),
-[manifest reference](../reference/manifest.md), and
+[manifest reference](../reference/manifest/index.md), and
 [production operations](../operations/production.md).

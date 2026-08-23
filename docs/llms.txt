@@ -24,15 +24,18 @@ architecture records.
 
 ## Build
 
-- [Runtime API](https://tysel.dev/docs/api/runtime/): Application exports, Web APIs, host capabilities, protocols, durable context, and errors.
+- [Runtime API](https://tysel.dev/docs/reference/runtime/): Application exports, public TypeScript symbols, host capabilities, durable context, and tests.
 - [Capability matrix](https://tysel.dev/docs/capabilities/): Availability of network, secrets, storage, files, WebSocket, LLM, and durable features by profile.
 - [npm and Node.js compatibility](https://tysel.dev/docs/compatibility/): Dependency classification, unsupported runtime assumptions, and adoption checks.
 
 ## Reference
 
 - [Reference index](https://tysel.dev/docs/reference/): Find the authoritative surface for commands, configuration, APIs, and operational behavior.
-- [CLI reference](https://tysel.dev/docs/cli/): Commands, common options, structured output, and exit behavior.
+- [CLI reference](https://tysel.dev/docs/reference/cli/): Commands, options, defaults, side effects, structured output, and exit behavior.
 - [Manifest reference](https://tysel.dev/docs/reference/manifest/): Complete TOML/JSON schema concepts, permissions, limits, durable settings, and tasks.
+- [Environment variables](https://tysel.dev/docs/reference/environment/): Installation, capabilities, durable storage, LLM, telemetry, and host integration.
+- [Limits and defaults](https://tysel.dev/docs/reference/limits-and-defaults/): Configuration defaults and current runtime bounds.
+- [Errors and machine output](https://tysel.dev/docs/reference/errors-and-output/): CLI streams, exit status, report behavior, and HTTP error envelopes.
 - [JavaScript API compatibility](https://tysel.dev/docs/architecture/javascript-runtime-compatibility/): Exact supported server-side Web API subset and exclusions.
 
 ## Operate and evaluate

@@ -140,7 +140,7 @@ Dependencies execute once in dependency order. Steps run from the project root
 using the same manifest. A failed step stops the task. To keep execution
 bounded and reproducible, steps cannot invoke another task or override project
 selection, and only the commands listed in the
-[manifest reference](../reference/manifest.md#tasks) are accepted.
+[manifest task reference](../reference/manifest/tasks.md#step-commands) are accepted.
 
 Continue with the [getting started guide](../getting-started.md),
-[CLI reference](../cli.md), or [manifest reference](../reference/manifest.md).
+[CLI reference](../reference/cli/index.md), or [manifest reference](../reference/manifest/index.md).

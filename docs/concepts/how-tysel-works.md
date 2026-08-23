@@ -75,5 +75,5 @@ They are a toolchain detail. `tysel build` embeds the selected application and
 runtime into one executable for delivery.
 
 Next, choose an [execution profile](execution-profiles.md), review the
-[manifest](../reference/manifest.md), or build the
+[manifest](../reference/manifest/index.md), or build the
 [first service](../getting-started.md).
