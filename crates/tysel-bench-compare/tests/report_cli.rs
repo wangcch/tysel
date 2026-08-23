@@ -34,7 +34,41 @@ fn report_cli_aggregates_four_rotated_evidence_files() {
     assert_eq!(summary.order_seeds, [1, 2, 3, 4]);
     assert_eq!(summary.inputs.len(), 4);
     assert_eq!(summary.runtimes.len(), 4);
-    assert!(output.with_extension("md").is_file());
+    let report = fs::read_to_string(output.with_extension("md")).unwrap();
+    let efficiency_section = report.find("## CPU efficiency (primary)").unwrap();
+    let workload_section = report.find("## Matched HTTP workload evidence").unwrap();
+    assert!(efficiency_section < workload_section);
+    let position_section = report.find("## Tysel's position").unwrap();
+    let first_metric =
+        report[position_section..].find("requests-per-server-cpu-second-p50").unwrap();
+    let first_throughput = report[position_section..].find("requests-per-second-p50").unwrap();
+    assert!(first_metric < first_throughput);
+
+    let cycle_paths = (1..=3)
+        .map(|cycle| {
+            let path = directory.join(format!("cycle-{cycle}.json"));
+            fs::copy(&output, &path).unwrap();
+            path
+        })
+        .collect::<Vec<_>>();
+    let stability_output = directory.join("stability.json");
+    let mut stability = Command::new(env!("CARGO_BIN_EXE_tysel-bench-stability"));
+    stability.arg("--input").args(cycle_paths);
+    let result = stability
+        .arg("--output")
+        .arg(&stability_output)
+        .arg("--fail-on-unstable")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stability: serde_json::Value =
+        serde_json::from_slice(&fs::read(stability_output).unwrap()).unwrap();
+    assert_eq!(stability["stable"], true);
     fs::remove_dir_all(directory).unwrap();
 }
 

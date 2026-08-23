@@ -66,15 +66,28 @@ cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-compare --
 ```
 
 Repeat the full run with order seeds `1`, `2`, `3`, and `4` to rotate the
-runtime order. Do not publish a winner from quick mode or from a dirty workspace.
+runtime order. One set of four seeds is one record cycle. Run three complete
+cycles without changing the source commit, binaries, toolchains, machine, or
+runner settings. Do not publish a winner from quick mode or from a dirty
+workspace.
 
-Aggregate exactly four clean, rotated evidence files into the architecture-level
-technical report:
+Aggregate exactly four clean, rotated evidence files into one cycle report:
 
 ```bash
 cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-report -- \
-  --input target/benchmark-comparison/comparison-v1-x86_64-seed*.json \
-  --output target/benchmark-comparison/summary-v1-x86_64.json
+  --input target/benchmark-comparison/comparison-v1-x86_64-cycle1-seed*.json \
+  --output target/benchmark-comparison/summary-v1-x86_64-cycle1.json
+```
+
+After all three cycles, enforce the publication stability contract. CPU
+efficiency has a 10% relative-spread limit; throughput and latency are 15%
+guardrails. A failed check remains visible in JSON and blocks publication:
+
+```bash
+cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-stability -- \
+  --input target/benchmark-comparison/summary-v1-x86_64-cycle{1,2,3}.json \
+  --output target/benchmark-comparison/stability-v1-x86_64.json \
+  --fail-on-unstable
 ```
 
 For internal regression analysis, compare the new summary with a prior summary
@@ -83,13 +96,18 @@ remain visible as environmental controls:
 
 ```bash
 cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-report -- \
-  --input target/benchmark-comparison/comparison-v1-x86_64-seed*.json \
-  --output target/benchmark-comparison/summary-v1-x86_64.json \
+  --input target/benchmark-comparison/comparison-v1-x86_64-cycle1-seed*.json \
+  --output target/benchmark-comparison/summary-v1-x86_64-cycle1.json \
   --baseline baselines/summary-v1-x86_64.json \
   --regression-threshold-pct 5 \
   --fail-on-regression \
-  --gate-runtime tysel
+  --gate-runtime tysel \
+  --gate-metric requests-per-server-cpu-second-p50
 ```
+
+The regression gate defaults to Tysel CPU efficiency only. Use
+`--gate-metric all` only when intentionally promoting every supporting metric
+to a release gate.
 
 Aggregation fails if commits, architecture/CPU/kernel fingerprints, source
 toolchains, matrices, runtime versions, executable hashes, workload sets, or
@@ -110,6 +128,69 @@ sample size supports them. Summary latency percentiles retain every request;
 their deterministic median interval bootstraps round-level medians so correlated
 requests inside one measurement round are not counted as independent trials.
 
+## Sustained-load diagnosis
+
+The formal comparison is deliberately probe-free. Diagnose time-dependent
+large-response degradation in a separate run on the same class of dedicated
+Linux host:
+
+```bash
+benchmarks/comparison/profile-sustained-linux.sh \
+  --response bytes-64k --path /bytes/64k \
+  --concurrency 100 --duration-seconds 120 \
+  --output target/benchmark-comparison/profile-bytes64k \
+  --fail-on-degradation --max-degradation-pct 5
+```
+
+This builds a symbolized release-equivalent `profiling` Tysel binary and records
+one-second load windows, load-generator CPU, per-core frequency, per-thread CPU
+ticks, and a `perf` call graph when permitted. `window-analysis.json` compares
+the first and last thirds of the run. `thread-cpu-summary.csv` identifies which
+Tysel threads consumed CPU; `perf-report.txt` is the QuickJS/native hotspot
+evidence. Use `--require-perf` when a missing call graph must fail the run.
+`load.json.startedAtUnixMs` aligns each load window with the absolute timestamps
+in `cpu-frequency.csv` and `thread-cpu-windows.csv`; thread CPU samples also
+record the processor number so worker utilization can be matched to that core's
+frequency. `frequency-phase-summary.csv` and `thread-phase-summary.csv`
+automatically compare the first and last thirds of the same load interval.
+
+The `diagnose` workflow input runs both 64 KiB workloads on the dedicated arm64
+and x86_64 runners, requires usable frequency/thread/perf evidence, preserves
+artifacts even when the contract fails, and accepts at most a 5% first-to-last
+throughput decline.
+
+Do not copy numbers from this diagnostic run into the cross-runtime report. Its
+purpose is to establish a cause and verify that large-response throughput no
+longer falls with elapsed time before starting new record cycles.
+
+## External load-host verification
+
+Only after sustained stability passes, copy `target/release/tysel` from the
+record host to the dedicated server host and verify its SHA-256 against the
+Tysel `executableSha256` retained in the cycle summaries. Start that exact
+binary with the externally bound but otherwise identical manifest:
+
+```bash
+sha256sum ./tysel
+./tysel run --manifest benchmarks/comparison/adapters/tysel/tysel-external.toml
+```
+
+On a separate load host, build or copy `tysel-bench-load` and run the same path,
+response, concurrency, duration, and one-second windows against the server IP:
+
+```bash
+./tysel-bench-load \
+  --address SERVER_IP:39001 \
+  --path /bytes/64k --response bytes-64k \
+  --concurrency 100 --duration-seconds 120 \
+  --output external-bytes64k.json
+```
+
+Accept the replication only when the server binary hash matches the cycle
+summary, there are zero errors, `sustainedChangePct` is at least -5%, and
+`clientCpuCorePct / (logicalCpus * 100)` stays below 75%. Otherwise the external
+result is client-capacity evidence, not a server ranking.
+
 HTTP/2, streaming, SSE, WebSocket, build cost, load PSS/CPU, standalone binaries,
 and isolation modes are follow-up tracks. Tysel task and durable metrics are not
 placed in the common runtime ranking unless a semantically equivalent peer
@@ -118,6 +199,8 @@ implementation is defined.
 ## Publication policy
 
 Use the report internally first. A result becomes eligible for the website only
-after three stable record cycles on both architectures. Treat differences inside
-±5% as practically equivalent, publish the raw evidence, and show missing or
-unstable cases explicitly instead of converting them to zero.
+after three stable four-seed record cycles on dedicated Linux x86_64 and arm64
+hosts, followed by same-binary external load-host replication. Treat differences
+inside ±5% as practically equivalent, publish the raw evidence, and show missing
+or unstable cases explicitly instead of converting them to zero. CPU efficiency
+is the primary multi-worker claim; total C100 throughput alone is insufficient.

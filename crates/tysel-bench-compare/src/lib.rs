@@ -1002,7 +1002,7 @@ pub fn render_summary_markdown(summary: &ComparisonSummary) -> String {
     let equivalent = peer_rows.iter().filter(|row| row.classification == "equivalent").count();
     let trails = peer_rows.iter().filter(|row| row.classification == "trail").count();
     let mut out = format!(
-        "# Tysel cross-runtime performance report\n\n## Technical summary\n\nThis report aggregates {} rotated runs on `{}` / `{}` for commit `{}`. Against the strongest measured peer for each headline metric, Tysel leads on {}, is within ±5% on {}, and trails on {}. These are descriptive comparisons, not claims of statistical superiority. Results are comparable only within this system fingerprint and locked runtime matrix.\n\n## Tysel's position against the strongest peer\n\n| Metric | Workload | Concurrency | Strongest peer | Tysel | Peer | Tysel advantage | Position |\n| --- | --- | ---: | --- | ---: | ---: | ---: | --- |\n",
+        "# Tysel cross-runtime performance report\n\n## Technical summary\n\nThis report aggregates {} rotated runs on `{}` / `{}` for commit `{}`. CPU efficiency (requests per server CPU-second) is the primary sustained-load metric; total throughput and latency are supporting metrics and client CPU is a saturation guardrail. Against the strongest measured peer for each headline metric, Tysel leads on {}, is within ±5% on {}, and trails on {}. These are descriptive comparisons, not claims of statistical superiority. Results are comparable only within this system fingerprint and locked runtime matrix.\n\n## Tysel's position against the strongest peer\n\n| Metric | Workload | Concurrency | Strongest peer | Tysel | Peer | Tysel advantage | Position |\n| --- | --- | ---: | --- | ---: | ---: | ---: | --- |\n",
         summary.inputs.len(),
         summary.system.os,
         summary.system.arch,
@@ -1045,23 +1045,42 @@ pub fn render_summary_markdown(summary: &ComparisonSummary) -> String {
             runtime.memory_kind
         ));
     }
-    out.push_str("\n## Matched HTTP workload evidence\n\n| Runtime | Workload | Concurrency | Median req/s | Latency p50 | Server CPU | Client CPU | Req/s per server core | Peak memory | Errors |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    out.push_str("\n## CPU efficiency (primary)\n\n| Runtime | Workload | Concurrency | Req/s per server core | Server CPU | Median req/s | Client CPU |\n| --- | --- | ---: | ---: | ---: | ---: | ---: |\n");
     for runtime in &summary.runtimes {
         for workload in &runtime.workloads {
             out.push_str(&format!(
-                "| {} | {} | {} | {:.1} | {:.3} ms | {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} | {:.1} | {} |\n",
                 runtime.id,
                 workload.id,
                 workload.concurrency,
-                workload.requests_per_second.p50,
-                workload.latency_ms.p50,
-                format_optional(workload.server_cpu_core_pct.as_ref(), "core%", 1.0),
-                format_optional(workload.client_cpu_core_pct.as_ref(), "core%", 1.0),
                 format_optional(
                     workload.requests_per_server_cpu_second.as_ref(),
                     "req/s/core",
                     1.0
                 ),
+                format_optional(workload.server_cpu_core_pct.as_ref(), "core%", 1.0),
+                workload.requests_per_second.p50,
+                format_optional(workload.client_cpu_core_pct.as_ref(), "core%", 1.0),
+            ));
+        }
+    }
+    out.push_str("\n## Matched HTTP workload evidence\n\n| Runtime | Workload | Concurrency | Req/s per server core | Server CPU | Median req/s | Latency p50 | Client CPU | Peak memory | Errors |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for runtime in &summary.runtimes {
+        for workload in &runtime.workloads {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {:.1} | {:.3} ms | {} | {} | {} |\n",
+                runtime.id,
+                workload.id,
+                workload.concurrency,
+                format_optional(
+                    workload.requests_per_server_cpu_second.as_ref(),
+                    "req/s/core",
+                    1.0
+                ),
+                format_optional(workload.server_cpu_core_pct.as_ref(), "core%", 1.0),
+                workload.requests_per_second.p50,
+                workload.latency_ms.p50,
+                format_optional(workload.client_cpu_core_pct.as_ref(), "core%", 1.0),
                 format_optional(workload.peak_memory_kb.as_ref(), "MiB", 1.0 / 1024.0),
                 workload.errors
             ));
@@ -1112,33 +1131,6 @@ fn peer_comparisons(summary: &ComparisonSummary) -> Vec<PeerComparisonRow> {
     };
     let peers: Vec<_> = summary.runtimes.iter().filter(|runtime| runtime.id != "tysel").collect();
     let mut rows = Vec::new();
-    if let Some(peer) =
-        peers.iter().min_by(|left, right| left.startup_ms.p50.total_cmp(&right.startup_ms.p50))
-    {
-        rows.push(peer_row(
-            "startup-p50-ms",
-            None,
-            None,
-            &peer.id,
-            tysel.startup_ms.p50,
-            peer.startup_ms.p50,
-            false,
-        ));
-    }
-    if let Some(peer) = peers
-        .iter()
-        .min_by(|left, right| left.idle_memory_kb.p50.total_cmp(&right.idle_memory_kb.p50))
-    {
-        rows.push(peer_row(
-            "idle-memory-p50-kb",
-            None,
-            None,
-            &peer.id,
-            tysel.idle_memory_kb.p50,
-            peer.idle_memory_kb.p50,
-            false,
-        ));
-    }
     for workload in &tysel.workloads {
         let candidates: Vec<_> = peers
             .iter()
@@ -1152,6 +1144,24 @@ fn peer_comparisons(summary: &ComparisonSummary) -> Vec<PeerComparisonRow> {
                     .map(|candidate| (*runtime, candidate))
             })
             .collect();
+        if let Some(tysel_efficiency) = &workload.requests_per_server_cpu_second
+            && let Some((peer, candidate)) = candidates
+                .iter()
+                .filter_map(|(runtime, candidate)| {
+                    candidate.requests_per_server_cpu_second.as_ref().map(|value| (*runtime, value))
+                })
+                .max_by(|left, right| left.1.p50.total_cmp(&right.1.p50))
+        {
+            rows.push(peer_row(
+                "requests-per-server-cpu-second-p50",
+                Some(&workload.id),
+                Some(workload.concurrency),
+                &peer.id,
+                tysel_efficiency.p50,
+                candidate.p50,
+                true,
+            ));
+        }
         if let Some((peer, candidate)) = candidates.iter().max_by(|left, right| {
             left.1.requests_per_second.p50.total_cmp(&right.1.requests_per_second.p50)
         }) {
@@ -1179,24 +1189,6 @@ fn peer_comparisons(summary: &ComparisonSummary) -> Vec<PeerComparisonRow> {
                 false,
             ));
         }
-        if let Some(tysel_efficiency) = &workload.requests_per_server_cpu_second
-            && let Some((peer, candidate)) = candidates
-                .iter()
-                .filter_map(|(runtime, candidate)| {
-                    candidate.requests_per_server_cpu_second.as_ref().map(|value| (*runtime, value))
-                })
-                .max_by(|left, right| left.1.p50.total_cmp(&right.1.p50))
-        {
-            rows.push(peer_row(
-                "requests-per-server-cpu-second-p50",
-                Some(&workload.id),
-                Some(workload.concurrency),
-                &peer.id,
-                tysel_efficiency.p50,
-                candidate.p50,
-                true,
-            ));
-        }
         if let Some(tysel_peak_memory) = &workload.peak_memory_kb
             && let Some((peer, candidate)) = candidates
                 .iter()
@@ -1215,6 +1207,33 @@ fn peer_comparisons(summary: &ComparisonSummary) -> Vec<PeerComparisonRow> {
                 false,
             ));
         }
+    }
+    if let Some(peer) =
+        peers.iter().min_by(|left, right| left.startup_ms.p50.total_cmp(&right.startup_ms.p50))
+    {
+        rows.push(peer_row(
+            "startup-p50-ms",
+            None,
+            None,
+            &peer.id,
+            tysel.startup_ms.p50,
+            peer.startup_ms.p50,
+            false,
+        ));
+    }
+    if let Some(peer) = peers
+        .iter()
+        .min_by(|left, right| left.idle_memory_kb.p50.total_cmp(&right.idle_memory_kb.p50))
+    {
+        rows.push(peer_row(
+            "idle-memory-p50-kb",
+            None,
+            None,
+            &peer.id,
+            tysel.idle_memory_kb.p50,
+            peer.idle_memory_kb.p50,
+            false,
+        ));
     }
     rows
 }

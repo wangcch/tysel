@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: false
+      diagnose:
+        description: Profile sustained 64 KiB loads on fixed self-hosted hardware
+        required: false
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -53,6 +58,62 @@ jobs:
             target/benchmark-comparison/runner-doctor-${{ matrix.arch }}.json
           if-no-files-found: error
 
+  diagnose:
+    if: ${{ inputs.diagnose }}
+    strategy:
+      matrix:
+        include:
+          - labels: '["self-hosted","linux","x64","tysel-benchmark"]'
+            arch: x86_64
+          - labels: '["self-hosted","linux","arm64","tysel-benchmark"]'
+            arch: arm64
+    runs-on: ${{ fromJSON(matrix.labels) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Provision locked peer runtimes
+        shell: bash
+        run: |
+          tool_bin="$(benchmarks/comparison/provision-linux.sh)"
+          echo "${tool_bin}" >> "${GITHUB_PATH}"
+      - name: Install locked TypeScript 7 toolchain
+        run: npm exec --yes --package=pnpm@11.5.0 -- pnpm install --frozen-lockfile
+      - name: Enforce fixed-runner contract
+        run: >-
+          benchmarks/comparison/runner-doctor-linux.sh --strict
+          --output target/benchmark-comparison/diagnose-runner-${{ matrix.arch }}.json
+      - name: Profile sustained 64 KiB workloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          benchmarks/comparison/profile-sustained-linux.sh \
+            --response bytes-64k --path /bytes/64k \
+            --concurrency 100 --duration-seconds 120 \
+            --output "target/benchmark-comparison/diagnose-${{ matrix.arch }}-bytes64k"
+          benchmarks/comparison/profile-sustained-linux.sh \
+            --response json-64k --path /json/64k \
+            --concurrency 100 --duration-seconds 120 \
+            --output "target/benchmark-comparison/diagnose-${{ matrix.arch }}-json64k"
+      - name: Enforce sustained-load diagnosis contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          for workload in bytes64k json64k; do
+            directory="target/benchmark-comparison/diagnose-${{ matrix.arch }}-${workload}"
+            jq -e '.perfStatus == "recorded" and .frequencySamples > 0 and .threadSamples > 0' \
+              "${directory}/metadata.json" >/dev/null
+            jq -e '.changePct != null and .changePct >= -5 and .clientCapacityPct != null and .clientCapacityPct < 75' \
+              "${directory}/window-analysis.json" >/dev/null
+            jq -e '.totalErrors == 0' "${directory}/load.json" >/dev/null
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: sustained-diagnosis-${{ matrix.arch }}
+          path: |
+            target/benchmark-comparison/diagnose-${{ matrix.arch }}-*/**
+            target/benchmark-comparison/diagnose-runner-${{ matrix.arch }}.json
+          if-no-files-found: error
+
   # Publication-grade jobs require fixed, pre-provisioned runners carrying the
   # `tysel-benchmark` label and the exact runtimes from runtimes.lock.json.
   record:
@@ -78,26 +139,34 @@ jobs:
         run: >-
           benchmarks/comparison/runner-doctor-linux.sh --strict
           --output target/benchmark-comparison/runner-doctor-${{ matrix.arch }}.json
-      - name: Record four rotated runtime orders
+      - name: Record three four-seed cycles
         shell: bash
         run: |
           set -euo pipefail
-          for seed in 1 2 3 4; do
-            cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-compare -- \
-              --order-seed "${seed}" \
-              --output "target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-seed${seed}.json"
+          for cycle in 1 2 3; do
+            for seed in 1 2 3 4; do
+              cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-compare -- \
+                --order-seed "${seed}" \
+                --output "target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-cycle${cycle}-seed${seed}.json"
+            done
+            cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-report -- \
+              --input target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-cycle${cycle}-seed*.json \
+              --output "target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle${cycle}.json"
           done
-      - name: Aggregate architecture report
-        shell: bash
-        run: |
-          cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-report -- \
-            --input target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-seed*.json \
-            --output target/benchmark-comparison/summary-v1-${{ matrix.arch }}.json
+      - name: Enforce cycle stability
+        run: >-
+          cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-stability --
+          --input target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle1.json
+          target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle2.json
+          target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle3.json
+          --output target/benchmark-comparison/stability-v1-${{ matrix.arch }}.json
+          --fail-on-unstable
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: comparison-record-${{ matrix.arch }}
           path: |
-            target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-seed*.*
-            target/benchmark-comparison/summary-v1-${{ matrix.arch }}.*
+            target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-cycle*-seed*.*
+            target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle*.*
+            target/benchmark-comparison/stability-v1-${{ matrix.arch }}.json
             target/benchmark-comparison/runner-doctor-${{ matrix.arch }}.json
           if-no-files-found: error

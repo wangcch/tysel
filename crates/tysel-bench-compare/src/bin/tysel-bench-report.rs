@@ -30,6 +30,8 @@ struct Cli {
     fail_on_regression: bool,
     #[arg(long, value_delimiter = ',', default_value = "tysel")]
     gate_runtime: Vec<String>,
+    #[arg(long, value_delimiter = ',', default_value = "requests-per-server-cpu-second-p50")]
+    gate_metric: Vec<String>,
 }
 
 fn main() -> std::process::ExitCode {
@@ -46,6 +48,7 @@ fn run(cli: Cli) -> Result<()> {
     let root = workspace_root();
     let output = resolve_path(&root, &cli.output);
     ensure!(!cli.gate_runtime.is_empty(), "gate_runtime must not be empty");
+    ensure!(!cli.gate_metric.is_empty(), "gate_metric must not be empty");
     let mut inputs = Vec::with_capacity(cli.input.len());
     for path in &cli.input {
         let path = resolve_path(&root, path);
@@ -101,14 +104,18 @@ fn run(cli: Cli) -> Result<()> {
             .changes
             .iter()
             .filter(|change| {
-                change.classification == "regression" && cli.gate_runtime.contains(&change.runtime)
+                change.classification == "regression"
+                    && cli.gate_runtime.contains(&change.runtime)
+                    && (cli.gate_metric.iter().any(|metric| metric == "all")
+                        || cli.gate_metric.contains(&change.metric))
             })
             .collect();
         ensure!(
             regressions.is_empty(),
-            "{} gated regression(s) exceeded ±{:.1}%",
+            "{} gated regression(s) exceeded ±{:.1}% for metric filter {:?}",
             regressions.len(),
-            cli.regression_threshold_pct
+            cli.regression_threshold_pct,
+            cli.gate_metric
         );
     }
     Ok(())

@@ -2,6 +2,17 @@
 
 本计划以 TypeScript 7、Linux arm64 完整对比结果为基线。目标是持续改善 Tysel 自身的吞吐、尾延迟与 CPU 效率，同时保持已经有优势的启动速度和内存占用；不把超过某个外部运行时作为发布前提。
 
+## 当前阶段：持续负载稳定性与发布验收
+
+后续优化不再以 C100 总吞吐作为多 worker 的单一决策依据，按以下顺序执行：
+
+1. 在独占 Linux 主机对 64 KiB JSON/bytes 运行至少 120 秒的持续负载，关联每秒吞吐、CPU 频率、Tysel 各线程 CPU 和 `perf` QuickJS/native 热点。先解释并消除首尾时段下降，再修改运行时。
+2. 以 `requests-per-server-cpu-second-p50` 作为主指标；总吞吐、延迟、内存和客户端 CPU 作为护栏。默认回归门禁只阻止 Tysel CPU 效率回退。
+3. 修复后，在同一 commit、相同二进制和锁定 TypeScript 7 工具链下，分别于独占 Linux x86_64、arm64 主机完成三次四-seed record cycle。CPU 效率相对 spread 不超过 10%，吞吐和延迟不超过 15%。
+4. 三轮均稳定后，将相同服务端二进制复制到独立服务主机，以另一台负载机复验。负载机 CPU 容量使用率必须低于 75%，否则不能排除客户端饱和，也不能形成官网结论。
+
+诊断轨道会使用符号化但 release-equivalent 的 `profiling` profile；正式横向对比仍无 `perf`、频率或线程采样探针。两类数据不得合并计分。
+
 ## 基线结论
 
 基线证据：`target/benchmark-comparison/typescript7-linux-arm64-rerun-seed2.json`。
