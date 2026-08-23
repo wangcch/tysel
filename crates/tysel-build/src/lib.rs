@@ -151,6 +151,8 @@ fn package_manifest(manifest: &Manifest, runtime_version: &str) -> PackageManife
         bundle_hash: String::new(),
         max_request_bytes: (manifest.limits.max_request_mb as usize).saturating_mul(1024 * 1024),
         websocket: manifest.server.websocket,
+        workers: manifest.server.workers,
+        max_in_flight: manifest.limits.max_in_flight,
         http1: manifest.server.http1,
         http2: manifest.server.http2,
         sqlite_path: if manifest.durable.store == "sqlite" {
@@ -397,6 +399,51 @@ http2 = true
         );
         assert!(!tap.manifest.http1);
         assert!(tap.manifest.http2);
+    }
+
+    #[test]
+    fn tap_copies_server_workers() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "parallel-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+workers = 2
+"#,
+        )
+        .unwrap();
+        let tap = tap_from_app(
+            &manifest,
+            "0.0.1",
+            b"export default {};".to_vec(),
+            identity_source_map("src/index.ts", "export default {}\n").unwrap(),
+        );
+        assert_eq!(tap.manifest.workers, 2);
+    }
+
+    #[test]
+    fn tap_copies_max_in_flight() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "bounded-service"
+entry = "src/index.ts"
+
+[limits]
+max_in_flight = 17
+"#,
+        )
+        .unwrap();
+        let tap = tap_from_app(
+            &manifest,
+            "0.0.1",
+            b"export default {};".to_vec(),
+            identity_source_map("src/index.ts", "export default {}\n").unwrap(),
+        );
+        assert_eq!(tap.manifest.max_in_flight, 17);
     }
 
     #[test]

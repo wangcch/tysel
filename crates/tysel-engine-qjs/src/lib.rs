@@ -30,7 +30,7 @@ pub use isolate::{
     eval_durable_module, eval_with_reactor, eval_with_reactor_deadline,
 };
 pub use llm::configure as configure_llm;
-pub use pool::{IncomingHttp, IsolatePool};
+pub use pool::{IncomingHttp, IsolatePool, OutgoingHttpBody};
 pub use queue::{IoCompletion, IoRequest, IoWork, OpId, Reactor, STREAM_WINDOW, open_bridge};
 pub use secrets::{
     configure as configure_secrets, load_declared, parse_dotenv, resolve as resolve_secret,

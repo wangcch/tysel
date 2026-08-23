@@ -8,7 +8,7 @@ are non-negative integers; omitted fields receive the values below.
 | `memory_mb` | `128` | MiB | QuickJS or isolated-worker memory budget. |
 | `cpu_ms_per_turn` | `50` | ms | CPU budget for one JavaScript turn. |
 | `request_timeout_ms` | `30000` | ms | Invocation deadline; also bounds configured LLM calls. |
-| `max_in_flight` | `1000` | requests | Declared capacity target; not yet propagated into the packaged HTTP server. |
+| `max_in_flight` | `1000` | requests | Maximum admitted HTTP requests, held through response-body completion. |
 | `max_response_mb` | `16` | MiB | Declared response target; not yet propagated into the packaged HTTP server. |
 | `max_request_mb` | `16` | MiB | Inbound request-body limit. |
 
@@ -27,10 +27,17 @@ field (`u32` for memory, in-flight, and body limits; `u64` for CPU and request
 timeouts). Platform or runtime ceilings may still reject or constrain values.
 
 Schema acceptance and runtime enforcement are separate facts. In the current
-package format, `memory_mb`, `cpu_ms_per_turn`, `request_timeout_ms`, and
-`max_request_mb` are propagated to the runtime. `max_in_flight` and
-`max_response_mb` remain visible through configuration inspection but require
-deployment-level enforcement until the package/runtime boundary carries them.
+package format, `memory_mb`, `cpu_ms_per_turn`, `request_timeout_ms`,
+`max_in_flight`, and `max_request_mb` are propagated to the runtime.
+`max_response_mb` remains visible through configuration inspection but requires
+deployment-level enforcement until the package/runtime boundary carries it.
+
+When no admission permit is available, the HTTP server immediately returns
+`503` with error code `OVERLOADED` and `Retry-After: 1`; it does not create an
+unbounded waiter queue. The permit is released after a buffered or streaming
+response reaches end-of-stream, or when the response is dropped. A value of
+zero deliberately sheds every HTTP request and can be used as a circuit breaker.
+An accepted WebSocket holds its permit until the upgraded connection closes.
 
 Individual host capabilities also have fixed safety bounds, such as maximum
 SQL, filesystem, LLM, protocol, and durable payload sizes. See

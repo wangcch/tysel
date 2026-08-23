@@ -23,9 +23,9 @@ use tysel_engine::{EngineError, HttpRequest, InterruptReason, IsolateConfig, Val
 use tysel_task::TaskId;
 
 use crate::{
-    DurableSession, IncomingHttp, IsolateCancel, IsolatePool, QUICKJS_ADAPTER_ID, STREAM_WINDOW,
-    encode_durable_export, eval, eval_cancellable, eval_durable, eval_durable_module,
-    inspect_durable_exports, runtime_compatibility,
+    DurableSession, IncomingHttp, IsolateCancel, IsolatePool, OutgoingHttpBody, QUICKJS_ADAPTER_ID,
+    STREAM_WINDOW, encode_durable_export, eval, eval_cancellable, eval_durable,
+    eval_durable_module, inspect_durable_exports, runtime_compatibility,
 };
 
 #[test]
@@ -1473,6 +1473,50 @@ export default {
 "#;
 
 #[tokio::test]
+async fn scalar_response_uses_buffered_fast_path() {
+    let pool = IsolatePool::spawn(1, FETCH_HANDLER, config()).expect("spawn isolate");
+    let (head, body) = pool
+        .dispatch_response(IncomingHttp::from(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/hello".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 0,
+        }))
+        .await
+        .expect("dispatch");
+    assert_eq!(head.status, 200);
+    let OutgoingHttpBody::Buffered(bytes) = body else {
+        panic!("scalar response should bypass the streaming channel");
+    };
+    assert!(String::from_utf8(bytes).expect("utf8").contains("Hello from Tysel"));
+}
+
+#[tokio::test]
+async fn chunk_array_preserves_streaming_path() {
+    let pool = IsolatePool::spawn(1, FETCH_HANDLER, config()).expect("spawn isolate");
+    let (head, body) = pool
+        .dispatch_response(IncomingHttp::from(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/stream".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 0,
+        }))
+        .await
+        .expect("dispatch");
+    assert_eq!(head.status, 200);
+    let OutgoingHttpBody::Stream(mut body) = body else {
+        panic!("chunk array should preserve streaming and backpressure");
+    };
+    let mut chunks = Vec::new();
+    while let Some(chunk) = body.recv().await {
+        chunks.push(String::from_utf8(chunk).expect("utf8 chunk"));
+    }
+    assert_eq!(chunks, ["alpha", "beta", "gamma"]);
+}
+
+#[tokio::test]
 async fn fetch_handler_streams_body_chunks() {
     let pool = IsolatePool::spawn(1, FETCH_HANDLER, config()).expect("spawn isolate");
     let (head, mut body) = pool
@@ -1526,6 +1570,134 @@ async fn fetch_handler_sleep_does_not_exhaust_cpu_budget() {
         bytes.extend(chunk);
     }
     assert_eq!(String::from_utf8(bytes).expect("utf8"), "slept");
+}
+
+const MIXED_LATENCY_HANDLER: &str = r#"
+export default {
+  async fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/slow") {
+      await tysel.sleep(200);
+    }
+    return new Response(`${path}:${tysel.isolateId}`);
+  },
+};
+"#;
+
+#[tokio::test]
+async fn least_pending_scheduler_avoids_a_busy_isolate() {
+    let pool = Arc::new(IsolatePool::spawn(2, MIXED_LATENCY_HANDLER, config()).unwrap());
+    let slow_pool = pool.clone();
+    let slow = tokio::spawn(async move {
+        slow_pool
+            .dispatch(HttpRequest {
+                method: "GET".into(),
+                url: "http://tysel.local/slow".into(),
+                headers: vec![],
+                body: vec![],
+                request_id: 1,
+            })
+            .await
+            .unwrap()
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while pool.pending_jobs() != [1, 0] {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("slow request should occupy the first isolate");
+
+    let fast_request = |request_id| HttpRequest {
+        method: "GET".into(),
+        url: "http://tysel.local/fast".into(),
+        headers: vec![],
+        body: vec![],
+        request_id,
+    };
+    let _ = pool.dispatch(fast_request(2)).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while pool.pending_jobs() != [1, 0] {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("fast request should finish on the second isolate");
+
+    let (head, mut body) =
+        tokio::time::timeout(Duration::from_millis(100), pool.dispatch(fast_request(3)))
+            .await
+            .expect("fast request should avoid the busy first isolate")
+            .unwrap();
+    assert_eq!(head.status, 200);
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.recv().await {
+        bytes.extend(chunk);
+    }
+    assert_eq!(String::from_utf8(bytes).unwrap(), "/fast:1");
+
+    let _ = slow.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while pool.pending_jobs() != [0, 0] {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("completed requests should release scheduler reservations");
+}
+
+#[tokio::test]
+async fn canceled_dispatch_does_not_leak_scheduler_load() {
+    let pool = Arc::new(IsolatePool::spawn(1, MIXED_LATENCY_HANDLER, config()).unwrap());
+    let slow_pool = pool.clone();
+    let slow = tokio::spawn(async move {
+        slow_pool
+            .dispatch(HttpRequest {
+                method: "GET".into(),
+                url: "http://tysel.local/slow".into(),
+                headers: vec![],
+                body: vec![],
+                request_id: 1,
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while pool.pending_jobs() != [1] {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("slow request should be counted");
+
+    let queued_pool = pool.clone();
+    let queued = tokio::spawn(async move {
+        queued_pool
+            .dispatch(HttpRequest {
+                method: "GET".into(),
+                url: "http://tysel.local/fast".into(),
+                headers: vec![],
+                body: vec![],
+                request_id: 2,
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while pool.pending_jobs() != [2] {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("queued request should be counted");
+    queued.abort();
+
+    let _ = slow.await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while pool.pending_jobs() != [0] {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("aborted caller must not leak scheduler load after its job finishes");
 }
 
 const SQLITE_HANDLER: &str = r#"

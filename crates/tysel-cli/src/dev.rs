@@ -14,7 +14,9 @@ use tysel_manifest::Manifest;
 use tysel_package::SourceMap;
 #[cfg(unix)]
 use tysel_runtime::ModuleTaskService;
-use tysel_runtime::{AppIsolate, DurablePlane, SharedPool, handle_stream, spawn_app_isolate};
+use tysel_runtime::{
+    AppIsolate, DurablePlane, HttpLimits, SharedPool, handle_stream, spawn_app_isolate,
+};
 use tysel_task_rpc::TaskOutcome;
 
 const IGNORED_DIRS: &[&str] = &["node_modules", "target", "dist", ".git", "data"];
@@ -27,6 +29,7 @@ struct Watch {
 struct Loaded {
     isolate: AppIsolate,
     max_request_bytes: usize,
+    max_in_flight: u32,
     addr: std::net::SocketAddr,
     websocket: bool,
     http1: bool,
@@ -191,9 +194,10 @@ pub async fn run_queue(
 
 async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> Result<()> {
     let loaded = load(&manifest_path, entry.as_deref())?;
-    let pool = SharedPool::with_server_options(
+    let pool = SharedPool::with_server_limits(
         loaded.isolate,
         loaded.max_request_bytes,
+        loaded.max_in_flight,
         loaded.websocket,
         loaded.http1,
         loaded.http2,
@@ -228,9 +232,12 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                                 match start_dev_durable(next.durable.clone()).await {
                                     Ok(next_durable) => {
                                         eprintln!("tysel reload");
-                                        pool.replace_with_server_options(
+                                        pool.replace_with_server_limits(
                                             next.isolate,
-                                            next.max_request_bytes,
+                                            HttpLimits {
+                                                max_request_bytes: next.max_request_bytes,
+                                                max_in_flight: next.max_in_flight,
+                                            },
                                             next.websocket,
                                             next.http1,
                                             next.http2,
@@ -322,6 +329,7 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
     };
     let pool = spawn_app_isolate(
         &tap.manifest.execution_profile,
+        tap.manifest.workers,
         &source,
         config,
         tap.manifest.secret_names.clone(),
@@ -347,6 +355,7 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
     Ok(Loaded {
         isolate: pool,
         max_request_bytes: tap.manifest.max_request_bytes,
+        max_in_flight: tap.manifest.max_in_flight,
         addr,
         websocket,
         http1: tap.manifest.http1,

@@ -3,7 +3,7 @@
   "runtimeJsVersion": "0.0.1",
   "tap": {
     "minimumSupportedVersion": 1,
-    "maximumSupportedVersion": 3
+    "maximumSupportedVersion": 4
   },
   "componentAbiVersion": "0.4.0",
   "quickjsAdapter": "rquickjs-0.12/quickjs-ng",

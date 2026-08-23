@@ -111,11 +111,19 @@ pub struct Server {
     pub http2: bool,
     #[serde(default)]
     pub websocket: bool,
+    #[serde(default = "default_workers")]
+    pub workers: u32,
 }
 
 impl Default for Server {
     fn default() -> Self {
-        Self { listen: default_listen(), http1: true, http2: false, websocket: false }
+        Self {
+            listen: default_listen(),
+            http1: true,
+            http2: false,
+            websocket: false,
+            workers: default_workers(),
+        }
     }
 }
 
@@ -125,6 +133,10 @@ fn default_listen() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_workers() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -343,6 +355,14 @@ impl Manifest {
             return Err(ManifestError::Invalid(
                 "server.websocket requires server.http1 because WebSocket upgrades use HTTP/1.1"
                     .into(),
+            ));
+        }
+        if !(1..=64).contains(&self.server.workers) {
+            return Err(ManifestError::Invalid("server.workers must be between 1 and 64".into()));
+        }
+        if self.server.workers > 1 && self.app.profile != "service" {
+            return Err(ManifestError::Invalid(
+                "server.workers greater than 1 requires app.profile = \"service\"".into(),
             ));
         }
         if !matches!(self.app.profile.as_str(), "service" | "isolated" | "component") {
@@ -699,6 +719,50 @@ websocket = true
     }
 
     #[test]
+    fn service_workers_are_explicit_and_bounded() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "parallel-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+workers = 2
+"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.server.workers, 2);
+
+        let invalid = Manifest::parse(
+            r#"
+[app]
+name = "invalid-workers"
+entry = "src/index.ts"
+
+[server]
+workers = 0
+"#,
+        )
+        .unwrap_err();
+        assert!(invalid.to_string().contains("between 1 and 64"));
+
+        let isolated = Manifest::parse(
+            r#"
+[app]
+name = "isolated-workers"
+entry = "src/index.ts"
+profile = "isolated"
+
+[server]
+workers = 2
+"#,
+        )
+        .unwrap_err();
+        assert!(isolated.to_string().contains("requires app.profile"));
+    }
+
+    #[test]
     fn parses_hello_manifest() {
         let manifest = Manifest::parse(
             r#"
@@ -899,6 +963,8 @@ steps = [["check", "-C/tmp/other-project"]]
         assert_eq!(schema["$id"], "https://tysel.dev/schemas/manifest-v1.json");
         assert_eq!(schema["properties"]["schema_version"]["const"], 1);
         assert!(schema["properties"]["tasks"].is_object());
+        assert_eq!(schema["properties"]["server"]["properties"]["workers"]["default"], 1);
+        assert_eq!(schema["properties"]["server"]["properties"]["workers"]["maximum"], 64);
 
         let entry_pattern = schema["properties"]["app"]["properties"]["entry"]["pattern"]
             .as_str()

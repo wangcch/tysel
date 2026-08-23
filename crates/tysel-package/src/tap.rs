@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use crate::sourcemap::SourceMap;
 
-pub const TAP_VERSION: u32 = 3;
+pub const TAP_VERSION: u32 = 4;
 pub const MIN_SUPPORTED_TAP_VERSION: u32 = 1;
 pub const TAP_COMPATIBILITY_REPORT_VERSION: u32 = 1;
 pub const COMPONENT_ABI_VERSION: &str = "0.4.0";
@@ -52,6 +52,10 @@ pub struct PackageManifest {
     pub max_request_bytes: usize,
     #[serde(default)]
     pub websocket: bool,
+    #[serde(default = "default_workers")]
+    pub workers: u32,
+    #[serde(default = "default_max_in_flight")]
+    pub max_in_flight: u32,
     #[serde(default = "default_true")]
     pub http1: bool,
     #[serde(default)]
@@ -74,6 +78,14 @@ pub struct PackageManifest {
 
 pub fn default_max_request_bytes() -> usize {
     16 * 1024 * 1024
+}
+
+fn default_workers() -> u32 {
+    1
+}
+
+pub fn default_max_in_flight() -> u32 {
+    1000
 }
 
 fn default_json_logs() -> bool {

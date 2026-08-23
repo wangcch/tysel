@@ -32,6 +32,7 @@ The optional server table controls the inbound listener and protocols.
 | Field | Default | Accepted value and behavior |
 | --- | --- | --- |
 | `listen` | `127.0.0.1:3000` | Socket address. Use `0.0.0.0` when a container must accept external traffic. |
+| `workers` | `1` | QuickJS isolates for a `service` application, from `1` to `64`. Values above `1` are rejected for `isolated` and `component` profiles. |
 | `http1` | `true` | Enable HTTP/1.1. |
 | `http2` | `false` | Enable cleartext HTTP/2. |
 | `websocket` | `false` | Permit inbound HTTP/1.1 WebSocket upgrades. |
@@ -41,9 +42,16 @@ requires HTTP/1.1. When both HTTP versions are enabled, the listener accepts
 HTTP/1.1 and h2c; HTTP/2-only mode requires h2c prior knowledge. Tysel does not
 terminate public TLS, so deploy an ingress or reverse proxy for HTTPS.
 
+Each service worker owns an independent JavaScript global scope and its own
+runtime memory limit. Increase `workers` only for stateless handlers, or when
+application state is deliberately externalized. More workers can improve
+parallel throughput, but multiply isolate memory and may worsen startup or tail
+latency. The default remains one to preserve single-global-state semantics.
+
 ```toml
 [server]
 listen = "0.0.0.0:3000"
+workers = 2
 http1 = true
 http2 = true
 websocket = true

@@ -14,7 +14,9 @@ use tysel_engine::IsolateConfig;
 use tysel_engine_qjs::IsolatePool;
 use tysel_package::{PackageManifest, PackagedComponent, Tap};
 
-use crate::http::{SharedPool, bind, bind_with, bind_with_request_limit, handle_stream};
+use crate::http::{
+    HttpLimits, SharedPool, bind, bind_with, bind_with_request_limit, handle_stream,
+};
 
 const HANDLER: &str = r#"
 export default {
@@ -250,6 +252,8 @@ fn component_manifest() -> PackageManifest {
         bundle_hash: String::new(),
         max_request_bytes: 1024 * 1024,
         websocket: false,
+        workers: 1,
+        max_in_flight: 1000,
         http1: true,
         http2: false,
         sqlite_path: String::new(),
@@ -389,6 +393,123 @@ async fn multi_isolate_handles_concurrent_requests() {
 }
 
 #[tokio::test]
+async fn max_in_flight_sheds_excess_work_and_recovers() {
+    let pool = IsolatePool::spawn(
+        1,
+        r#"
+export default {
+  async fetch(request) {
+    if (new URL(request.url).pathname === "/slow") {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return new Response("ok");
+  },
+};
+"#,
+        config(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let pool = SharedPool::with_server_limits(
+        Arc::new(pool),
+        16 * 1024 * 1024,
+        1,
+        false,
+        true,
+        false,
+        None,
+    );
+    let accept = pool.clone();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            handle_stream(stream, accept.clone());
+        }
+    });
+
+    let slow = tokio::spawn(async move { request(addr, "/slow").await });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while pool.available_admission_permits() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("slow request should acquire admission");
+    let (overload_status, overload_body) = request(addr, "/fast").await;
+    assert_eq!(overload_status, 503);
+    assert!(overload_body.contains("OVERLOADED"));
+
+    assert_eq!(slow.await.unwrap(), (200, "ok".into()));
+    assert_eq!(request(addr, "/recovered").await, (200, "ok".into()));
+}
+
+#[tokio::test]
+async fn reload_preserves_in_flight_admission_accounting() {
+    let first = IsolatePool::spawn(
+        1,
+        r#"
+export default {
+  async fetch() {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return new Response("first");
+  },
+};
+"#,
+        config(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let pool = SharedPool::with_server_limits(
+        Arc::new(first),
+        16 * 1024 * 1024,
+        1,
+        false,
+        true,
+        false,
+        None,
+    );
+    let accept = pool.clone();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            handle_stream(stream, accept.clone());
+        }
+    });
+
+    let active = tokio::spawn(async move { request(addr, "/active").await });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while pool.available_admission_permits() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("request should acquire admission before reload");
+
+    let second = IsolatePool::spawn(
+        1,
+        r#"export default { async fetch() { return new Response("second"); } };"#,
+        config(),
+    )
+    .unwrap();
+    pool.replace_with_server_limits(
+        Arc::new(second),
+        HttpLimits { max_request_bytes: 16 * 1024 * 1024, max_in_flight: 1 },
+        false,
+        true,
+        false,
+        None,
+    );
+
+    let (status, body) = request(addr, "/during-reload").await;
+    assert_eq!(status, 503);
+    assert!(body.contains("OVERLOADED"));
+    assert_eq!(active.await.unwrap(), (200, "first".into()));
+    assert_eq!(request(addr, "/after-reload").await, (200, "second".into()));
+}
+
+#[tokio::test]
 async fn keep_alive_uses_replaced_pool() {
     let first = IsolatePool::spawn(
         1,
@@ -517,6 +638,44 @@ async fn websocket_echo_roundtrip() {
     let echoed = socket.next().await.expect("frame").expect("ok");
     assert_eq!(echoed.into_text().expect("text").as_str(), "ping");
     let _ = socket.close(None).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn websocket_holds_max_in_flight_admission_until_close() {
+    let isolate = IsolatePool::spawn(1, WS_ECHO, config()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let pool = SharedPool::with_server_limits(
+        Arc::new(isolate),
+        16 * 1024 * 1024,
+        1,
+        true,
+        true,
+        false,
+        None,
+    );
+    let accept = pool.clone();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            handle_stream(stream, accept.clone());
+        }
+    });
+
+    let url = format!("ws://{addr}/ws");
+    let (mut socket, response) = tokio_tungstenite::connect_async(&url).await.expect("connect");
+    assert_eq!(response.status(), 101);
+    assert_eq!(pool.available_admission_permits(), 0);
+    assert_eq!(request(addr, "/overloaded").await.0, 503);
+
+    socket.close(None).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while pool.available_admission_permits() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("closing the websocket should release admission");
 }
 
 struct ChunkList {

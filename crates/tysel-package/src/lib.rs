@@ -11,7 +11,8 @@ pub use tap::{
     COMPONENT_ABI_VERSION, MAX_AOT_ARTIFACTS_PER_COMPONENT, MAX_PACKAGED_COMPONENTS,
     MAX_TAP_PAYLOAD_BYTES, MIN_SUPPORTED_TAP_VERSION, PackageError, PackageManifest, PackagedAot,
     PackagedComponent, TAP_COMPATIBILITY_REPORT_VERSION, TAP_VERSION, Tap, TapCompatibilityReport,
-    TapCompatibilityStatus, bundle_hash, compatibility_report, default_max_request_bytes,
+    TapCompatibilityStatus, bundle_hash, compatibility_report, default_max_in_flight,
+    default_max_request_bytes,
 };
 
 pub fn crate_name() -> &'static str {

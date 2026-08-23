@@ -15,6 +15,8 @@ fn sample_manifest() -> PackageManifest {
         bundle_hash: String::new(),
         max_request_bytes: 16 * 1024 * 1024,
         websocket: false,
+        workers: 1,
+        max_in_flight: 1000,
         http1: true,
         http2: false,
         sqlite_path: String::new(),
@@ -138,7 +140,7 @@ fn bundle_hash_mismatch_is_rejected() {
 }
 
 #[test]
-fn tap_v3_roundtrips_portable_and_aot_components() {
+fn current_tap_roundtrips_portable_and_aot_components() {
     let component = PackagedComponent {
         name: "echo".into(),
         abi_version: "0.4.0".into(),
@@ -186,6 +188,55 @@ fn tap_v2_without_protocol_fields_remains_readable() {
     assert!(decoded.manifest.http1);
     assert!(!decoded.manifest.http2);
     assert_eq!(compatibility_report(&encoded).status, TapCompatibilityStatus::Legacy);
+}
+
+#[test]
+fn tap_v3_without_worker_or_admission_fields_remains_readable() {
+    let mut manifest = serde_json::to_value(sample_manifest()).unwrap();
+    manifest["format_version"] = 3.into();
+    manifest["bundle_hash"] = bundle_hash(BUNDLE.as_bytes()).into();
+    let object = manifest.as_object_mut().unwrap();
+    object.remove("workers");
+    object.remove("max_in_flight");
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let map = identity_source_map("src/index.ts", TYPESCRIPT).unwrap();
+    let component_index = br#"{"components":[]}"#;
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(b"TYSELTAP");
+    encoded.extend_from_slice(&3u32.to_le_bytes());
+    encoded.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(BUNDLE.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(map.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(component_index.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&0u64.to_le_bytes());
+    encoded.extend_from_slice(&manifest);
+    encoded.extend_from_slice(BUNDLE.as_bytes());
+    encoded.extend_from_slice(&map);
+    encoded.extend_from_slice(component_index);
+
+    let decoded = Tap::decode(&encoded).unwrap();
+    assert_eq!(decoded.manifest.format_version, 3);
+    assert_eq!(decoded.manifest.workers, 1);
+    assert_eq!(decoded.manifest.max_in_flight, 1000);
+    assert_eq!(compatibility_report(&encoded).status, TapCompatibilityStatus::Legacy);
+}
+
+#[test]
+fn manifests_without_workers_default_to_one() {
+    let mut manifest = serde_json::to_value(sample_manifest()).unwrap();
+    manifest.as_object_mut().unwrap().remove("workers");
+
+    let decoded: PackageManifest = serde_json::from_value(manifest).unwrap();
+    assert_eq!(decoded.workers, 1);
+}
+
+#[test]
+fn manifests_without_max_in_flight_use_the_historical_default() {
+    let mut manifest = serde_json::to_value(sample_manifest()).unwrap();
+    manifest.as_object_mut().unwrap().remove("max_in_flight");
+
+    let decoded: PackageManifest = serde_json::from_value(manifest).unwrap();
+    assert_eq!(decoded.max_in_flight, 1000);
 }
 
 #[test]

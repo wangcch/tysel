@@ -359,6 +359,8 @@ mod tests {
                 bundle_hash: String::new(),
                 max_request_bytes: 16 * 1024 * 1024,
                 websocket: false,
+                workers: 1,
+                max_in_flight: 1000,
                 http1: true,
                 http2: false,
                 sqlite_path: String::new(),

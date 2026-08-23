@@ -40,8 +40,38 @@ impl From<HttpRequest> for IncomingHttp {
 
 struct Job {
     request: IncomingHttp,
-    head_tx: oneshot::Sender<Result<HttpHead, EngineError>>,
+    response_tx: ResponseSender,
     body_tx: mpsc::Sender<Vec<u8>>,
+    _pending: PendingJob,
+}
+
+struct ActiveJob {
+    request: IncomingHttp,
+    response_tx: ResponseSender,
+    body_tx: mpsc::Sender<Vec<u8>>,
+}
+
+struct PendingJob {
+    counts: Arc<[AtomicUsize]>,
+    worker: usize,
+}
+
+impl Drop for PendingJob {
+    fn drop(&mut self) {
+        self.counts[self.worker].fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) struct PreparedHttpResponse {
+    pub head: HttpHead,
+    pub buffered_body: Option<Vec<u8>>,
+}
+
+pub(crate) type ResponseSender = oneshot::Sender<Result<PreparedHttpResponse, EngineError>>;
+
+pub enum OutgoingHttpBody {
+    Buffered(Vec<u8>),
+    Stream(mpsc::Receiver<Vec<u8>>),
 }
 
 struct Budgets {
@@ -50,9 +80,14 @@ struct Budgets {
 }
 
 pub struct IsolatePool {
-    workers: Vec<mpsc::Sender<Job>>,
+    workers: Vec<WorkerSlot>,
+    pending: Arc<[AtomicUsize]>,
     next: Arc<AtomicUsize>,
     threads: Vec<JoinHandle<()>>,
+}
+
+struct WorkerSlot {
+    jobs: mpsc::Sender<Job>,
 }
 
 impl IsolatePool {
@@ -60,6 +95,8 @@ impl IsolatePool {
         let workers = workers.max(1);
         let mut senders = Vec::with_capacity(workers);
         let mut threads = Vec::with_capacity(workers);
+        let pending: Arc<[AtomicUsize]> =
+            (0..workers).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>().into();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         for id in 0..workers {
             let (tx, rx) = mpsc::channel(32);
@@ -69,7 +106,7 @@ impl IsolatePool {
                 .name(format!("tysel-qjs-{id}"))
                 .spawn(move || worker_loop(id as u32, source, config, rx, ready_tx))
                 .map_err(|err| EngineError::Isolate(err.to_string()))?;
-            senders.push(tx);
+            senders.push(WorkerSlot { jobs: tx });
             threads.push(thread);
         }
         drop(ready_tx);
@@ -78,7 +115,7 @@ impl IsolatePool {
                 .recv()
                 .map_err(|_| EngineError::Isolate("isolate worker failed to start".into()))??;
         }
-        Ok(Self { workers: senders, next: Arc::new(AtomicUsize::new(0)), threads })
+        Ok(Self { workers: senders, pending, next: Arc::new(AtomicUsize::new(0)), threads })
     }
 
     pub async fn dispatch(
@@ -92,18 +129,75 @@ impl IsolatePool {
         &self,
         request: IncomingHttp,
     ) -> Result<(HttpHead, mpsc::Receiver<Vec<u8>>), EngineError> {
-        let (head_tx, head_rx) = oneshot::channel();
+        let (head, body) = self.dispatch_response(request).await?;
+        let body = match body {
+            OutgoingHttpBody::Buffered(bytes) => sealed_response_body(bytes),
+            OutgoingHttpBody::Stream(body) => body,
+        };
+        Ok((head, body))
+    }
+
+    pub async fn dispatch_response(
+        &self,
+        request: IncomingHttp,
+    ) -> Result<(HttpHead, OutgoingHttpBody), EngineError> {
+        let (response_tx, response_rx) = oneshot::channel();
         let (body_tx, body_rx) = mpsc::channel(STREAM_WINDOW);
-        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.workers.len();
-        self.workers[index]
-            .send(Job { request, head_tx, body_tx })
-            .await
-            .map_err(|_| EngineError::Isolate("isolate worker stopped".into()))?;
-        match head_rx.await {
-            Ok(Ok(head)) => Ok((head, body_rx)),
+        let mut request = Some(request);
+        let mut response_tx = Some(response_tx);
+        let mut body_tx = Some(body_tx);
+        loop {
+            let (index, pending) = self
+                .reserve_worker()
+                .ok_or_else(|| EngineError::Isolate("all isolate workers stopped".into()))?;
+            let job = Job {
+                request: request.take().expect("request is retained until dispatch"),
+                response_tx: response_tx
+                    .take()
+                    .expect("response sender is retained until dispatch"),
+                body_tx: body_tx.take().expect("body sender is retained until dispatch"),
+                _pending: pending,
+            };
+            match self.workers[index].jobs.send(job).await {
+                Ok(()) => break,
+                Err(error) => {
+                    let Job {
+                        request: returned_request,
+                        response_tx: returned_response_tx,
+                        body_tx: returned_body_tx,
+                        _pending: _,
+                    } = error.0;
+                    request = Some(returned_request);
+                    response_tx = Some(returned_response_tx);
+                    body_tx = Some(returned_body_tx);
+                }
+            }
+        }
+        match response_rx.await {
+            Ok(Ok(PreparedHttpResponse { head, buffered_body: Some(body) })) => {
+                Ok((head, OutgoingHttpBody::Buffered(body)))
+            }
+            Ok(Ok(PreparedHttpResponse { head, buffered_body: None })) => {
+                Ok((head, OutgoingHttpBody::Stream(body_rx)))
+            }
             Ok(Err(err)) => Err(err),
             Err(_) => Err(EngineError::Isolate("isolate dropped the response head".into())),
         }
+    }
+
+    fn reserve_worker(&self) -> Option<(usize, PendingJob)> {
+        let start = self.next.fetch_add(1, Ordering::Relaxed) % self.workers.len();
+        let index = (0..self.workers.len())
+            .map(|offset| (start + offset) % self.workers.len())
+            .filter(|&index| !self.workers[index].jobs.is_closed())
+            .min_by_key(|&index| self.pending[index].load(Ordering::Relaxed))?;
+        self.pending[index].fetch_add(1, Ordering::Relaxed);
+        Some((index, PendingJob { counts: self.pending.clone(), worker: index }))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_jobs(&self) -> Vec<usize> {
+        self.pending.iter().map(|count| count.load(Ordering::Relaxed)).collect()
     }
 
     /// Run one request to completion on the process I/O runtime. Isolated
@@ -140,7 +234,7 @@ fn worker_loop(
     if let Err(err) = run_worker(id, &source, config, cancel, &mut jobs, &ready) {
         let _ = ready.send(Err(EngineError::Isolate(err.to_string())));
         while let Ok(job) = jobs.try_recv() {
-            let _ = job.head_tx.send(Err(EngineError::Isolate(err.to_string())));
+            let _ = job.response_tx.send(Err(EngineError::Isolate(err.to_string())));
         }
     }
 }
@@ -195,13 +289,21 @@ fn run_worker(
     let _ = ready.send(Ok(()));
 
     while let Some(job) = jobs.blocking_recv() {
-        let request_id = job.request.request_id;
+        let Job { request, response_tx, body_tx, _pending: pending } = job;
+        let request_id = request.request_id;
         let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
         let request_deadline =
             Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
         *budgets.lock().expect("budgets") = Budgets { cpu: cpu.clone(), request: request_deadline };
-        let job_result =
-            handle_job(&runtime, &context, &reactor, &cancel, job, request_deadline, &cpu);
+        let job_result = handle_job(
+            &runtime,
+            &context,
+            &reactor,
+            &cancel,
+            ActiveJob { request, response_tx, body_tx },
+            request_deadline,
+            &cpu,
+        );
         teardown_scope(
             &context,
             &reactor,
@@ -209,6 +311,7 @@ fn run_worker(
             Duration::from_millis(config.request_timeout_ms.max(100)),
         )?;
         let _ = job_result;
+        drop(pending);
     }
 
     let _ = context.with(|ctx| {
@@ -285,16 +388,24 @@ fn sealed_body(bytes: Vec<u8>) -> mpsc::Receiver<Result<Vec<u8>, String>> {
     rx
 }
 
+fn sealed_response_body(bytes: Vec<u8>) -> mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = mpsc::channel(1);
+    if !bytes.is_empty() {
+        let _ = tx.try_send(bytes);
+    }
+    rx
+}
+
 fn handle_job(
     runtime: &Runtime,
     context: &Context,
     reactor: &queue::Reactor,
     cancel: &IsolateCancel,
-    job: Job,
+    job: ActiveJob,
     request_deadline: Instant,
     cpu: &CpuBudget,
 ) -> Result<(), EngineError> {
-    let Job { request, head_tx, body_tx } = job;
+    let ActiveJob { request, response_tx, body_tx } = job;
     reactor.io.bind_request(request.request_id);
     reactor.io.inbound.install(request.body);
     if let Some(ws_in) = request.ws_in {
@@ -318,7 +429,7 @@ fn handle_job(
     }) {
         Ok(pending) => pending,
         Err(err) => {
-            let _ = head_tx.send(Err(err.clone()));
+            let _ = response_tx.send(Err(err.clone()));
             return Err(err);
         }
     };
@@ -332,15 +443,15 @@ fn handle_job(
             cpu,
             None,
         ) {
-            let _ = head_tx.send(Err(err.clone()));
+            let _ = response_tx.send(Err(err.clone()));
             return Err(err);
         }
         if let Err(err) = context.with(fetch::take_response_into_globals) {
-            let _ = head_tx.send(Err(err.clone()));
+            let _ = response_tx.send(Err(err.clone()));
             return Err(err);
         }
     }
-    context.with(|ctx| fetch::emit_response(ctx, head_tx, body_tx))?;
+    context.with(|ctx| fetch::emit_response(ctx, response_tx, body_tx))?;
     if context.with(fetch::arm_websocket)? {
         isolate::wait_until_settled(
             runtime,
@@ -353,4 +464,44 @@ fn handle_job(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_pool(senders: Vec<mpsc::Sender<Job>>) -> IsolatePool {
+        let pending = (0..senders.len()).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>().into();
+        IsolatePool {
+            workers: senders.into_iter().map(|jobs| WorkerSlot { jobs }).collect(),
+            pending,
+            next: Arc::new(AtomicUsize::new(0)),
+            threads: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn scheduler_skips_stopped_workers() {
+        let (stopped_tx, stopped_rx) = mpsc::channel(1);
+        drop(stopped_rx);
+        let (healthy_tx, _healthy_rx) = mpsc::channel(1);
+        let pool = test_pool(vec![stopped_tx, healthy_tx]);
+
+        let (worker, pending) = pool.reserve_worker().expect("healthy worker remains");
+        assert_eq!(worker, 1);
+        assert_eq!(pool.pending_jobs(), vec![0, 1]);
+        drop(pending);
+        assert_eq!(pool.pending_jobs(), vec![0, 0]);
+    }
+
+    #[test]
+    fn scheduler_reports_when_all_workers_stopped() {
+        let (first_tx, first_rx) = mpsc::channel(1);
+        let (second_tx, second_rx) = mpsc::channel(1);
+        drop(first_rx);
+        drop(second_rx);
+        let pool = test_pool(vec![first_tx, second_tx]);
+
+        assert!(pool.reserve_worker().is_none());
+    }
 }

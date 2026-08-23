@@ -1,13 +1,17 @@
 use rquickjs::{Ctx, Function, Module, Object};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tysel_engine::{EngineError, HttpHead, HttpRequest};
 
 use crate::isolate::{js_err, js_err_ctx};
+use crate::pool::{PreparedHttpResponse, ResponseSender};
 
 const BOOTSTRAP: &str = include_str!("../../../runtime-js/web-api/runtime.js");
+const REQUEST_FACTORY: &str = "__tysel_request_factory";
 
 pub fn install_web_api(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.eval::<(), _>(BOOTSTRAP)
+    ctx.eval::<(), _>(BOOTSTRAP)?;
+    let factory: Function = ctx.eval("(url, init) => new Request(url, init)")?;
+    ctx.globals().set(REQUEST_FACTORY, factory)
 }
 
 const BOOT_FETCH: &str = include_str!("../../../runtime-js/bootstrap/fetch.js");
@@ -45,19 +49,24 @@ pub fn take_response_into_globals(ctx: Ctx<'_>) -> Result<(), EngineError> {
 
 pub fn emit_response(
     ctx: Ctx<'_>,
-    head_tx: oneshot::Sender<Result<HttpHead, EngineError>>,
+    response_tx: ResponseSender,
     body_tx: mpsc::Sender<Vec<u8>>,
 ) -> Result<(), EngineError> {
     let response: Object = ctx.globals().get("__tysel_response").map_err(js_err)?;
     let status: i32 = response.get("status").unwrap_or(200);
     let headers = read_headers(&response)?;
-    let _ = head_tx.send(Ok(HttpHead {
+    let head = HttpHead {
         status: status.max(0) as u16,
         headers,
         websocket: ctx.globals().get::<_, bool>("__tysel_ws_accepted").unwrap_or(false),
-    }));
+    };
     let body: rquickjs::Value = response.get("body").map_err(js_err)?;
-    send_body(body, &body_tx)?;
+    if let Some(bytes) = buffered_body(&body)? {
+        let _ = response_tx.send(Ok(PreparedHttpResponse { head, buffered_body: Some(bytes) }));
+    } else {
+        let _ = response_tx.send(Ok(PreparedHttpResponse { head, buffered_body: None }));
+        send_body(body, &body_tx)?;
+    }
     Ok(())
 }
 
@@ -96,6 +105,19 @@ fn send_body(
     send_chunk(body, body_tx)
 }
 
+fn buffered_body(body: &rquickjs::Value<'_>) -> Result<Option<Vec<u8>>, EngineError> {
+    if body.is_null() || body.is_undefined() {
+        return Ok(Some(Vec::new()));
+    }
+    if body.as_array().is_some() {
+        return Ok(None);
+    }
+    if let Some(text) = body.as_string() {
+        return Ok(Some(text.to_string().map_err(js_err)?.into_bytes()));
+    }
+    Err(EngineError::Isolate("response chunk must be a string".into()))
+}
+
 fn send_chunk(
     chunk: rquickjs::Value<'_>,
     body_tx: &mpsc::Sender<Vec<u8>>,
@@ -110,7 +132,7 @@ fn send_chunk(
 }
 
 fn to_js_request<'js>(ctx: &Ctx<'js>, request: &HttpRequest) -> Result<Object<'js>, EngineError> {
-    let factory: Function = ctx.eval("(url, init) => new Request(url, init)").map_err(js_err)?;
+    let factory: Function = ctx.globals().get(REQUEST_FACTORY).map_err(js_err)?;
     let init = Object::new(ctx.clone()).map_err(js_err)?;
     init.set("method", request.method.as_str()).map_err(js_err)?;
     init.set("bodyStream", true).map_err(js_err)?;

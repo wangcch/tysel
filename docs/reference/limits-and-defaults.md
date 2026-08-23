@@ -15,14 +15,14 @@ the exact ceiling.
 | Memory | 128 MiB | `limits.memory_mb` |
 | CPU per JavaScript turn | 50 ms | `limits.cpu_ms_per_turn` |
 | Request timeout | 30,000 ms | `limits.request_timeout_ms` |
-| Concurrent invocations target | 1,000 | `limits.max_in_flight` |
+| Concurrent HTTP requests | 1,000 | `limits.max_in_flight` |
 | Request / response target | 16 MiB / 16 MiB | `limits.max_request_mb`, `max_response_mb` |
 | Application SQLite path | `./data/tysel.db` | `durable.path` |
 | Test timeout | 5,000 ms | `tysel test --timeout-ms` |
 
 See [Manifest limits](manifest/limits.md) for units and validation.
-The current runtime enforces `max_request_mb`; `max_in_flight` and
-`max_response_mb` are declared targets that are not yet propagated through the
+The current runtime enforces `max_request_mb` and `max_in_flight`;
+`max_response_mb` is a declared target that is not yet propagated through the
 package format.
 
 ## Network and profile bounds
