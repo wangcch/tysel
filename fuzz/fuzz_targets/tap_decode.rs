@@ -20,6 +20,8 @@ fuzz_target!(|data: &[u8]| {
             bundle_hash: String::new(),
             max_request_bytes: 16 * 1024 * 1024,
             websocket: false,
+            workers: 1,
+            max_in_flight: 1000,
             sqlite_path: String::new(),
             secret_names: Vec::new(),
             fetch_hosts: Vec::new(),
