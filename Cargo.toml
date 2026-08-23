@@ -28,6 +28,7 @@ members = [
     "crates/tysel-ipc",
     "crates/tysel-observability",
     "crates/tysel-testkit",
+    "crates/tysel-bench-compare",
 ]
 
 [workspace.package]

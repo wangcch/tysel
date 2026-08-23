@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tysel.dev/schemas/benchmark-comparison-summary-v1.json",
+  "title": "Tysel cross-runtime aggregate and regression summary v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAtUnixMs",
+    "sourceCommit",
+    "system",
+    "matrix",
+    "runtimeLock",
+    "quick",
+    "orderSeeds",
+    "inputs",
+    "toolchains",
+    "runtimes",
+    "baseline"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generatedAtUnixMs": { "type": "integer", "minimum": 0 },
+    "sourceCommit": { "type": "string", "minLength": 1 },
+    "system": { "$ref": "#/$defs/system" },
+    "matrix": { "type": "string", "minLength": 1 },
+    "runtimeLock": { "type": "string", "minLength": 1 },
+    "quick": { "type": "boolean" },
+    "orderSeeds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/input" }
+    },
+    "toolchains": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/toolchain" }
+    },
+    "runtimes": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/runtime" }
+    },
+    "baseline": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/baseline" }
+      ]
+    }
+  },
+  "$defs": {
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "expectedVersion",
+        "actualVersion",
+        "executable",
+        "executableSha256"
+      ],
+      "properties": {
+        "id": { "const": "typescript" },
+        "expectedVersion": { "const": "7.0.2" },
+        "actualVersion": { "type": "string", "minLength": 1 },
+        "executable": { "type": "string", "minLength": 1 },
+        "executableSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "os_version", "cpu_model"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "enum": ["x86_64", "aarch64"] },
+        "os_version": { "type": "string", "minLength": 1 },
+        "cpu_model": { "type": "string", "minLength": 1 }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "runId", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "runId": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["samples", "p50", "p95", "p99", "p50Ci95"],
+      "properties": {
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "number", "minimum": 0 }
+        },
+        "p50": { "type": "number", "minimum": 0 },
+        "p95": { "type": ["number", "null"], "minimum": 0 },
+        "p99": { "type": ["number", "null"], "minimum": 0 },
+        "p50Ci95": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "prefixItems": [{ "type": "number" }, { "type": "number" }],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "concurrency",
+        "rounds",
+        "roundDurationMs",
+        "requestsPerSecond",
+        "latencyMs",
+        "errors",
+        "serverCpuCorePct",
+        "clientCpuCorePct",
+        "requestsPerServerCpuSecond",
+        "peakMemoryKb",
+        "memoryKind"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "pattern": "^/" },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "rounds": { "type": "integer", "minimum": 1 },
+        "roundDurationMs": { "type": "integer", "minimum": 1 },
+        "requestsPerSecond": { "$ref": "#/$defs/distribution" },
+        "latencyMs": { "$ref": "#/$defs/distribution" },
+        "errors": { "type": "integer", "minimum": 0 },
+        "serverCpuCorePct": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/distribution" }]
+        },
+        "clientCpuCorePct": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/distribution" }]
+        },
+        "requestsPerServerCpuSecond": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/distribution" }]
+        },
+        "peakMemoryKb": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/distribution" }]
+        },
+        "memoryKind": { "type": ["string", "null"] }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "actualVersion",
+        "buildMode",
+        "executableSha256",
+        "startupMs",
+        "idleMemoryKb",
+        "memoryKind",
+        "workloads"
+      ],
+      "properties": {
+        "id": { "enum": ["tysel", "node", "bun", "deno"] },
+        "actualVersion": { "type": "string", "minLength": 1 },
+        "buildMode": { "type": "string", "minLength": 1 },
+        "executableSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "startupMs": { "$ref": "#/$defs/distribution" },
+        "idleMemoryKb": { "$ref": "#/$defs/distribution" },
+        "memoryKind": { "type": "string", "minLength": 1 },
+        "workloads": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/workload" }
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime",
+        "metric",
+        "workload",
+        "concurrency",
+        "baseline",
+        "current",
+        "improvementPct",
+        "classification"
+      ],
+      "properties": {
+        "runtime": { "enum": ["tysel", "node", "bun", "deno"] },
+        "metric": { "type": "string", "minLength": 1 },
+        "workload": { "type": ["string", "null"] },
+        "concurrency": { "type": ["integer", "null"], "minimum": 1 },
+        "baseline": { "type": "number", "minimum": 0 },
+        "current": { "type": "number", "minimum": 0 },
+        "improvementPct": { "type": "number" },
+        "classification": { "enum": ["improvement", "equivalent", "regression"] }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceCommit",
+        "thresholdPct",
+        "regressions",
+        "improvements",
+        "equivalent",
+        "changes"
+      ],
+      "properties": {
+        "sourceCommit": { "type": "string", "minLength": 1 },
+        "thresholdPct": { "type": "number", "minimum": 0 },
+        "regressions": { "type": "integer", "minimum": 0 },
+        "improvements": { "type": "integer", "minimum": 0 },
+        "equivalent": { "type": "integer", "minimum": 0 },
+        "changes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/change" }
+        }
+      }
+    }
+  }
+}

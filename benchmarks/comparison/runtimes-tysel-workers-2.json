@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "prepare": [{ "executable": "benchmarks/comparison/prepare-typescript.sh", "args": [] }],
+  "toolchains": [{
+    "id": "typescript",
+    "expectedVersion": "7.0.2",
+    "versionCommand": { "executable": "node_modules/.bin/tsc", "args": ["--version"] }
+  }],
+  "runtimes": [{
+    "id": "tysel",
+    "expectedVersion": "0.0.1",
+    "executable": "target/linux-arm64-verify/release/tysel",
+    "args": ["run", "--manifest", "benchmarks/comparison/adapters/tysel/tysel-workers-2.toml"],
+    "readinessPrefix": "tysel listen ",
+    "buildMode": "runtime-source",
+    "prepare": [{
+      "executable": "cargo",
+      "args": ["build", "--locked", "--release", "-p", "tysel-cli", "--bin", "tysel"]
+    }],
+    "versionCommand": {
+      "executable": "target/linux-arm64-verify/release/tysel",
+      "args": ["--version"]
+    }
+  }, {
+    "id": "node",
+    "expectedVersion": "24.19.0",
+    "executable": "node",
+    "args": ["benchmarks/comparison/adapters/node/server.ts"],
+    "readinessPrefix": "comparison listen ",
+    "buildMode": "runtime-source",
+    "prepare": [],
+    "versionCommand": { "executable": "node", "args": ["--version"] }
+  }, {
+    "id": "bun",
+    "expectedVersion": "1.4.0",
+    "executable": "bun",
+    "args": ["benchmarks/comparison/adapters/bun/server.ts"],
+    "readinessPrefix": "comparison listen ",
+    "buildMode": "runtime-source",
+    "prepare": [],
+    "versionCommand": { "executable": "bun", "args": ["--version"] }
+  }, {
+    "id": "deno",
+    "expectedVersion": "2.9.5",
+    "executable": "deno",
+    "args": ["run", "--allow-net=127.0.0.1", "--no-prompt", "benchmarks/comparison/adapters/deno/server.ts"],
+    "readinessPrefix": "comparison listen ",
+    "buildMode": "runtime-source",
+    "prepare": [],
+    "versionCommand": { "executable": "deno", "args": ["--version"] }
+  }]
+}

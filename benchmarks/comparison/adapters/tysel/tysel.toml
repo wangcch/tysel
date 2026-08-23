@@ -1,0 +1,22 @@
+schema_version = 1
+
+[app]
+name = "comparison-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+http1 = true
+http2 = false
+websocket = false
+
+[observability]
+logs = "off"
+
+[limits]
+memory_mb = 128
+cpu_ms_per_turn = 5000
+request_timeout_ms = 30000
+max_in_flight = 1024
+max_response_mb = 4

@@ -1,0 +1,31 @@
+schema_version = 1
+
+[measurement]
+startup_warmups = 10
+startup_samples = 200
+idle_settle_ms = 400
+http_warmup_requests = 100
+http_rounds = 10
+http_round_duration_ms = 500
+concurrency = [1, 10, 100]
+request_timeout_ms = 5000
+
+[[workloads]]
+id = "health"
+path = "/health"
+response = "health"
+
+[[workloads]]
+id = "json-1k"
+path = "/json/1k"
+response = "json-1k"
+
+[[workloads]]
+id = "json-64k"
+path = "/json/64k"
+response = "json-64k"
+
+[[workloads]]
+id = "bytes-64k"
+path = "/bytes/64k"
+response = "bytes-64k"
