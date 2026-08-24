@@ -84,5 +84,17 @@ handler. Define application status codes and JSON envelopes deliberately, and
 include a safe correlation identifier. A returned `Response` is an application
 response; a thrown or rejected handler becomes the runtime `500` envelope.
 
+## Component process output
+
+A successful Component invocation writes exactly one JSON value followed by a
+newline to stdout and exits `0`. Compilation, ABI, policy, guest error,
+resource-limit, or output-validation failures are fatal CLI/runtime errors on
+stderr and exit non-zero; they do not use the HTTP error envelope.
+
+The Component guest's WIT error branch is retained as a UTF-8 diagnostic of at
+most 4 KiB. Treat its text as human-readable rather than a stable error code.
+See [Component ABI](component/abi.md) and
+[Component runtime limits](component/runtime.md#resource-bounds).
+
 See [Application module](runtime/application.md), [Application limits](manifest/limits.md),
 and [Production operations](../operations/production.md).

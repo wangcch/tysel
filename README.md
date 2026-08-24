@@ -24,6 +24,8 @@ export default {
   denied until declared.
 - **Suspend and resume work.** Durable steps, effects, sleep, retry, and signals
   survive process restarts.
+- **Run language-neutral tasks.** Package bounded Rust or Go Wasm Components
+  behind a versioned JSON ABI and restricted WASI host.
 
 Tysel uses Web-standard APIs and is built for HTTP services, workers, MCP tools,
 isolated plugins, and durable agents.
@@ -67,13 +69,16 @@ access are outside its application contract.
 
 The `service` profile is for trusted application code. The `isolated` profile
 runs JavaScript in a separate worker process; Linux is the production isolation
-target. Cross-compilation is not currently implemented.
+target. The experimental `component` profile runs one-shot Wasm Component
+tasks with no ambient host authority. Cross-compilation is not currently
+implemented.
 
 ## Learn more
 
 - [Getting started](docs/getting-started.md)
 - [How Tysel works](docs/concepts/how-tysel-works.md)
 - [Projects and configuration](docs/concepts/projects-and-configuration.md)
+- [Wasm Components](docs/reference/component/index.md)
 - [Documentation](docs/index.md)
 
 ## License

@@ -29,8 +29,8 @@ Each example includes its source, manifest, and exact verification commands.
 | Example | Demonstrates | Profile and capabilities |
 | --- | --- | --- |
 | [Isolated plugin](https://github.com/wangcch/tysel/tree/main/examples/isolated-plugin) | Denied network/filesystem probes and worker crash recovery | `isolated`; host-facing capabilities remain denied |
-| [Go Component](https://github.com/wangcch/tysel/tree/main/sdk/examples/go-echo) | A language-neutral task through the experimental Component ABI | `component`; experimental |
-| [Rust Component](https://github.com/wangcch/tysel/tree/main/sdk/examples/rust-echo) | Rust guest component and restricted WASI contract | `component`; experimental |
+| [Go Component](wasm-component-go.md) | A language-neutral task through the experimental Component ABI | `component`; experimental |
+| [Rust Component](wasm-component-rust.md) | Rust guest component and restricted WASI contract | `component`; experimental |
 
 ## Run an example from a checkout
 

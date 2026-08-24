@@ -1,10 +1,15 @@
 # JavaScript runtime compatibility
 
+Browse the per-API contract pages in the
+[JavaScript API reference](../reference/javascript/index.md).
+This page explains rationale, evidence, and the full matrix.
+
 Tysel implements a deliberately bounded, stable server-side Web API profile.
 `partial` means the listed behavior is a supported contract, not that the
 corresponding browser specification is implemented in full. Behavior outside
 the listed subset is not guaranteed. The machine-readable source for this
-matrix is `runtime-js/web-api/compatibility.json`.
+matrix is `runtime-js/web-api/compatibility.json`. Per-API lookup pages live
+in the [JavaScript reference](../reference/javascript/index.md).
 
 | API | Status | Supported contract | Important exclusions |
 | --- | --- | --- | --- |

@@ -250,3 +250,60 @@ This should remain one strict documentation job. Separate bespoke link and
 navigation scripts are not useful while MkDocs already validates those
 properties; additional CI earns its cost only when it checks source-to-reference
 drift that MkDocs cannot see.
+
+## Product-surface coverage audit — 2026-08-24
+
+This audit compares implemented CLI commands, public types, capabilities,
+protocols, SDKs, examples, and operations against discoverable Reference and
+task-oriented Guides. A symbol mention does not count as a usable guide; a
+guide must contain prerequisites, commands, expected result, limits, recovery,
+and a complete source path.
+
+### Completed in the Wasm tranche
+
+- promoted Wasm Components from one execution-profile paragraph to a dedicated
+  six-page Reference covering the task ABI, restricted WASI, runtime/AOT,
+  three-layer capability policy, and Rust/Go SDKs;
+- added verified Rust and Go build/run/package guides;
+- added runnable manifests to both SDK fixtures;
+- integrated Component behavior into CLI, manifest, limits, errors,
+  capability matrix, security model, example gallery, and machine indexes;
+- distinguished Component Model binaries from unsupported Core Wasm and
+  general WASI applications;
+- marked the `0.0.1` HTTP, SQLite, LLM, secrets, MCP, and core WIT sketches as
+  non-product contracts; only the task ABI and filesystem `0.4.0` imports are
+  currently implemented.
+
+### Remaining reader-facing gaps
+
+| Priority | Implemented product surface | Current documentation | Missing durable artifact |
+| --- | --- | --- | --- |
+| P0 | HTTP/1.1, cleartext HTTP/2, inbound and outbound WebSocket, outbound `fetch` | Compatibility/reference fragments only | Service networking guide with protocol setup, allowlists, streaming, errors, and verification. |
+| P0 | Cron and Queue handlers | Public types and CLI reference; no complete repository examples | One Cron example and one Queue producer/handler guide with deadlines, JSON bounds, and failure behavior. |
+| P0 | LLM gateway | Host API reference plus durable-agent usage | Standalone provider setup, secret selection, alias routing, timeout, usage, audit, and failure guide. |
+| P0 | `server.workers` and bounded `max_in_flight` admission | Manifest field reference | Concurrency guide covering statelessness, per-isolate memory, overload `503`, WebSocket permit lifetime, and sizing evidence. |
+| P1 | Filesystem, SQLite, and Postgres | Reference plus linked source examples | Focused capability guides with local setup, deployment injection, denial recovery, and production differences. |
+| P1 | `tysel image` | CLI reference and production paragraph | End-to-end Linux image guide, plus non-Linux existing-ELF path and registry/signing boundary. |
+| P1 | OTLP traces/metrics and structured logs | Environment reference and operations fragments | Observability guide with accepted endpoint forms, signal precedence, collector validation, redaction, and troubleshooting. |
+| P1 | Source maps and structured runtime failures | Error reference | Debugging guide with development versus production output and safe error mapping. |
+| P1 | Release evidence, artifact signing, and reproducibility | CLI reference and production policy | One reproducible release walkthrough with files produced and verification failure recovery. |
+| P2 | TAP format, TaskRPC, scheduler leases/fencing, durable event model | Source and scattered architecture prose | Versioned Internals references, kept separate from application API stability. |
+| P2 | Every CLI/schema/type reference | Hand-authored and strict-link checked | Generated drift checks and compiled snippets in the existing docs CI job. |
+
+The scan also found implementation metadata drift: the workspace pins
+Wasmtime `36.0.13`, while the Component AOT compatibility label remains
+`32.0.1`. Track this as an engine/package fix; documentation now distinguishes
+the two values instead of presenting the label as the runtime dependency.
+
+### Recommended sequence
+
+1. service networking plus concurrency/backpressure;
+2. Cron and Queue runnable examples;
+3. standalone LLM and observability guides;
+4. container and signed release walkthroughs;
+5. TAP, TaskRPC, scheduler, and durable internals;
+6. generated source-to-document drift checks.
+
+This order closes adoption blockers before documenting internal machinery. It
+also gives every major homepage claim at least one task guide, one exact
+reference, and one runnable verification path.

@@ -47,3 +47,9 @@ An oversized inbound request returns HTTP `413` with `BODY_TOO_LARGE`. Other
 limit failures are reported through the relevant host API or the standard
 runtime error envelope. A larger budget is not a substitute for backpressure,
 bounded input validation, or deployment-level resource limits.
+
+For a Component application, `memory_mb` is clamped to the 64 MiB Component
+maximum and `request_timeout_ms` is clamped to 60 seconds. `cpu_ms_per_turn`
+does not apply to Wasm; the engine uses a fixed fuel budget plus epoch
+interruption. HTTP body and concurrency limits do not apply to the one-shot
+stdin/stdout task. See [Component resource bounds](../component/runtime.md#resource-bounds).

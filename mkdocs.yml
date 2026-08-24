@@ -26,6 +26,8 @@ nav:
   - Guides:
       - Choose a guide: guides/index.md
       - Example gallery: guides/examples.md
+      - Rust Wasm Component: guides/wasm-component-rust.md
+      - Go Wasm Component: guides/wasm-component-go.md
   - Learn:
       - How Tysel works: concepts/how-tysel-works.md
       - Projects and configuration: concepts/projects-and-configuration.md
@@ -55,11 +57,18 @@ nav:
           - Host capabilities: reference/runtime/capabilities.md
           - Durable API: reference/runtime/durable.md
           - Testing API: reference/runtime/testing.md
+      - Wasm Components:
+          - Overview: reference/component/index.md
+          - Component ABI: reference/component/abi.md
+          - Runtime and WASI: reference/component/runtime.md
+          - Capabilities: reference/component/capabilities.md
+          - Rust SDK: reference/component/rust-sdk.md
+          - Go SDK: reference/component/go-sdk.md
       - Environment variables: reference/environment.md
       - Limits and defaults: reference/limits-and-defaults.md
       - Errors and machine output: reference/errors-and-output.md
       - Capability matrix: capabilities/README.md
-      - JavaScript APIs: architecture/javascript-runtime-compatibility.md
+      - JavaScript APIs: reference/javascript/index.md
       - npm compatibility: compatibility/README.md
   - Operate:
       - Security: security/README.md
@@ -68,6 +77,7 @@ nav:
   - Internals:
       - Architecture: architecture/README.md
       - Decision records: adr/index.md
+      - JavaScript compatibility notes: architecture/javascript-runtime-compatibility.md
       - Runtime ownership: architecture/javascript-runtime-convergence.md
       - Decisions:
           - Rust core: adr/001-runtime-core-rust.md

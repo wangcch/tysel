@@ -59,8 +59,13 @@ profile = "component"
 ```
 
 The Component ABI is experimental and intentionally smaller than the
-TypeScript service API. See the
-[Component SDK](https://github.com/wangcch/tysel/tree/main/sdk).
+TypeScript service API. Components are one-shot JSON tasks: `tysel run` reads
+stdin and writes stdout once, while `tysel dev` is not supported. Core Wasm
+modules and general WASI applications are outside this profile.
+
+Start with the [Wasm Component reference](../reference/component/index.md),
+then follow the [Rust](../guides/wasm-component-rust.md) or
+[Go](../guides/wasm-component-go.md) guide.
 
 ## Choosing a profile
 

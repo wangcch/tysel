@@ -11,12 +11,13 @@ executable without Node.js or `node_modules` in production.
 | Build an HTTP service | [Create your first service](getting-started.md) | [Runtime API](reference/runtime/index.md) |
 | Add Tysel to an existing project | [Create or adopt a project](concepts/projects-and-configuration.md#create-or-adopt-a-project) | [npm compatibility](compatibility/README.md) |
 | Run generated or third-party code | [Choose an execution profile](concepts/execution-profiles.md) | [Security model](security/README.md) |
+| Build a Rust or Go Wasm task | [Wasm Component guides](guides/wasm-component-rust.md) | [Component reference](reference/component/index.md) |
 | Build work that survives restarts | [Durable execution](concepts/durable-execution.md) | [Durable agent example](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) |
 | Evaluate Tysel for production | [Production operations](operations/production.md) | [Performance evidence](performance/README.md) |
 
 Browse the [task-oriented guide map](guides/index.md), the
 [runnable example gallery](guides/examples.md), or the
-[reference index](reference/index.md) when you already know what you need.
+[API reference](reference/index.md) when you already know what you need.
 
 ## Five-minute path
 
@@ -51,6 +52,7 @@ artifact is still one executable.
 | Bound authority | Explicit network, secret, database, and filesystem grants | `tysel inspect` and the manifest |
 | Run services | Fetch handlers, Web APIs, HTTP, and WebSocket | `export default { fetch() {} }` |
 | Run tasks | Cron, Queue, and MCP handlers on one bounded task model | `tasks` export |
+| Run Wasm Components | Language-neutral, one-shot JSON tasks with restricted WASI | `profile = "component"` |
 | Resume work | Persisted steps, effects, sleep, retry, and signals | `durable` export |
 
 ## Understand the contract
@@ -62,8 +64,8 @@ trusted first-party code. The `isolated` profile uses a separate worker
 process; Linux is its production security target. Cross-compilation is not
 currently implemented.
 
-Read [how Tysel works](concepts/how-tysel-works.md), check the exact
-[JavaScript API subset](architecture/javascript-runtime-compatibility.md), and
+Read [how Tysel works](concepts/how-tysel-works.md), browse the
+[JavaScript API reference](reference/javascript/index.md), and
 run [`tysel compat`](compatibility/README.md) before adopting a dependency.
 
 ## Explore by area
@@ -73,11 +75,13 @@ run [`tysel compat`](compatibility/README.md) before adopting a dependency.
   [execution profiles](concepts/execution-profiles.md), and
   [durable execution](concepts/durable-execution.md).
 - **Build:** [runtime API](reference/runtime/index.md),
+  [Wasm Components](reference/component/index.md),
   [capability matrix](capabilities/README.md), and
   [runnable examples](guides/examples.md).
-- **Look up:** [CLI](reference/cli/index.md), [manifest](reference/manifest/index.md),
+- **Look up:** [API reference](reference/index.md),
+  [CLI](reference/cli/index.md), [manifest](reference/manifest/index.md),
   [compatibility](compatibility/README.md), and
-  [supported JavaScript APIs](architecture/javascript-runtime-compatibility.md).
+  [JavaScript APIs](reference/javascript/index.md).
 - **Operate:** [installation and upgrades](install.md),
   [security](security/README.md),
   [production operations](operations/production.md), and

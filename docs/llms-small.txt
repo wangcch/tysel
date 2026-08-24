@@ -20,7 +20,8 @@ Start with:
 - Documentation: https://tysel.dev/docs/
 - Getting started: https://tysel.dev/docs/getting-started/
 - Guides: https://tysel.dev/docs/guides/
-- Reference: https://tysel.dev/docs/reference/
+- API reference: https://tysel.dev/reference/
+- Wasm Components: https://tysel.dev/reference/component/
 - Security: https://tysel.dev/docs/security/
 - Production operations: https://tysel.dev/docs/operations/production/
 - Source: https://github.com/wangcch/tysel

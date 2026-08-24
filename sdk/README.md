@@ -27,12 +27,17 @@ profile = "component"
 
 ```sh
 tysel check
+printf '{"value":42}' | tysel run
 tysel build
-./dist/echo-component
+printf '{"value":42}' | ./dist/echo-component
 ```
 
 See the [Rust](examples/rust-echo/README.md) and
 [Go](examples/go-echo/README.md) examples for guest build commands.
+The public documentation includes complete
+[Rust](../docs/guides/wasm-component-rust.md) and
+[Go](../docs/guides/wasm-component-go.md) workflows plus the
+[Component contract](../docs/reference/component/index.md).
 
 CI builds real Rust and Go Components and invokes both through the same host
 contract test. The Go toolchain's WASI imports run under Tysel's restricted

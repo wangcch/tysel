@@ -1,0 +1,6 @@
+schema_version = 1
+
+[app]
+name = "rust-echo-component"
+entry = "target/echo.component.wasm"
+profile = "component"

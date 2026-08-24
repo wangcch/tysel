@@ -15,6 +15,11 @@ profile.
 contain backslashes or control characters. The profile changes the trust and
 host-capability boundary; it is not only an optimization preset.
 
+For the `component` profile, use a `.wasm` Component Model binary implementing
+`tysel:component/task@0.4.0`. Core Wasm modules are rejected. The application
+is a one-shot stdin/stdout task, so listener and WebSocket fields do not create
+an HTTP service; `server.workers` must remain `1`.
+
 ```toml
 [app]
 name = "orders-api"
@@ -23,7 +28,8 @@ profile = "service"
 ```
 
 See [Execution profiles](../../concepts/execution-profiles.md) and the
-[Capability matrix](../../capabilities/README.md).
+[Capability matrix](../../capabilities/README.md). Component-specific behavior
+is in the [Wasm Component reference](../component/index.md).
 
 ## `[server]`
 

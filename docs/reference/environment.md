@@ -78,11 +78,16 @@ URL.
 | Variable | Platform | Purpose |
 | --- | --- | --- |
 | `TYSEL_CGROUP` | Linux | cgroup v2 subtree used to attach isolated workers. |
-| `TYSEL_COMPONENT_CAPABILITIES` | Component host | Comma-separated component capability/interface grants. |
+| `TYSEL_COMPONENT_CAPABILITIES` | Component host | Comma-separated `tysel:fs`, `tysel:fs/read`, or `tysel:fs/write` deployment grants. Unknown values fail closed. |
 
 These variables are deployment integration points, not application input.
 Test-only variables and repository release-signing variables are intentionally
 excluded from the application reference.
+
+For a packaged Component the variable is unset by default, so application
+capabilities remain denied even when the manifest requests them. See
+[Component capabilities](component/capabilities.md) for the three-layer
+intersection and local `tysel run` behavior.
 
 See [Permissions](manifest/permissions.md), [Host capabilities](runtime/capabilities.md),
 and [Production operations](../operations/production.md).

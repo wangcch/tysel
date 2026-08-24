@@ -11,3 +11,12 @@ go install github.com/bytecodealliance/componentize-go/cmd/componentize-go@v0.4.
 componentize-go -d ../../../wit/component -w task bindings
 componentize-go -d ../../../wit/component -w task build -o echo.component.wasm
 ```
+
+The checked-in `tysel.toml` makes the fixture directly runnable:
+
+```sh
+tysel check
+printf '{"value":42}' | tysel run
+```
+
+See the full [Go Component guide](../../../docs/guides/wasm-component-go.md).

@@ -674,6 +674,7 @@ responsive testing. A static design review alone cannot establish compliance.
 | CLI reference | `docs/reference/cli/`, `crates/tysel-cli/src/main.rs` |
 | Manifest reference | `docs/reference/manifest/`, bundled manifest JSON Schema |
 | Runtime APIs | `docs/reference/runtime/`, `packages/tysel-types/`, `runtime-js/`, `wit/` |
+| Wasm Components | `docs/reference/component/`, `docs/guides/wasm-component-*.md`, `sdk/`, `wit/component/`, `wit/fs/` |
 | Capability and security | `docs/capabilities/`, `docs/security/`, ADRs |
 | npm compatibility | `docs/compatibility/`, compatibility source |
 | Performance | `docs/performance/`, `benchmarks/` |

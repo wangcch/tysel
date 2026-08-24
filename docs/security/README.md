@@ -35,6 +35,13 @@ limits, and best-effort cgroup memory enforcement. Supervisor recovery replaces
 a crashed worker. macOS isolation supports development checks only and is not
 the production sandbox gate.
 
+The experimental `component` profile runs a Wasm Component in Wasmtime under
+`isolated-task` trust mode. It receives an empty WASI context and no application
+capability by default. Effective filesystem access requires the guest import,
+manifest root, and deployment policy to intersect. Memory, fuel, time, input,
+output, and error payloads are bounded. This is not a promise to run arbitrary
+WASI applications safely or compatibly.
+
 Tysel does not run arbitrary native addons or binaries inside this boundary.
 Subprocesses, dynamic libraries, Node.js builtins, and ambient OS access are
 outside the application contract.
@@ -63,4 +70,5 @@ repository's private security reporting channel when available.
 
 Continue with the [capability matrix](../capabilities/README.md),
 [execution profiles](../concepts/execution-profiles.md), and
+[Wasm Component capabilities](../reference/component/capabilities.md), or the
 [production operations](../operations/production.md).

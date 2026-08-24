@@ -1,0 +1,6 @@
+schema_version = 1
+
+[app]
+name = "go-echo-component"
+entry = "echo.component.wasm"
+profile = "component"

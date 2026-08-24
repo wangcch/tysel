@@ -21,6 +21,7 @@ the complete contract for a command, manifest field, or runtime API.
 | Expose a function as an MCP tool | [MCP example](examples.md#tasks-and-agents) | Registered MCP task; isolated example keeps secret values in the host. |
 | Run generated or third-party JavaScript | [Isolated plugin example](examples.md#isolation) | Linux is the production isolation security target. |
 | Suspend for retry, time, or human approval | [Durable execution](../concepts/durable-execution.md) | Durable store and replay-safe boundaries. |
+| Build a language-neutral one-shot task | [Rust Component](wasm-component-rust.md) or [Go Component](wasm-component-go.md) | Experimental `tysel:component/task@0.4.0`; restricted WASI. |
 
 ## Ship and operate
 
@@ -35,6 +36,6 @@ the complete contract for a command, manifest field, or runtime API.
 
 Run commands against the release you plan to deploy. Verify the result at each
 boundary, keep manifest permissions minimal, and follow links into
-[Reference](../reference/index.md) for defaults, errors, and unsupported
+[API reference](../reference/index.md) for defaults, errors, and unsupported
 behavior. The [example gallery](examples.md) points to complete source trees
 when a single snippet is not enough.

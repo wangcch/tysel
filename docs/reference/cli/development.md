@@ -44,6 +44,9 @@ successful rebuild. An explicit `ENTRY` overrides `app.entry` for this run.
 Development mode can read `.env`, but only declared secrets and named Postgres
 connections become visible through their host capabilities.
 
+`tysel dev` rejects a `.wasm` Component entry. Components are one-shot tasks;
+use `tysel run` and provide one JSON value on stdin.
+
 ## `tysel run`
 
 ```text
@@ -53,6 +56,11 @@ tysel run [ENTRY] [--manifest FILE]
 Bundle and serve without file watching. An explicit `ENTRY` overrides
 `app.entry` for this run. Runtime-relative paths resolve from the selected
 project root.
+
+For a `.wasm` Component, `run` does not start a server. It validates and
+executes the Component once over bounded stdin/stdout, then exits. Local run
+derives Component filesystem deployment authority from the checked manifest.
+See [Wasm Components](../component/index.md).
 
 For HTTP and process behavior, see [Application and server](../manifest/app-server.md)
 and [Errors and machine output](../errors-and-output.md).

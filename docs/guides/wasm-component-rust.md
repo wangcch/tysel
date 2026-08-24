@@ -1,0 +1,82 @@
+# Build a Rust Wasm Component
+
+This guide builds the repository's Rust fixture, validates its Component ABI,
+runs one JSON task, and packages it as a native executable.
+
+## Prerequisites
+
+Tysel and its Component SDK have no tagged public release yet. Work from one
+repository checkout so the runtime, WIT, SDK, and fixture versions match.
+
+Install:
+
+- the Tysel [source-build prerequisites](../install.md#current-availability);
+- stable Rust with the `wasm32-unknown-unknown` target;
+- Bytecode Alliance `wasm-tools` `1.247.0`.
+
+```sh
+cargo install wasm-tools --version 1.247.0 --locked
+rustup target add wasm32-unknown-unknown
+cargo build --locked --release \
+  -p tysel-cli --bin tysel \
+  -p tysel-runtime --bin tysel-service
+export PATH="$PWD/target/release:$PATH"
+```
+
+## Build the guest
+
+From the repository root:
+
+```sh
+cd sdk/examples/rust-echo
+cargo build --target wasm32-unknown-unknown --release
+wasm-tools component new \
+  target/wasm32-unknown-unknown/release/tysel_rust_echo_component.wasm \
+  -o target/echo.component.wasm
+```
+
+The first command produces a Core Wasm module. `wasm-tools component new`
+wraps it as the Component Model binary Tysel accepts. Passing the Core module
+directly to Tysel fails validation.
+
+## Validate and run
+
+The fixture manifest selects `profile = "component"` and the generated entry.
+
+```sh
+tysel check
+printf '{"value":42}' | tysel run
+```
+
+Expected stdout from `run`:
+
+```json
+{"value":42}
+```
+
+`run` waits for stdin EOF, invokes the Component once, prints one JSON value,
+and exits. `tysel dev` is not available for Component applications.
+
+## Package one executable
+
+```sh
+tysel build --release
+printf '{"value":"packaged"}' | ./dist/rust-echo-component
+```
+
+The output executable includes the portable Component, the native host, and
+host-specific AOT metadata. It does not need Rust, Go, Wasmtime, or the guest
+SDK on the target host. Builds still target the build host.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `run` export or ABI error | Regenerate from `wit/component/task.wit` and use world `task`. |
+| Core module rejected | Run `wasm-tools component new` and point the manifest at the resulting Component. |
+| Input JSON error | Send exactly one JSON value and close stdin. |
+| Component exceeds a limit | Check [Component runtime limits](../reference/component/runtime.md#resource-bounds). |
+| Capability import rejected | Only the documented [filesystem imports](../reference/component/capabilities.md) are implemented. |
+
+Continue with the [Rust SDK reference](../reference/component/rust-sdk.md) to
+replace the echo handler with a typed task.
