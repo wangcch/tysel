@@ -558,7 +558,15 @@
   class Response {
     constructor(body, init) {
       init = init || {};
-      this.body = body == null ? null : body;
+      if (body instanceof ArrayBuffer) {
+        this.body = body.slice(0);
+      } else if (body instanceof Uint8Array) {
+        this.body = new Uint8Array(
+          body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+        );
+      } else {
+        this.body = body == null ? null : body;
+      }
       this.status = init.status || 200;
       this.headers = new Headers(init.headers);
       this._stream = false;
@@ -603,13 +611,30 @@
           if (this._abortCleanup) this._abortCleanup();
         }
       }
-      return this.body == null ? "" : String(this.body);
+      if (this.body == null) return "";
+      if (this.body instanceof ArrayBuffer || ArrayBuffer.isView(this.body)) {
+        return new TextDecoder().decode(this.body);
+      }
+      return String(this.body);
     }
     async json() {
       const text = await this.text();
       return text ? JSON.parse(text) : null;
     }
     async arrayBuffer() {
+      if (!this._stream && !this._bodyUsed) {
+        if (this.body instanceof ArrayBuffer) {
+          this._bodyUsed = true;
+          return this.body.slice(0);
+        }
+        if (ArrayBuffer.isView(this.body)) {
+          this._bodyUsed = true;
+          return this.body.buffer.slice(
+            this.body.byteOffset,
+            this.body.byteOffset + this.body.byteLength,
+          );
+        }
+      }
       return new TextEncoder().encode(await this.text()).buffer;
     }
     clone() {

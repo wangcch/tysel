@@ -12,7 +12,7 @@ use crate::cpu::CpuBudget;
 use crate::fetch;
 use crate::host;
 use crate::isolate::{self, IsolateCancel};
-use crate::queue::{self, STREAM_WINDOW};
+use crate::queue;
 
 pub struct IncomingHttp {
     pub method: String,
@@ -41,14 +41,12 @@ impl From<HttpRequest> for IncomingHttp {
 struct Job {
     request: IncomingHttp,
     response_tx: ResponseSender,
-    body_tx: mpsc::Sender<Vec<u8>>,
     _pending: PendingJob,
 }
 
 struct ActiveJob {
     request: IncomingHttp,
     response_tx: ResponseSender,
-    body_tx: mpsc::Sender<Vec<u8>>,
 }
 
 struct PendingJob {
@@ -64,7 +62,7 @@ impl Drop for PendingJob {
 
 pub(crate) struct PreparedHttpResponse {
     pub head: HttpHead,
-    pub buffered_body: Option<Vec<u8>>,
+    pub body: OutgoingHttpBody,
 }
 
 pub(crate) type ResponseSender = oneshot::Sender<Result<PreparedHttpResponse, EngineError>>;
@@ -142,10 +140,8 @@ impl IsolatePool {
         request: IncomingHttp,
     ) -> Result<(HttpHead, OutgoingHttpBody), EngineError> {
         let (response_tx, response_rx) = oneshot::channel();
-        let (body_tx, body_rx) = mpsc::channel(STREAM_WINDOW);
         let mut request = Some(request);
         let mut response_tx = Some(response_tx);
-        let mut body_tx = Some(body_tx);
         loop {
             let (index, pending) = self
                 .reserve_worker()
@@ -155,7 +151,6 @@ impl IsolatePool {
                 response_tx: response_tx
                     .take()
                     .expect("response sender is retained until dispatch"),
-                body_tx: body_tx.take().expect("body sender is retained until dispatch"),
                 _pending: pending,
             };
             match self.workers[index].jobs.send(job).await {
@@ -164,22 +159,15 @@ impl IsolatePool {
                     let Job {
                         request: returned_request,
                         response_tx: returned_response_tx,
-                        body_tx: returned_body_tx,
                         _pending: _,
                     } = error.0;
                     request = Some(returned_request);
                     response_tx = Some(returned_response_tx);
-                    body_tx = Some(returned_body_tx);
                 }
             }
         }
         match response_rx.await {
-            Ok(Ok(PreparedHttpResponse { head, buffered_body: Some(body) })) => {
-                Ok((head, OutgoingHttpBody::Buffered(body)))
-            }
-            Ok(Ok(PreparedHttpResponse { head, buffered_body: None })) => {
-                Ok((head, OutgoingHttpBody::Stream(body_rx)))
-            }
+            Ok(Ok(PreparedHttpResponse { head, body })) => Ok((head, body)),
             Ok(Err(err)) => Err(err),
             Err(_) => Err(EngineError::Isolate("isolate dropped the response head".into())),
         }
@@ -289,7 +277,7 @@ fn run_worker(
     let _ = ready.send(Ok(()));
 
     while let Some(job) = jobs.blocking_recv() {
-        let Job { request, response_tx, body_tx, _pending: pending } = job;
+        let Job { request, response_tx, _pending: pending } = job;
         let request_id = request.request_id;
         let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
         let request_deadline =
@@ -300,7 +288,7 @@ fn run_worker(
             &context,
             &reactor,
             &cancel,
-            ActiveJob { request, response_tx, body_tx },
+            ActiveJob { request, response_tx },
             request_deadline,
             &cpu,
         );
@@ -405,7 +393,7 @@ fn handle_job(
     request_deadline: Instant,
     cpu: &CpuBudget,
 ) -> Result<(), EngineError> {
-    let ActiveJob { request, response_tx, body_tx } = job;
+    let ActiveJob { request, response_tx } = job;
     reactor.io.bind_request(request.request_id);
     reactor.io.inbound.install(request.body);
     if let Some(ws_in) = request.ws_in {
@@ -451,7 +439,7 @@ fn handle_job(
             return Err(err);
         }
     }
-    context.with(|ctx| fetch::emit_response(ctx, response_tx, body_tx))?;
+    context.with(|ctx| fetch::emit_response(ctx, response_tx))?;
     if context.with(fetch::arm_websocket)? {
         isolate::wait_until_settled(
             runtime,

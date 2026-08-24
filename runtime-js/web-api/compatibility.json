@@ -23,7 +23,7 @@
     {
       "name": "Request and Response",
       "status": "partial",
-      "supported": ["string bodies", "single-use json/text/arrayBuffer consumption", "bodyUsed", "buffered request and response clone", "streamed host request and response bodies"],
+      "supported": ["string, Uint8Array, and ArrayBuffer response bodies", "single-use json/text/arrayBuffer consumption", "bodyUsed", "buffered request and response clone", "streamed host request and response bodies"],
       "unsupported": ["public ReadableStream bodies", "formData/blob helpers", "stream teeing and streamed response clone", "browser cache/credentials/mode semantics"]
     },
     {

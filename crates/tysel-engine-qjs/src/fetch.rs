@@ -1,9 +1,10 @@
-use rquickjs::{Ctx, Function, Module, Object};
+use rquickjs::{ArrayBuffer, Ctx, Function, Module, Object, TypedArray};
 use tokio::sync::mpsc;
 use tysel_engine::{EngineError, HttpHead, HttpRequest};
 
 use crate::isolate::{js_err, js_err_ctx};
-use crate::pool::{PreparedHttpResponse, ResponseSender};
+use crate::pool::{OutgoingHttpBody, PreparedHttpResponse, ResponseSender};
+use crate::queue::STREAM_WINDOW;
 
 const BOOTSTRAP: &str = include_str!("../../../runtime-js/web-api/runtime.js");
 const REQUEST_FACTORY: &str = "__tysel_request_factory";
@@ -47,11 +48,7 @@ pub fn take_response_into_globals(ctx: Ctx<'_>) -> Result<(), EngineError> {
     Ok(())
 }
 
-pub fn emit_response(
-    ctx: Ctx<'_>,
-    response_tx: ResponseSender,
-    body_tx: mpsc::Sender<Vec<u8>>,
-) -> Result<(), EngineError> {
+pub fn emit_response(ctx: Ctx<'_>, response_tx: ResponseSender) -> Result<(), EngineError> {
     let response: Object = ctx.globals().get("__tysel_response").map_err(js_err)?;
     let status: i32 = response.get("status").unwrap_or(200);
     let headers = read_headers(&response)?;
@@ -62,9 +59,12 @@ pub fn emit_response(
     };
     let body: rquickjs::Value = response.get("body").map_err(js_err)?;
     if let Some(bytes) = buffered_body(&body)? {
-        let _ = response_tx.send(Ok(PreparedHttpResponse { head, buffered_body: Some(bytes) }));
+        let _ = response_tx
+            .send(Ok(PreparedHttpResponse { head, body: OutgoingHttpBody::Buffered(bytes) }));
     } else {
-        let _ = response_tx.send(Ok(PreparedHttpResponse { head, buffered_body: None }));
+        let (body_tx, body_rx) = mpsc::channel(STREAM_WINDOW);
+        let _ = response_tx
+            .send(Ok(PreparedHttpResponse { head, body: OutgoingHttpBody::Stream(body_rx) }));
         send_body(body, &body_tx)?;
     }
     Ok(())
@@ -115,7 +115,10 @@ fn buffered_body(body: &rquickjs::Value<'_>) -> Result<Option<Vec<u8>>, EngineEr
     if let Some(text) = body.as_string() {
         return Ok(Some(text.to_string().map_err(js_err)?.into_bytes()));
     }
-    Err(EngineError::Isolate("response chunk must be a string".into()))
+    if let Some(bytes) = byte_body(body)? {
+        return Ok(Some(bytes));
+    }
+    Err(EngineError::Isolate("response chunk must be a string, Uint8Array, or ArrayBuffer".into()))
 }
 
 fn send_chunk(
@@ -124,11 +127,31 @@ fn send_chunk(
 ) -> Result<(), EngineError> {
     let bytes = if let Some(text) = chunk.as_string() {
         text.to_string().map_err(js_err)?.into_bytes()
+    } else if let Some(bytes) = byte_body(&chunk)? {
+        bytes
     } else {
-        return Err(EngineError::Isolate("response chunk must be a string".into()));
+        return Err(EngineError::Isolate(
+            "response chunk must be a string, Uint8Array, or ArrayBuffer".into(),
+        ));
     };
     let _ = body_tx.blocking_send(bytes);
     Ok(())
+}
+
+fn byte_body(value: &rquickjs::Value<'_>) -> Result<Option<Vec<u8>>, EngineError> {
+    if let Ok(view) = TypedArray::<u8>::from_value(value.clone()) {
+        return view
+            .as_bytes()
+            .map(|bytes| Some(bytes.to_vec()))
+            .ok_or_else(|| EngineError::Isolate("response Uint8Array is detached".into()));
+    }
+    if let Some(buffer) = ArrayBuffer::from_value(value.clone()) {
+        return buffer
+            .as_bytes()
+            .map(|bytes| Some(bytes.to_vec()))
+            .ok_or_else(|| EngineError::Isolate("response ArrayBuffer is detached".into()));
+    }
+    Ok(None)
 }
 
 fn to_js_request<'js>(ctx: &Ctx<'js>, request: &HttpRequest) -> Result<Object<'js>, EngineError> {

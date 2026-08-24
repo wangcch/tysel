@@ -888,6 +888,12 @@ fn web_api_collections_and_body_helpers_follow_supported_contracts() {
             try { await buffered.text(); } catch (error) { repeatedBody = error.name; }
             try { buffered.clone(); } catch (error) { consumedClone = error.name; }
             const cloneBytes = Array.from(new Uint8Array(await bufferedClone.arrayBuffer()));
+            const typedBacking = new Uint8Array([99, 65, 66, 67, 88]);
+            const typed = new Response(typedBacking.subarray(1, 4));
+            const typedClone = typed.clone();
+            typedBacking[2] = 90;
+            const typedText = await typed.text();
+            const typedCloneBytes = Array.from(new Uint8Array(await typedClone.arrayBuffer()));
 
             return JSON.stringify({
               headers: Array.from(headers),
@@ -905,6 +911,7 @@ fn web_api_collections_and_body_helpers_follow_supported_contracts() {
               ],
               request: [clone.method, clone.headers.get("x-z")],
               body: [buffered.bodyUsed, bufferedText, repeatedBody, consumedClone, cloneBytes],
+              typedBody: [typed.bodyUsed, typedText, typedClone.bodyUsed, typedCloneBytes],
               response: [response.status, response.ok, response.headers.get("content-type"), await response.json(), invalidJson],
             });
         })()"##,
@@ -914,7 +921,7 @@ fn web_api_collections_and_body_helpers_follow_supported_contracts() {
     assert_eq!(
         value,
         Value::String(
-            r##"{"headers":[["x-a","first"],["x-z","last, again"]],"all":["hello world","again"],"params":"a=space+value&q=hello+world&q=again","url":["https:","example.com","/v1/items","?q=1","#result"],"resolved":["https://example.com/a/next/item?q=2#done","https://example.com/a/b?q=3","https://example.com/a/b?old=1#new","https://example.com/a/b?old=1"],"ipv6":["[::1]","8080","/b"],"linked":["https://example.com/start?first=1&name=a+%7E+b","https://example.com:8443/items?next=final#result",true,1,["final"]],"request":["POST","last, again"],"body":[true,"hello","TypeError","TypeError",[104,101,108,108,111]],"response":[201,true,"application/json",{"id":7},"TypeError"]}"##.into()
+            r##"{"headers":[["x-a","first"],["x-z","last, again"]],"all":["hello world","again"],"params":"a=space+value&q=hello+world&q=again","url":["https:","example.com","/v1/items","?q=1","#result"],"resolved":["https://example.com/a/next/item?q=2#done","https://example.com/a/b?q=3","https://example.com/a/b?old=1#new","https://example.com/a/b?old=1"],"ipv6":["[::1]","8080","/b"],"linked":["https://example.com/start?first=1&name=a+%7E+b","https://example.com:8443/items?next=final#result",true,1,["final"]],"request":["POST","last, again"],"body":[true,"hello","TypeError","TypeError",[104,101,108,108,111]],"typedBody":[true,"ABC",true,[65,66,67]],"response":[201,true,"application/json",{"id":7},"TypeError"]}"##.into()
         )
     );
 }
@@ -1490,6 +1497,53 @@ async fn scalar_response_uses_buffered_fast_path() {
         panic!("scalar response should bypass the streaming channel");
     };
     assert!(String::from_utf8(bytes).expect("utf8").contains("Hello from Tysel"));
+}
+
+#[tokio::test]
+async fn byte_response_uses_buffered_fast_path_without_string_conversion() {
+    const BYTE_HANDLER: &str = r#"
+export default {
+  fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/array-buffer") {
+      return new Response(new TextEncoder().encode(`dynamic:${path}`).buffer);
+    }
+    const backing = new Uint8Array([99, path.length, 17, 34, 51, 68, 85, 102, 77]);
+    return new Response(backing.subarray(1, 7));
+  },
+};
+"#;
+    let pool = IsolatePool::spawn(1, BYTE_HANDLER, config()).expect("spawn isolate");
+
+    let (_, body) = pool
+        .dispatch_response(IncomingHttp::from(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/typed-view".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 0,
+        }))
+        .await
+        .expect("dispatch typed view");
+    let OutgoingHttpBody::Buffered(bytes) = body else {
+        panic!("Uint8Array response should bypass the streaming channel");
+    };
+    assert_eq!(bytes, vec![11, 17, 34, 51, 68, 85]);
+
+    let (_, body) = pool
+        .dispatch_response(IncomingHttp::from(HttpRequest {
+            method: "GET".into(),
+            url: "http://tysel.local/array-buffer".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 0,
+        }))
+        .await
+        .expect("dispatch array buffer");
+    let OutgoingHttpBody::Buffered(bytes) = body else {
+        panic!("ArrayBuffer response should bypass the streaming channel");
+    };
+    assert_eq!(bytes, b"dynamic:/array-buffer");
 }
 
 #[tokio::test]
