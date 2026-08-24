@@ -1,0 +1,19 @@
+schema_version = 1
+
+# Diagnostic matrix for per-request byte-buffer construction and transport.
+# It is intentionally separate from the publication matrix so this experiment
+# cannot silently change the established cross-runtime scorecard.
+[measurement]
+startup_warmups = 3
+startup_samples = 20
+idle_settle_ms = 400
+http_warmup_requests = 100
+http_rounds = 10
+http_round_duration_ms = 500
+concurrency = [1, 10, 100]
+request_timeout_ms = 5000
+
+[[workloads]]
+id = "bytes-64k-typed"
+path = "/bytes/64k-typed"
+response = "bytes-64k"

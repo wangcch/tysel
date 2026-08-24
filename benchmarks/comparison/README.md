@@ -173,6 +173,25 @@ Do not copy numbers from this diagnostic run into the cross-runtime report. Its
 purpose is to establish a cause and verify that large-response throughput no
 longer falls with elapsed time before starting new record cycles.
 
+## QuickJS boundary diagnosis
+
+The `qjs_boundary` workflow input runs the non-network diagnostic three times on
+the selected dedicated Linux architecture. It builds the release binary once,
+then records bare QuickJS, host extraction, Web API extraction, and full Tysel
+fetch-boundary cost for health, 64 KiB string, typed-array, and JSON responses.
+This job uses a host-only strict runner snapshot, so it does not download Node,
+Bun, Deno, or TypeScript and does not enter the publication score or stability
+gate. Select `record_arch` to run only `arm64` or `x86_64` when one host is
+available.
+
+The equivalent direct command is:
+
+```bash
+benchmarks/comparison/runner-doctor-linux.sh --strict --host-only \
+  --output target/benchmark-comparison/qjs-boundary-runner-arm64.json
+benchmarks/comparison/run-qjs-boundary-linux.sh --arch arm64
+```
+
 ## External load-host verification
 
 Only after sustained stability passes, copy `target/release/tysel` from the

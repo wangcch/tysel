@@ -2,11 +2,16 @@
 set -euo pipefail
 
 strict=false
+host_only=false
 output="target/benchmark-comparison/runner-doctor.json"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --strict)
       strict=true
+      shift
+      ;;
+    --host-only)
+      host_only=true
       shift
       ;;
     --output)
@@ -24,7 +29,11 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   echo "runner doctor supports Linux only" >&2
   exit 1
 fi
-for command in cargo git jq node bun deno sha256sum; do
+required_commands=(cargo git jq sha256sum)
+if [[ "${host_only}" == false ]]; then
+  required_commands+=(node bun deno)
+fi
+for command in "${required_commands[@]}"; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "missing required command: ${command}" >&2
     exit 1
@@ -32,20 +41,48 @@ for command in cargo git jq node bun deno sha256sum; do
 done
 
 workspace_root="$(git rev-parse --show-toplevel)"
-typescript_path="${workspace_root}/node_modules/.bin/tsc"
-if [[ ! -x "${typescript_path}" ]]; then
-  echo "missing locked TypeScript compiler; run 'pnpm install --frozen-lockfile'" >&2
-  exit 1
-fi
+source_toolchains_json='{}'
+runtimes_json='{}'
+if [[ "${host_only}" == false ]]; then
+  typescript_path="${workspace_root}/node_modules/.bin/tsc"
+  if [[ ! -x "${typescript_path}" ]]; then
+    echo "missing locked TypeScript compiler; run 'pnpm install --frozen-lockfile'" >&2
+    exit 1
+  fi
 
-node_version="$(node --version)"
-bun_version="$(bun --version)"
-deno_version="$(deno --version | head -n 1)"
-typescript_version="$(${typescript_path} --version)"
-[[ "${node_version}" == "v24.19.0" ]]
-[[ "${bun_version}" == "1.4.0" ]]
-[[ "${deno_version}" == "deno 2.9.5"* ]]
-[[ "${typescript_version}" == "Version 7.0.2" ]]
+  node_version="$(node --version)"
+  bun_version="$(bun --version)"
+  deno_version="$(deno --version | head -n 1)"
+  typescript_version="$(${typescript_path} --version)"
+  [[ "${node_version}" == "v24.19.0" ]]
+  [[ "${bun_version}" == "1.4.0" ]]
+  [[ "${deno_version}" == "deno 2.9.5"* ]]
+  [[ "${typescript_version}" == "Version 7.0.2" ]]
+
+  node_path="$(command -v node)"
+  bun_path="$(command -v bun)"
+  deno_path="$(command -v deno)"
+  node_sha256="$(sha256sum "${node_path}" | awk '{ print $1 }')"
+  bun_sha256="$(sha256sum "${bun_path}" | awk '{ print $1 }')"
+  deno_sha256="$(sha256sum "${deno_path}" | awk '{ print $1 }')"
+  typescript_sha256="$(sha256sum "${typescript_path}" | awk '{ print $1 }')"
+  pnpm_lock_sha256="$(sha256sum "${workspace_root}/pnpm-lock.yaml" | awk '{ print $1 }')"
+  source_toolchains_json="$(jq -n \
+    --arg version "${typescript_version}" \
+    --arg path "${typescript_path}" \
+    --arg sha256 "${typescript_sha256}" \
+    --arg pnpmLockSha256 "${pnpm_lock_sha256}" \
+    '{typescript: {version: $version, path: $path, sha256: $sha256, pnpmLockSha256: $pnpmLockSha256}}')"
+  runtimes_json="$(jq -n \
+    --arg nodeVersion "${node_version}" --arg nodePath "${node_path}" --arg nodeSha256 "${node_sha256}" \
+    --arg bunVersion "${bun_version}" --arg bunPath "${bun_path}" --arg bunSha256 "${bun_sha256}" \
+    --arg denoVersion "${deno_version}" --arg denoPath "${deno_path}" --arg denoSha256 "${deno_sha256}" \
+    '{
+      node: {version: $nodeVersion, path: $nodePath, sha256: $nodeSha256},
+      bun: {version: $bunVersion, path: $bunPath, sha256: $bunSha256},
+      deno: {version: $denoVersion, path: $denoPath, sha256: $denoSha256}
+    }')"
+fi
 
 case "$(uname -m)" in
   x86_64) architecture="x86_64" ;;
@@ -100,17 +137,9 @@ if [[ -f /.dockerenv || -f /run/.containerenv ]]; then
   container="container"
 fi
 
-node_path="$(command -v node)"
-bun_path="$(command -v bun)"
-deno_path="$(command -v deno)"
-node_sha256="$(sha256sum "${node_path}" | awk '{ print $1 }')"
-bun_sha256="$(sha256sum "${bun_path}" | awk '{ print $1 }')"
-deno_sha256="$(sha256sum "${deno_path}" | awk '{ print $1 }')"
-typescript_sha256="$(sha256sum "${typescript_path}" | awk '{ print $1 }')"
-pnpm_lock_sha256="$(sha256sum "${workspace_root}/pnpm-lock.yaml" | awk '{ print $1 }')"
-
 mkdir -p "$(dirname "${output}")"
 jq -n \
+  --arg scope "$([[ "${host_only}" == true ]] && printf host-only || printf full)" \
   --arg architecture "${architecture}" \
   --arg kernel "${kernel}" \
   --arg cpuModel "${cpu_model}" \
@@ -122,21 +151,11 @@ jq -n \
   --arg container "${container}" \
   --arg sourceCommit "${source_commit}" \
   --argjson workspaceDirty "${workspace_dirty}" \
-  --arg nodeVersion "${node_version}" \
-  --arg nodePath "${node_path}" \
-  --arg nodeSha256 "${node_sha256}" \
-  --arg bunVersion "${bun_version}" \
-  --arg bunPath "${bun_path}" \
-  --arg bunSha256 "${bun_sha256}" \
-  --arg denoVersion "${deno_version}" \
-  --arg denoPath "${deno_path}" \
-  --arg denoSha256 "${deno_sha256}" \
-  --arg typescriptVersion "${typescript_version}" \
-  --arg typescriptPath "${typescript_path}" \
-  --arg typescriptSha256 "${typescript_sha256}" \
-  --arg pnpmLockSha256 "${pnpm_lock_sha256}" \
+  --argjson sourceToolchains "${source_toolchains_json}" \
+  --argjson runtimes "${runtimes_json}" \
   '{
     schemaVersion: 1,
+    scope: $scope,
     architecture: $architecture,
     kernel: $kernel,
     cpuModel: $cpuModel,
@@ -148,19 +167,8 @@ jq -n \
     container: $container,
     sourceCommit: $sourceCommit,
     workspaceDirty: $workspaceDirty,
-    sourceToolchains: {
-      typescript: {
-        version: $typescriptVersion,
-        path: $typescriptPath,
-        sha256: $typescriptSha256,
-        pnpmLockSha256: $pnpmLockSha256
-      }
-    },
-    runtimes: {
-      node: { version: $nodeVersion, path: $nodePath, sha256: $nodeSha256 },
-      bun: { version: $bunVersion, path: $bunPath, sha256: $bunSha256 },
-      deno: { version: $denoVersion, path: $denoPath, sha256: $denoSha256 }
-    }
+    sourceToolchains: $sourceToolchains,
+    runtimes: $runtimes
   }' > "${output}"
 
 if [[ "${strict}" == true ]]; then

@@ -5,7 +5,7 @@ declare module "node:http" {
 
   interface ServerResponse {
     writeHead(statusCode: number, headers: Record<string, string>): this;
-    end(body?: string): void;
+    end(body?: string | Uint8Array): void;
   }
 
   interface AddressInfo {
@@ -23,5 +23,5 @@ declare module "node:http" {
 }
 
 declare const Buffer: {
-  byteLength(value: string): number;
+  byteLength(value: string | Uint8Array): number;
 };

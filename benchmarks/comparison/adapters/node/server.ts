@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-function bodyFor(path: string): [contentType: string, body: string] | null {
+function bodyFor(path: string): [contentType: string, body: string | Uint8Array] | null {
   if (path === "/health") return ["text/plain", "ok"];
   if (path === "/json/1k") {
     return ["application/json", JSON.stringify({ payload: "a".repeat(1024) })];
@@ -9,6 +9,11 @@ function bodyFor(path: string): [contentType: string, body: string] | null {
     return ["application/json", JSON.stringify({ payload: "b".repeat(65536) })];
   }
   if (path === "/bytes/64k") return ["application/octet-stream", "x".repeat(65536)];
+  if (path === "/bytes/64k-typed") {
+    const body = new Uint8Array(65536);
+    body.fill(120);
+    return ["application/octet-stream", body];
+  }
   return null;
 }
 

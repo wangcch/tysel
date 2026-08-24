@@ -115,6 +115,22 @@
 
 全矩阵 0 错误；除尾延迟改善外的吞吐与 CPU efficiency 变化均在 ±5% 护栏内。第一版 acquire/release 原子计数曾令 health C100 单次回退 7.2%，已被 `Relaxed` 连续计数布局消除，因此不保留该中间实现。
 
+### BufferSource 响应快速通道
+
+针对持续负载 profile 中的 `string_buffer_fill`、`string_buffer_putc16` 和 `JS_ToCStringLen2` 热点，响应提取现在可将 `Uint8Array` 子视图和 `ArrayBuffer` 直接复制到 buffered HTTP body，不再强制先构造 QuickJS UTF-16 字符串。实现仍保留一次必要的所有权复制；没有缓存固定响应，也没有按 URL、长度或 benchmark workload 特判。字符串、JSON 与流式分块路径保持原语义。
+
+独立诊断矩阵 `matrix-typed-body.toml` 在每个请求中重新分配并填充 64 KiB 字节数组，四个 runtime adapter 使用相同响应内容。`Response` 构造时会复制 `ArrayBuffer`/`Uint8Array`，保证调用方随后修改原 buffer 不会改变响应内容；这次必要快照复制也计入基准。修正快照语义后的 macOS arm64 quick 冒烟中，Tysel typed body 的 C1/C4 为 4,429/12,387 req/s；同一开发机上的既有字符串 workload quick 冒烟为 2,443/6,859 req/s，方向性吞吐差异分别为 +81.3%/+80.6%，p50 延迟分别为 -48.3%/-45.8%。两次 quick run 不是配对 Linux 正式证据，不能据此发布百分比，但仍证明绕过 UTF-16 路径值得进入 Linux 四-seed 验证。
+
+正确性验证覆盖动态 `ArrayBuffer`、带非零 offset 的 `Uint8Array`、`text()`、`arrayBuffer()`、clone/bodyUsed、标量 buffered 与分块 streaming；QuickJS 115 项、runtime 73 项和 TypeScript 7 source check 均通过，clippy 零警告。下一步是在 Linux arm64/x86_64 上对独立 typed-body 矩阵做 before/after 四-seed 配对，并用 `perf` 确认字符串热点下降，而不是把该诊断 workload 混入既有官网总分。
+
+### 裸 QuickJS 边界拆分与 lazy response channel
+
+新增 `tysel-bench-qjs-boundary` 诊断工具，在同一 release 二进制内逐层测量纯 QuickJS 构造、QuickJS 加宿主复制、Web API 对象与 header 提取、完整 Tysel fetch 边界。每次操作重新创建 payload，不使用固定响应缓存。macOS arm64 三次运行显示：64 KiB 字符串构造约 121–124 µs，完整 Tysel 边界约 138–147 µs；64 KiB JSON stringify 约 260–279 µs，完整边界约 279–302 µs。宿主复制只占几个微秒，说明字符串和 JSON 的主要上限确实位于 QuickJS，而不是 Tokio 网络层。
+
+修正 `Response` 快照语义后的三次诊断中，typed 64 KiB 的裸构造加复制中位数为 2.58 µs，Web API 层为 15.29 µs，完整 fetch 边界为 26.58 µs；Web API 之后的宿主边界为 11.29 µs，占完整边界 42.5%。字符串的裸构造/完整边界中位数为 122.67/148.75 µs，JSON 为 263.71/300.50 µs。因此固定边界成本仍值得优化，但无法解释字符串/JSON 的大部分差距。基于该证据，buffered 响应不再预分配 streaming `mpsc` channel；只有真实分块响应才创建 channel。macOS quick 中 health C1 为 8,074 req/s，对改动前 7,767 req/s 约 +4%，其他既有 workload 变化在约 0%–2.2%，低于正式 5% 判定阈值，因此只记录为已验证的分配削减，不宣称确定吞吐收益。
+
+另一个“完全移除空请求体 channel”的候选在本机护栏中未达到 5% 改善且 health C1 接近回退阈值，已回退，不进入生产实现。下一步不应尝试宿主原生 JSON 捷径；应先在 Linux 对裸边界工具采样 `perf`，再决定是否继续削减 Request/Response 对象构造或接受 QuickJS 的 JSON 上限。
+
 ## 优化原则与验收规则
 
 1. 以同一机器、同一容器镜像、同一 TypeScript 7 工具链下的 Tysel 基线为主比较；Node、Bun、Deno 只用于判断差距结构。

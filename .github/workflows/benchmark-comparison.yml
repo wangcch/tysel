@@ -13,8 +13,13 @@ on:
         required: false
         type: boolean
         default: false
+      qjs_boundary:
+        description: Run three non-publication QuickJS boundary diagnostics
+        required: false
+        type: boolean
+        default: false
       record_arch:
-        description: Architecture to record or resume
+        description: Architecture for selected self-hosted jobs
         required: false
         type: choice
         options:
@@ -44,6 +49,7 @@ env:
 
 jobs:
   contract:
+    if: ${{ !inputs.qjs_boundary || inputs.record || inputs.diagnose }}
     strategy:
       matrix:
         include:
@@ -136,6 +142,34 @@ jobs:
           path: |
             target/benchmark-comparison/diagnose-${{ matrix.arch }}-*/**
             target/benchmark-comparison/diagnose-runner-${{ matrix.arch }}.json
+          if-no-files-found: error
+
+  qjs-boundary:
+    if: ${{ inputs.qjs_boundary }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ inputs.record_arch == 'all' && fromJSON('["x86_64","arm64"]') || fromJSON(format('["{0}"]', inputs.record_arch)) }}
+    runs-on: ${{ fromJSON(matrix.arch == 'x86_64' && '["self-hosted","linux","x64","tysel-benchmark"]' || '["self-hosted","linux","arm64","tysel-benchmark"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Capture fixed-runner contract
+        run: >-
+          benchmarks/comparison/runner-doctor-linux.sh --strict --host-only
+          --output target/benchmark-comparison/qjs-boundary-runner-${{ matrix.arch }}.json
+      - name: Run three QuickJS boundary diagnostics
+        run: >-
+          benchmarks/comparison/run-qjs-boundary-linux.sh
+          --arch "${{ matrix.arch }}"
+          --output-dir "target/benchmark-comparison/qjs-boundary-${{ matrix.arch }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: qjs-boundary-${{ matrix.arch }}-attempt${{ github.run_attempt }}
+          path: |
+            target/benchmark-comparison/qjs-boundary-${{ matrix.arch }}/*.json
+            target/benchmark-comparison/qjs-boundary-runner-${{ matrix.arch }}.json
           if-no-files-found: error
 
   # Publication-grade jobs require fixed, pre-provisioned runners carrying the

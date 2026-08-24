@@ -7,6 +7,13 @@ function responseFor(path: string): Response {
       headers: { "content-type": "application/octet-stream" },
     });
   }
+  if (path === "/bytes/64k-typed") {
+    const body = new Uint8Array(65536);
+    body.fill(120);
+    return new Response(body, {
+      headers: { "content-type": "application/octet-stream" },
+    });
+  }
   return new Response("not found", { status: 404 });
 }
 
