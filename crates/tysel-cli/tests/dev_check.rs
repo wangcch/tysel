@@ -61,6 +61,50 @@ fn run_rejects_a_wasm_override_for_a_service_profile() {
 
 #[cfg(unix)]
 #[test]
+fn protocol_commands_reject_javascript_overrides_for_a_component_profile() {
+    let dir = temp_app("protocol-component-profile-mismatch");
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "component-protocol"
+entry = "echo.wasm"
+profile = "component"
+"#,
+    )
+    .unwrap();
+    let javascript = dir.join("override.js");
+    fs::write(
+        &javascript,
+        r#"export default {
+  tasks: {
+    work: { kind: "queue", handler(input) { return input; } },
+    tool: { kind: "mcp", handler(input) { return input; } },
+  },
+};
+"#,
+    )
+    .unwrap();
+
+    for args in [
+        vec!["mcp", javascript.to_str().unwrap()],
+        vec!["queue", "work", javascript.to_str().unwrap()],
+    ] {
+        let output = Command::new(cli_exe())
+            .args(args)
+            .args(["--manifest", dir.join("tysel.toml").to_str().unwrap()])
+            .output()
+            .expect("run protocol command with mismatched JavaScript override");
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("app.profile = \"component\" requires a .wasm entry")
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn mcp_stdio_discovers_lists_and_executes_a_tool() {
     let dir = temp_app("mcp-stdio");
     write_js_app(

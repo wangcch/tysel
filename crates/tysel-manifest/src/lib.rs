@@ -283,46 +283,59 @@ impl Manifest {
         out.push_str(&format!("Listen: {}\n", self.server.listen));
         out.push_str(&format!("Logs: {}\n\n", self.observability.logs));
         out.push_str("Capabilities\n");
-        if !self.permissions.fetch.is_empty() {
-            out.push_str("  HTTP Client\n");
-            for host in &self.permissions.fetch {
-                out.push_str(&format!("    {host}\n"));
+        let is_component = self.app.profile == "component";
+        if !is_component {
+            if !self.permissions.fetch.is_empty() {
+                out.push_str("  HTTP Client\n");
+                for host in &self.permissions.fetch {
+                    out.push_str(&format!("    {host}\n"));
+                }
+            }
+            if !self.permissions.postgres.is_empty() {
+                out.push_str("  Postgres\n");
+                for item in &self.permissions.postgres {
+                    out.push_str(&format!("    {item}\n"));
+                }
+            }
+            if !self.permissions.secrets.is_empty() {
+                out.push_str("  Secrets\n");
+                for secret in &self.permissions.secrets {
+                    out.push_str(&format!("    {secret}\n"));
+                }
+            }
+            if self.durable.store == "sqlite" {
+                out.push_str("  SQLite\n");
+                out.push_str(&format!("    {}\n", self.durable.path));
             }
         }
-        if !self.permissions.postgres.is_empty() {
-            out.push_str("  Postgres\n");
-            for item in &self.permissions.postgres {
-                out.push_str(&format!("    {item}\n"));
-            }
-        }
-        if !self.permissions.secrets.is_empty() {
-            out.push_str("  Secrets\n");
-            for secret in &self.permissions.secrets {
-                out.push_str(&format!("    {secret}\n"));
-            }
-        }
-        if self.durable.store == "sqlite" {
-            out.push_str("  SQLite\n");
-            out.push_str(&format!("    {}\n", self.durable.path));
-        }
-        if !self.permissions.fs_read.is_empty() || !self.permissions.fs_write.is_empty() {
-            out.push_str("\nFilesystem\n");
+        let has_filesystem =
+            !self.permissions.fs_read.is_empty() || !self.permissions.fs_write.is_empty();
+        if has_filesystem {
+            out.push_str("  Filesystem\n");
             if !self.permissions.fs_read.is_empty() {
-                out.push_str("  Read\n");
+                out.push_str("    Read\n");
                 for path in &self.permissions.fs_read {
-                    out.push_str(&format!("    {path}\n"));
+                    out.push_str(&format!("      {path}\n"));
                 }
             }
             if !self.permissions.fs_write.is_empty() {
-                out.push_str("  Write\n");
+                out.push_str("    Write\n");
                 for path in &self.permissions.fs_write {
-                    out.push_str(&format!("    {path}\n"));
+                    out.push_str(&format!("      {path}\n"));
                 }
             }
+        } else if is_component {
+            out.push_str("  None\n");
         }
-        out.push_str(
-            "\nDenied\n  Raw TCP\n  Child Process\n  FFI\n  Dynamic Library\n  Environment\n",
-        );
+        if is_component {
+            out.push_str(
+                "\nDenied\n  HTTP Client\n  Secrets\n  SQLite\n  Postgres\n  LLM\n  WebSocket\n  Durable Handlers\n  Raw TCP\n  Child Process\n  FFI\n  Dynamic Library\n  Environment\n",
+            );
+        } else {
+            out.push_str(
+                "\nDenied\n  Raw TCP\n  Child Process\n  FFI\n  Dynamic Library\n  Environment\n",
+            );
+        }
         out
     }
 
@@ -821,7 +834,7 @@ profile = "service"
                 .contains("requires app.profile = \"component\"")
         );
 
-        let component = Manifest::parse(
+        let mut component = Manifest::parse(
             r#"
 [app]
 name = "component-override"
@@ -837,6 +850,21 @@ profile = "component"
                 .to_string()
                 .contains("requires a .wasm entry")
         );
+
+        component.permissions.fetch = vec!["example.com".into()];
+        component.permissions.secrets = vec!["API_KEY".into()];
+        component.permissions.postgres = vec!["primary:read-only".into()];
+        component.permissions.fs_read = vec!["./input".into()];
+        let report = component.inspect_report();
+        let (capabilities, denied) = report.split_once("\nDenied\n").unwrap();
+        assert!(capabilities.contains("Filesystem"), "{report}");
+        assert!(!capabilities.contains("HTTP Client"), "{report}");
+        assert!(!capabilities.contains("Secrets"), "{report}");
+        assert!(!capabilities.contains("SQLite"), "{report}");
+        assert!(!capabilities.contains("Postgres"), "{report}");
+        for capability in ["HTTP Client", "Secrets", "SQLite", "Postgres", "LLM"] {
+            assert!(denied.contains(capability), "{report}");
+        }
     }
 
     #[test]

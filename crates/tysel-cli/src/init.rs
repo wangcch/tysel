@@ -827,6 +827,9 @@ steps = [["build", "--release"]]
     manifest.app.entry = entry;
     manifest.app.profile = template.profile().to_owned();
     manifest.server.listen = template.listen().to_owned();
+    manifest.validate_entry_profile(Path::new(&manifest.app.entry)).with_context(|| {
+        "tysel init currently generates JavaScript applications; Wasm Components require a manual manifest"
+    })?;
     if !include_tests {
         let verify = manifest.tasks.get_mut("verify").expect("template verify task");
         verify.description = Some("Check the application".into());
@@ -1039,5 +1042,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(Manifest::parse(&rendered).unwrap().app.entry, "src/quoted\"entry.ts");
+
+        let wasm =
+            manifest("app", Path::new("app.wasm"), ManifestFormat::Toml, Template::Http, true)
+                .unwrap_err();
+        assert!(wasm.to_string().contains("Wasm Components require a manual manifest"));
     }
 }

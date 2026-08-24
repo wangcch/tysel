@@ -42,6 +42,7 @@ printf '{"value":42}' | ./dist/echo-component
 ## What is not provided
 
 - no HTTP listener, Fetch handler, Cron, Queue, MCP, or durable handler;
+- no `tysel init` Component template; start from a Rust or Go SDK fixture;
 - no `tysel dev` watch mode;
 - no JavaScript globals or `globalThis.tysel` object;
 - no ambient arguments, environment, inherited stdio, preopened directories,

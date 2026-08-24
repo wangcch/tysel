@@ -103,17 +103,19 @@ pub fn run(
 
 fn capability_summary(manifest: &Manifest) -> String {
     let mut caps = Vec::new();
-    if !manifest.permissions.fetch.is_empty() {
-        caps.push("http");
-    }
-    if !manifest.permissions.secrets.is_empty() {
-        caps.push("secrets");
-    }
-    if manifest.durable.store == "sqlite" {
-        caps.push("sqlite");
-    }
-    if !manifest.permissions.postgres.is_empty() {
-        caps.push("postgres");
+    if manifest.app.profile != "component" {
+        if !manifest.permissions.fetch.is_empty() {
+            caps.push("http");
+        }
+        if !manifest.permissions.secrets.is_empty() {
+            caps.push("secrets");
+        }
+        if manifest.durable.store == "sqlite" {
+            caps.push("sqlite");
+        }
+        if !manifest.permissions.postgres.is_empty() {
+            caps.push("postgres");
+        }
     }
     if !manifest.permissions.fs_read.is_empty() || !manifest.permissions.fs_write.is_empty() {
         caps.push("fs");

@@ -265,6 +265,7 @@ profile = "component"
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(stdout.contains("Type check       not applicable (Wasm Component)"), "{stdout}");
     assert!(stdout.contains("Component       "), "{stdout}");
+    assert!(stdout.contains("Capabilities     none"), "{stdout}");
 
     let tap = Tap::from_path(packaged).unwrap();
     assert!(tap.bundle.is_empty());

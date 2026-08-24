@@ -15,7 +15,7 @@ selected base directory.
 | --- | --- | --- |
 | `--template` | `http`, `worker`, `mcp`, `minimal` | Select generated application content. |
 | `--manifest-format` | `toml`, `json` | Select the manifest format. |
-| `--entry <path>` | Project-relative path | Override the generated application entry. |
+| `--entry <path>` | Project-relative non-Wasm path | Override the generated JavaScript application entry. `.wasm` is rejected because `init` does not yet generate Component projects. |
 | `--package-json` | `auto`, `create`, `reuse`, `none` | Control npm sidecar adoption. |
 | `--add-scripts` | Flag | Add Tysel scripts to a reused `package.json`. |
 | `--no-tests` | Flag | Do not create the starter test. |
@@ -25,6 +25,11 @@ selected base directory.
 
 `init` does not overwrite existing files silently. Use `--dry-run` in existing
 repositories and review the adoption plan before accepting it.
+
+For a Wasm Component, start from the repository's Rust or Go fixture and its
+checked-in manifest; follow the
+[Rust](../../guides/wasm-component-rust.md) or
+[Go](../../guides/wasm-component-go.md) guide instead of `tysel init`.
 
 ```sh
 tysel init api --template http --manifest-format toml --yes

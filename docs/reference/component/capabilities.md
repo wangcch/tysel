@@ -65,6 +65,11 @@ capability is an error. During local `tysel run`, Tysel derives the deployment
 grant from the manifest to make the checked project runnable; the built
 executable remains deployment-denied by default.
 
+For the Component profile, `tysel check` and `tysel inspect` list only
+filesystem requests under capabilities. HTTP, secrets, databases, LLM,
+WebSocket, and durable handlers appear under `Denied`; `tysel build` likewise
+omits them from its capability summary.
+
 ## Unimplemented WIT files
 
 The repository contains early `0.0.1` WIT sketches for HTTP, SQLite, LLM,

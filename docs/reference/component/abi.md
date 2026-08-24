@@ -57,8 +57,9 @@ or imports compatible.
 
 ## SDK dispatch
 
-The Rust and Go SDK helpers apply the same JSON and byte bounds before data
-crosses the canonical ABI:
+The host validates input before invocation. After the generated guest binding
+receives the string, the Rust and Go SDK helpers repeat the same JSON and byte
+bounds around handler decoding and result encoding:
 
 ```text
 JSON string → decode → typed/raw handler → encode → JSON string

@@ -296,6 +296,9 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
         Some(path) => path.to_path_buf(),
         None => root.join(&manifest.app.entry),
     };
+    manifest
+        .validate_entry_profile(&entry)
+        .with_context(|| format!("entry profile mismatch for {}", entry.display()))?;
     let (bundle, source_map) = tysel_build::read_bundle(&entry)
         .with_context(|| format!("failed to bundle {}", entry.display()))?;
     let parsed_source_map =
