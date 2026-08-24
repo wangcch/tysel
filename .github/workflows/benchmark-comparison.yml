@@ -13,6 +13,30 @@ on:
         required: false
         type: boolean
         default: false
+      record_arch:
+        description: Architecture to record or resume
+        required: false
+        type: choice
+        options:
+          - all
+          - x86_64
+          - arm64
+        default: all
+      record_cycles:
+        description: Space-separated record cycles to run (1 2 3)
+        required: false
+        type: string
+        default: "1 2 3"
+      record_seeds:
+        description: Space-separated order seeds to run (1 2 3 4)
+        required: false
+        type: string
+        default: "1 2 3 4"
+      record_finalize:
+        description: Aggregate all available cycles and enforce stability
+        required: false
+        type: boolean
+        default: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -119,6 +143,7 @@ jobs:
   record:
     if: ${{ inputs.record }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - labels: '["self-hosted","linux","x64","tysel-benchmark"]'
@@ -126,47 +151,156 @@ jobs:
           - labels: '["self-hosted","linux","arm64","tysel-benchmark"]'
             arch: arm64
     runs-on: ${{ fromJSON(matrix.labels) }}
+    env:
+      RECORD_ROOT: /home/actions/tysel-benchmark-records/${{ github.sha }}/${{ matrix.arch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: ${{ inputs.record_arch == 'all' || inputs.record_arch == matrix.arch }}
       - name: Provision locked peer runtimes
+        if: ${{ inputs.record_arch == 'all' || inputs.record_arch == matrix.arch }}
         shell: bash
         run: |
           tool_bin="$(benchmarks/comparison/provision-linux.sh)"
           echo "${tool_bin}" >> "${GITHUB_PATH}"
       - name: Install locked TypeScript 7 toolchain
+        if: ${{ inputs.record_arch == 'all' || inputs.record_arch == matrix.arch }}
         run: npm exec --yes --package=pnpm@11.5.0 -- pnpm install --frozen-lockfile
       - name: Enforce fixed-runner contract
+        if: ${{ inputs.record_arch == 'all' || inputs.record_arch == matrix.arch }}
         run: >-
           benchmarks/comparison/runner-doctor-linux.sh --strict
           --output target/benchmark-comparison/runner-doctor-${{ matrix.arch }}.json
-      - name: Record three four-seed cycles
+      - name: Prepare record checkpoint
+        id: prepare_record
+        if: ${{ inputs.record_arch == 'all' || inputs.record_arch == matrix.arch }}
         shell: bash
+        env:
+          RECORD_CYCLES: ${{ inputs.record_cycles }}
+          RECORD_SEEDS: ${{ inputs.record_seeds }}
         run: |
           set -euo pipefail
-          for cycle in 1 2 3; do
-            for seed in 1 2 3 4; do
-              cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-compare -- \
-                --order-seed "${seed}" \
-                --output "target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-cycle${cycle}-seed${seed}.json"
+
+          validate_selection() {
+            local label="$1"
+            local selection="$2"
+            local maximum="$3"
+            local value
+            [[ -n "${selection}" ]] || { echo "${label} selection is empty" >&2; return 1; }
+            for value in ${selection}; do
+              [[ "${value}" =~ ^[0-9]+$ ]] && (( value >= 1 && value <= maximum )) || {
+                echo "invalid ${label}: ${value}" >&2
+                return 1
+              }
             done
-            cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-report -- \
-              --input target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-cycle${cycle}-seed*.json \
-              --output "target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle${cycle}.json"
+          }
+
+          validate_selection cycle "${RECORD_CYCLES}" 3
+          validate_selection seed "${RECORD_SEEDS}" 4
+          mkdir -p "${RECORD_ROOT}"
+          cp "target/benchmark-comparison/runner-doctor-${{ matrix.arch }}.json" "${RECORD_ROOT}/"
+          for cycle in ${RECORD_CYCLES}; do
+            echo "cycle_${cycle}=true" >> "${GITHUB_OUTPUT}"
+            rm -f "${RECORD_ROOT}/summary-v1-${{ matrix.arch }}-cycle${cycle}.json"
           done
-      - name: Enforce cycle stability
+          rm -f "${RECORD_ROOT}/stability-v1-${{ matrix.arch }}.json"
+      - name: Record or resume cycle 1
+        id: record_cycle_1
+        if: >-
+          ${{ (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
+              steps.prepare_record.outputs.cycle_1 == 'true' }}
         run: >-
-          cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-stability --
-          --input target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle1.json
-          target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle2.json
-          target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle3.json
-          --output target/benchmark-comparison/stability-v1-${{ matrix.arch }}.json
-          --fail-on-unstable
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          bash benchmarks/comparison/record-cycle-linux.sh
+          --arch "${{ matrix.arch }}" --cycle 1
+          --seeds "${{ inputs.record_seeds }}" --record-root "${RECORD_ROOT}"
+      - name: Upload cycle 1 checkpoint
+        if: >-
+          ${{ always() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
+              steps.prepare_record.outcome == 'success' && steps.record_cycle_1.outcome != 'skipped' &&
+              steps.prepare_record.outputs.cycle_1 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: comparison-record-${{ matrix.arch }}
+          name: comparison-record-${{ matrix.arch }}-cycle1-attempt${{ github.run_attempt }}
           path: |
-            target/benchmark-comparison/comparison-v1-${{ matrix.arch }}-cycle*-seed*.*
-            target/benchmark-comparison/summary-v1-${{ matrix.arch }}-cycle*.*
-            target/benchmark-comparison/stability-v1-${{ matrix.arch }}.json
-            target/benchmark-comparison/runner-doctor-${{ matrix.arch }}.json
+            ${{ env.RECORD_ROOT }}/comparison-v1-${{ matrix.arch }}-cycle1-seed*.json
+            ${{ env.RECORD_ROOT }}/summary-v1-${{ matrix.arch }}-cycle1.json
+            ${{ env.RECORD_ROOT }}/runner-doctor-${{ matrix.arch }}.json
+          if-no-files-found: error
+      - name: Record or resume cycle 2
+        id: record_cycle_2
+        if: >-
+          ${{ success() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
+              steps.prepare_record.outputs.cycle_2 == 'true' }}
+        run: >-
+          bash benchmarks/comparison/record-cycle-linux.sh
+          --arch "${{ matrix.arch }}" --cycle 2
+          --seeds "${{ inputs.record_seeds }}" --record-root "${RECORD_ROOT}"
+      - name: Upload cycle 2 checkpoint
+        if: >-
+          ${{ always() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
+              steps.prepare_record.outcome == 'success' && steps.record_cycle_2.outcome != 'skipped' &&
+              steps.prepare_record.outputs.cycle_2 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: comparison-record-${{ matrix.arch }}-cycle2-attempt${{ github.run_attempt }}
+          path: |
+            ${{ env.RECORD_ROOT }}/comparison-v1-${{ matrix.arch }}-cycle2-seed*.json
+            ${{ env.RECORD_ROOT }}/summary-v1-${{ matrix.arch }}-cycle2.json
+            ${{ env.RECORD_ROOT }}/runner-doctor-${{ matrix.arch }}.json
+          if-no-files-found: error
+      - name: Record or resume cycle 3
+        id: record_cycle_3
+        if: >-
+          ${{ success() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
+              steps.prepare_record.outputs.cycle_3 == 'true' }}
+        run: >-
+          bash benchmarks/comparison/record-cycle-linux.sh
+          --arch "${{ matrix.arch }}" --cycle 3
+          --seeds "${{ inputs.record_seeds }}" --record-root "${RECORD_ROOT}"
+      - name: Upload cycle 3 checkpoint
+        if: >-
+          ${{ always() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
+              steps.prepare_record.outcome == 'success' && steps.record_cycle_3.outcome != 'skipped' &&
+              steps.prepare_record.outputs.cycle_3 == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: comparison-record-${{ matrix.arch }}-cycle3-attempt${{ github.run_attempt }}
+          path: |
+            ${{ env.RECORD_ROOT }}/comparison-v1-${{ matrix.arch }}-cycle3-seed*.json
+            ${{ env.RECORD_ROOT }}/summary-v1-${{ matrix.arch }}-cycle3.json
+            ${{ env.RECORD_ROOT }}/runner-doctor-${{ matrix.arch }}.json
+          if-no-files-found: error
+      - name: Enforce cycle stability
+        if: >-
+          ${{ success() && inputs.record_finalize &&
+              (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          output="${RECORD_ROOT}/stability-v1-${{ matrix.arch }}.json"
+          temporary="${output}.tmp"
+          rm -f "${output}" "${temporary}"
+          set +e
+          cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-stability -- \
+            --input "${RECORD_ROOT}/summary-v1-${{ matrix.arch }}-cycle1.json" \
+            "${RECORD_ROOT}/summary-v1-${{ matrix.arch }}-cycle2.json" \
+            "${RECORD_ROOT}/summary-v1-${{ matrix.arch }}-cycle3.json" \
+            --output "${temporary}" \
+            --fail-on-unstable
+          status=$?
+          set -e
+          if [[ -s "${temporary}" ]]; then
+            mv "${temporary}" "${output}"
+          fi
+          exit "${status}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: >-
+          ${{ always() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
+              steps.prepare_record.outcome == 'success' }}
+        with:
+          name: comparison-record-${{ matrix.arch }}-snapshot-attempt${{ github.run_attempt }}
+          path: |
+            ${{ env.RECORD_ROOT }}/comparison-v1-${{ matrix.arch }}-cycle*-seed*.*
+            ${{ env.RECORD_ROOT }}/summary-v1-${{ matrix.arch }}-cycle*.*
+            ${{ env.RECORD_ROOT }}/stability-v1-${{ matrix.arch }}.json
+            ${{ env.RECORD_ROOT }}/runner-doctor-${{ matrix.arch }}.json
           if-no-files-found: error

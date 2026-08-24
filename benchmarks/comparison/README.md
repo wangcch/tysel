@@ -90,6 +90,16 @@ cargo run --locked --release -p tysel-bench-compare --bin tysel-bench-stability 
   --fail-on-unstable
 ```
 
+The GitHub Actions record job checkpoints evidence outside the checkout under
+`/home/actions/tysel-benchmark-records/<commit>/<architecture>` and uploads a
+remote checkpoint after every completed cycle. Seed and summary files are
+atomically replaced, and stale stability evidence is removed before a resume.
+Set `record_arch`, `record_cycles`, and `record_seeds` when resuming. A
+stability failure should normally rerun all four seeds of the outlying cycle;
+rerun a single seed only when the original execution itself failed before
+producing valid evidence. Matrix fail-fast is disabled so a failure on one
+architecture does not cancel the other.
+
 For internal regression analysis, compare the new summary with a prior summary
 from the same fixed host. The gate defaults to Tysel metrics only; peer changes
 remain visible as environmental controls:

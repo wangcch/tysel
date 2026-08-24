@@ -90,6 +90,18 @@ fn run(cli: Cli) -> Result<()> {
     json.push(b'\n');
     fs::write(&output, json).with_context(|| format!("write {}", output.display()))?;
     println!("Stability {}", output.display());
+    for check in evidence.checks.iter().filter(|check| !check.stable) {
+        eprintln!(
+            "unstable: runtime={} metric={} workload={} concurrency={} values={:?} spread={:.2}% threshold={:.2}%",
+            check.runtime,
+            check.metric,
+            check.workload,
+            check.concurrency,
+            check.values,
+            check.relative_spread_pct,
+            check.threshold_pct
+        );
+    }
     ensure!(!cli.fail_on_unstable || stable, "record cycles are unstable");
     Ok(())
 }
