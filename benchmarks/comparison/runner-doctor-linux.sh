@@ -174,7 +174,7 @@ if [[ "${strict}" == true ]]; then
     echo "CPU governor must be performance in strict mode" >&2
     exit 1
   fi
-  if ! awk -v load="${load_average_1m}" -v cpus="${logical_cpus}" 'BEGIN { exit !(load / cpus < 0.25) }'; then
+  if ! awk -v load_avg="${load_average_1m}" -v cpus="${logical_cpus}" 'BEGIN { exit !(load_avg / cpus < 0.25) }'; then
     echo "runner load is too high for strict mode: ${load_average_1m} / ${logical_cpus} CPUs" >&2
     exit 1
   fi
