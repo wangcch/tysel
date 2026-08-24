@@ -31,17 +31,22 @@ parameters and result above. Validation rejects:
 - a Core WebAssembly module instead of a Component binary;
 - a Component without `run`;
 - additional or different `run` parameters and results;
-- an incompatible Component ABI version;
 - malformed or oversized JSON at the host boundary.
 
 File extension alone is not validation. A `.wasm` path selects the Component
 build path, after which Tysel parses and validates the Component Model binary.
 
+The host validates the exported function structurally. A top-level Component
+function does not retain the source WIT package identity, so Tysel cannot
+distinguish another package or version that produces the exact same `run`
+shape. The `0.4.0` value recorded in a Tysel package identifies the contract
+used by its packager; it is not independently extracted from the guest.
+
 ## Version compatibility
 
 | Contract | Current value | Compatibility rule |
 | --- | --- | --- |
-| Component task ABI | `0.4.0` | The packaged component must match the runtime ABI version. |
+| Component task ABI | `0.4.0` | The host requires the exact `run` shape above; the packager records this contract version. |
 | Filesystem capability ABI | `0.4.0` | Only the exact implemented imports are admitted. |
 | Restricted WASI imports | `0.2.x` | Only the allowlisted language-runtime interfaces are accepted. |
 

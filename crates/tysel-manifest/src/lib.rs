@@ -326,6 +326,22 @@ impl Manifest {
         out
     }
 
+    /// Require the effective entry kind to agree with the manifest execution
+    /// profile. CLI entry overrides call this again after resolving their path.
+    pub fn validate_entry_profile(&self, entry: &Path) -> Result<(), ManifestError> {
+        let is_component =
+            entry.extension().and_then(|extension| extension.to_str()) == Some("wasm");
+        match (self.app.profile.as_str(), is_component) {
+            ("component", false) => Err(ManifestError::Invalid(
+                "app.profile = \"component\" requires a .wasm entry".into(),
+            )),
+            (profile, true) if profile != "component" => Err(ManifestError::Invalid(
+                ".wasm entry requires app.profile = \"component\"".into(),
+            )),
+            _ => Ok(()),
+        }
+    }
+
     fn validate(&self) -> Result<(), ManifestError> {
         if self.schema_version != 1 {
             return Err(ManifestError::Invalid(format!(
@@ -371,6 +387,7 @@ impl Manifest {
                 self.app.profile
             )));
         }
+        self.validate_entry_profile(Path::new(&self.app.entry))?;
         validate_string_set("permissions.fetch", &self.permissions.fetch)?;
         validate_string_set("permissions.secrets", &self.permissions.secrets)?;
         for (operation, roots) in
@@ -671,6 +688,7 @@ compatibility_flag = true
 [app]
 name = "fs-policy"
 entry = "app.wasm"
+profile = "component"
 "#,
         )
         .unwrap();
@@ -760,6 +778,65 @@ workers = 2
         )
         .unwrap_err();
         assert!(isolated.to_string().contains("requires app.profile"));
+    }
+
+    #[test]
+    fn component_profile_and_wasm_entry_must_match() {
+        let wasm_service = Manifest::parse(
+            r#"
+[app]
+name = "mislabeled-wasm"
+entry = "app.wasm"
+profile = "service"
+"#,
+        )
+        .unwrap_err();
+        assert!(wasm_service.to_string().contains("requires app.profile = \"component\""));
+
+        let component_javascript = Manifest::parse(
+            r#"
+[app]
+name = "mislabeled-js"
+entry = "src/index.js"
+profile = "component"
+"#,
+        )
+        .unwrap_err();
+        assert!(component_javascript.to_string().contains("requires a .wasm entry"));
+
+        let service = Manifest::parse(
+            r#"
+[app]
+name = "service-override"
+entry = "src/index.js"
+profile = "service"
+"#,
+        )
+        .unwrap();
+        assert!(
+            service
+                .validate_entry_profile(Path::new("override.wasm"))
+                .unwrap_err()
+                .to_string()
+                .contains("requires app.profile = \"component\"")
+        );
+
+        let component = Manifest::parse(
+            r#"
+[app]
+name = "component-override"
+entry = "app.wasm"
+profile = "component"
+"#,
+        )
+        .unwrap();
+        assert!(
+            component
+                .validate_entry_profile(Path::new("override.js"))
+                .unwrap_err()
+                .to_string()
+                .contains("requires a .wasm entry")
+        );
     }
 
     #[test]
@@ -965,6 +1042,14 @@ steps = [["check", "-C/tmp/other-project"]]
         assert!(schema["properties"]["tasks"].is_object());
         assert_eq!(schema["properties"]["server"]["properties"]["workers"]["default"], 1);
         assert_eq!(schema["properties"]["server"]["properties"]["workers"]["maximum"], 64);
+        assert_eq!(
+            schema["properties"]["app"]["allOf"][0]["then"]["properties"]["profile"]["const"],
+            "component"
+        );
+        assert_eq!(
+            schema["properties"]["app"]["allOf"][1]["then"]["properties"]["entry"]["pattern"],
+            r"\.wasm$"
+        );
 
         let entry_pattern = schema["properties"]["app"]["properties"]["entry"]["pattern"]
             .as_str()

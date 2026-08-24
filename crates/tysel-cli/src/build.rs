@@ -36,6 +36,9 @@ pub fn run(
     }
     let root = manifest_path.parent().unwrap_or(Path::new("."));
     let entry = entry.unwrap_or_else(|| root.join(&manifest.app.entry));
+    manifest
+        .validate_entry_profile(&entry)
+        .with_context(|| format!("entry profile mismatch for {}", entry.display()))?;
     if !entry.is_file() {
         return Err(anyhow!("entry not found: {}", entry.display()));
     }

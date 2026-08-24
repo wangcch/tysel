@@ -13,7 +13,7 @@ generated bindings share a source revision. Install:
 - Bytecode Alliance `componentize-go` `0.4.1`.
 
 ```sh
-go install github.com/bytecodealliance/componentize-go/cmd/componentize-go@v0.4.1
+go install github.com/bytecodealliance/componentize-go@v0.4.1
 cargo build --locked --release \
   -p tysel-cli --bin tysel \
   -p tysel-runtime --bin tysel-service

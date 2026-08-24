@@ -275,6 +275,33 @@ profile = "component"
 }
 
 #[test]
+fn build_rejects_a_wasm_override_for_a_service_profile() {
+    let dir = temp_js_app("build-component-profile-mismatch");
+    let component = dir.join("override.wasm");
+    fs::write(&component, echo_component()).unwrap();
+    let stub = dir.join("tysel-service");
+    fs::write(&stub, b"stub-runtime").unwrap();
+
+    let output = Command::new(cli_exe())
+        .args([
+            "build",
+            component.to_str().unwrap(),
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--stub",
+            stub.to_str().unwrap(),
+        ])
+        .output()
+        .expect("build with mismatched Component override");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains(".wasm entry requires app.profile = \"component\"")
+    );
+}
+
+#[test]
 fn build_strips_typescript_and_embeds_original_source() {
     let dir = std::env::temp_dir().join(format!("tysel-cli-build-ts-{}", std::process::id()));
     fs::create_dir_all(dir.join("src")).unwrap();

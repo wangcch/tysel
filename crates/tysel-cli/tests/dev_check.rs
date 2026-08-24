@@ -35,6 +35,30 @@ profile = "component"
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "{\"value\":42}\n");
 }
 
+#[test]
+fn run_rejects_a_wasm_override_for_a_service_profile() {
+    let dir = temp_app("run-component-profile-mismatch");
+    write_js_app(&dir, "export default { fetch() { return new Response('ok'); } };\n");
+    let component = dir.join("override.wasm");
+    fs::write(&component, echo_component()).unwrap();
+
+    let output = Command::new(cli_exe())
+        .args([
+            "run",
+            component.to_str().unwrap(),
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+        ])
+        .output()
+        .expect("run tysel with mismatched Component override");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains(".wasm entry requires app.profile = \"component\"")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn mcp_stdio_discovers_lists_and_executes_a_tool() {

@@ -18,7 +18,9 @@ host-capability boundary; it is not only an optimization preset.
 For the `component` profile, use a `.wasm` Component Model binary implementing
 `tysel:component/task@0.4.0`. Core Wasm modules are rejected. The application
 is a one-shot stdin/stdout task, so listener and WebSocket fields do not create
-an HTTP service; `server.workers` must remain `1`.
+an HTTP service; `server.workers` must remain `1`. A `.wasm` entry requires the
+`component` profile, and that profile requires a `.wasm` entry. The same check
+applies when a CLI command receives an explicit `ENTRY` override.
 
 ```toml
 [app]

@@ -91,6 +91,9 @@ fn component_entry(
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let root = manifest_path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let entry = entry.map(Path::to_path_buf).unwrap_or_else(|| root.join(&manifest.app.entry));
+    manifest
+        .validate_entry_profile(&entry)
+        .with_context(|| format!("entry profile mismatch for {}", entry.display()))?;
     if entry.extension().and_then(|extension| extension.to_str()) == Some("wasm") {
         Ok(Some((manifest, root, entry)))
     } else {

@@ -2,7 +2,7 @@
 
 Reference pages describe exact interfaces: accepted values, defaults, side
 effects, errors, and stability boundaries. The public website publishes this
-section at `/reference` so contracts stay separate from guides. Start with a
+section at `/docs/reference/` so contracts stay separate from guides. Start with a
 [guide](../guides/index.md) when you want a workflow rather than a contract.
 
 ## Browse by surface

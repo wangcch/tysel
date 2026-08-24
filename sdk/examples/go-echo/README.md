@@ -7,7 +7,7 @@ depend on regenerating bindings.
 Generate bindings and build with the pinned `componentize-go` release:
 
 ```sh
-go install github.com/bytecodealliance/componentize-go/cmd/componentize-go@v0.4.1
+go install github.com/bytecodealliance/componentize-go@v0.4.1
 componentize-go -d ../../../wit/component -w task bindings
 componentize-go -d ../../../wit/component -w task build -o echo.component.wasm
 ```

@@ -14,8 +14,7 @@ partial, and intentionally excluded behavior for every global.
 | Security | `crypto.getRandomValues`, supported `crypto.subtle` digest and HMAC operations |
 | Realtime | inbound and outbound `WebSocket` subsets |
 
-The public website generates one page per API directly from the inventory. The
-complete support and exclusion matrix, plus ownership and test evidence, is in
+The complete support and exclusion matrix, plus ownership and test evidence, is in
 [JavaScript runtime compatibility](../../architecture/javascript-runtime-compatibility.md).
 
 `partial` is a supported subset, not a promise that undocumented browser

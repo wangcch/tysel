@@ -26,7 +26,28 @@
           "enum": ["service", "isolated", "component"],
           "default": "service"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["entry"],
+            "properties": { "entry": { "pattern": "\\.wasm$" } }
+          },
+          "then": {
+            "required": ["profile"],
+            "properties": { "profile": { "const": "component" } }
+          }
+        },
+        {
+          "if": {
+            "required": ["profile"],
+            "properties": { "profile": { "const": "component" } }
+          },
+          "then": {
+            "properties": { "entry": { "pattern": "\\.wasm$" } }
+          }
+        }
+      ]
     },
     "server": {
       "type": "object",
