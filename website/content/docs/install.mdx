@@ -19,7 +19,7 @@ installation.
 Install the latest published release on Linux or macOS (x64 or arm64):
 
 ```sh
-curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
+curl -fsSL https://tysel.dev/install.sh | sh
 ```
 
 The managed installation does not require Rust, Node.js, npm, administrator
@@ -50,19 +50,19 @@ also vendors the SDK for version-matched and offline builds.
 Select an immutable published version:
 
 ```sh
-curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh -s -- --version VERSION
+curl -fsSL https://tysel.dev/install.sh | sh -s -- --version VERSION
 ```
 
 Preview target, paths, and URLs without changing the machine:
 
 ```sh
-curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh -s -- --dry-run
+curl -fsSL https://tysel.dev/install.sh | sh -s -- --dry-run
 ```
 
 Use another absolute managed root or leave shell startup files untouched:
 
 ```sh
-curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh -s -- \
+curl -fsSL https://tysel.dev/install.sh | sh -s -- \
   --prefix "$HOME/Tools/tysel" --no-modify-path
 ```
 

@@ -35,7 +35,7 @@ isolated plugins, and durable agents.
 Install the latest published release on Linux or macOS:
 
 ```sh
-curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
+curl -fsSL https://tysel.dev/install.sh | sh
 tysel doctor --install
 ```
 

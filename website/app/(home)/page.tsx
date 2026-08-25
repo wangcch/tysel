@@ -79,8 +79,8 @@ export default function HomePage() {
                 Read the docs
               </Link>
             </div>
-            <div className="mt-10">
-              <InstallPanel compact />
+            <div className="mt-8">
+              <InstallPanel />
             </div>
           </div>
           <div className="home-fade-up home-fade-up-delay">
