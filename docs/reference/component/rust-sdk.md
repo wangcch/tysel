@@ -1,8 +1,16 @@
 # Rust Component SDK
 
-Status: **experimental and workspace-local**. `tysel-component-sdk` is not yet
-published as a stable crates.io dependency. Use the SDK and WIT files from the
-same Tysel source revision as the runtime.
+Status: **experimental and versioned**. For a Rust Component project, use the
+published crate that matches the installed Tysel minor release:
+
+```toml
+tysel-component-sdk = "0.1.0"
+```
+
+The release starter is also self-contained: it vendors the same SDK version and
+uses `tysel-component-sdk = { path = "sdk/tysel-component-sdk" }`. Use the
+crates.io dependency for your own project, or keep the vendored path dependency
+when reproducible or offline starter builds are more important.
 
 ## Guest interface
 
@@ -30,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use tysel_component_sdk::{dispatch, Task};
 
 wit_bindgen::generate!({
-    path: "../../../wit/component",
+    path: "wit/component",
     world: "task",
 });
 
@@ -62,7 +70,7 @@ impl Guest for Component {
 export!(Component);
 ```
 
-The repository fixture pins `wit-bindgen` `0.57.1` and builds a
+The release starter pins `wit-bindgen` `0.57.1` and builds a
 `wasm32-unknown-unknown` core module before wrapping it as a Component with
 `wasm-tools` `1.247.0`. These are verified fixture versions, not an open-ended
 toolchain compatibility promise.

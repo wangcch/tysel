@@ -5,12 +5,17 @@ set -euo pipefail
 : "${TYSEL_LLM_MODEL:?set TYSEL_LLM_MODEL to the provider model}"
 : "${OPENAI_API_KEY:?set OPENAI_API_KEY to the provider credential}"
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-manifest="$repo_dir/examples/durable-agent/tysel.toml"
-binary="$repo_dir/target/debug/tysel"
+example_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+manifest="$example_dir/tysel.toml"
+binary="${TYSEL_BIN:-tysel}"
 base_url="http://127.0.0.1:3000"
 log_file="${TMPDIR:-/tmp}/tysel-durable-agent-$$.log"
 app_pid=""
+
+command -v "$binary" >/dev/null 2>&1 || {
+  echo "Tysel is not installed or is not on PATH" >&2
+  exit 1
+}
 
 cleanup() {
   if [[ -n "$app_pid" ]] && kill -0 "$app_pid" 2>/dev/null; then
@@ -49,8 +54,7 @@ stop_app() {
   app_pid=""
 }
 
-cd "$repo_dir"
-cargo build --quiet -p tysel-cli
+cd "$example_dir"
 
 echo "1/5 Starting Tysel and calling the LLM"
 start_app
@@ -58,15 +62,22 @@ started="$(curl --silent --fail \
   --request POST "$base_url/runs" \
   --header 'content-type: application/json' \
   --data '{"customerId":"customer-42","prompt":"Summarize this account in one sentence"}')"
-run_id="$(RUN_JSON="$started" node -e 'process.stdout.write(JSON.parse(process.env.RUN_JSON).runId)')"
+run_id="$(printf '%s\n' "$started" \
+  | sed -E 's/.*"runId"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+[[ -n "$run_id" && "$run_id" != "$started" ]] || {
+  echo "Response did not contain runId: $started" >&2
+  exit 1
+}
 echo "$started"
 
 echo "2/5 Confirming the task is suspended for human approval"
 waiting="$(curl --silent --fail "$base_url/runs/$run_id")"
-RUN_JSON="$waiting" node -e '
-  const run = JSON.parse(process.env.RUN_JSON);
-  if (run.status !== "awaiting_approval") throw new Error(JSON.stringify(run));
-'
+waiting_status="$(printf '%s\n' "$waiting" \
+  | sed -E 's/.*"status"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+[[ "$waiting_status" == "awaiting_approval" ]] || {
+  echo "Expected awaiting_approval: $waiting" >&2
+  exit 1
+}
 echo "$waiting"
 
 echo "3/5 Stopping the process and starting a fresh process"
@@ -83,13 +94,14 @@ echo
 echo "5/5 Waiting for the replayed task to save its result exactly once"
 for _ in {1..100}; do
   current="$(curl --silent --fail "$base_url/runs/$run_id")"
-  status="$(RUN_JSON="$current" node -e 'process.stdout.write(JSON.parse(process.env.RUN_JSON).status)')"
+  status="$(printf '%s\n' "$current" \
+    | sed -E 's/.*"status"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
   if [[ "$status" == "completed" ]]; then
-    RUN_JSON="$current" node -e '
-      const run = JSON.parse(process.env.RUN_JSON);
-      if (run.saveCount !== 1) throw new Error(`expected saveCount=1: ${JSON.stringify(run)}`);
-      console.log(JSON.stringify(run, null, 2));
-    '
+    printf '%s\n' "$current" | grep -Eq '"saveCount"[[:space:]]*:[[:space:]]*1([,}])' || {
+      echo "Expected saveCount=1: $current" >&2
+      exit 1
+    }
+    echo "$current"
     echo "Durable Agent Golden Path completed."
     exit 0
   fi

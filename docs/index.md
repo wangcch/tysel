@@ -21,9 +21,7 @@ Browse the [task-oriented guide map](guides/index.md), the
 
 ## Five-minute path
 
-Tysel has not published a tagged binary release yet, so first follow the
-[source installation](install.md#current-availability). Then create and run a
-small service:
+After [installing Tysel](install.md), create and run a small service:
 
 ```sh
 tysel init hello-tysel --yes

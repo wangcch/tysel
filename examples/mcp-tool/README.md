@@ -7,14 +7,10 @@ supervisor and is never returned to the tool caller.
 
 ## Run the stdio demonstration
 
-Build the CLI and worker from the repository root, then enter this example
-directory:
+Install Tysel, then run these commands from the example directory:
 
 ```bash
-cargo build -p tysel-cli -p tysel-isolate --bin tysel --bin tysel-worker
-export PATH="$PWD/target/debug:$PATH"
-export TYSEL_WORKER="$PWD/target/debug/tysel-worker"
-cd examples/mcp-tool
+tysel doctor --install
 tysel config validate
 ```
 
@@ -31,7 +27,8 @@ printf '%s\n' \
   | tysel mcp
 ```
 
-The absolute `TYSEL_WORKER` path remains valid from the example directory.
+The managed installation includes the matching `tysel-worker`; no separate
+worker build or environment variable is required.
 
 The tool result contains `customerId`, `isolated: true`, and the opaque handle
 `secret:OPENAI_API_KEY`; it must not contain `sk-demo-must-not-appear`.
@@ -40,7 +37,7 @@ Input validation is derived from `input: { customerId: "string" }`. Missing,
 mistyped, or additional arguments produce an MCP tool error. An unknown tool
 produces JSON-RPC error `-32602` without invoking application code.
 
-## Automated acceptance
+## Maintainer acceptance (source checkout only)
 
 ```bash
 cargo test -p tysel-cli --test examples mcp_tool_covers_stdio_contract_and_opaque_secrets

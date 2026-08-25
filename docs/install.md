@@ -1,6 +1,6 @@
 # Install Tysel
 
-Tysel's developer toolchain contains three native executables from one release:
+A Tysel installation contains three native executables from one release:
 
 - `tysel` — CLI;
 - `tysel-service` — native service runtime and build stub;
@@ -9,34 +9,9 @@ Tysel's developer toolchain contains three native executables from one release:
 Install and upgrade them as one unit. Copying only `tysel` produces an incomplete
 installation.
 
-## Current availability
+## Install
 
-Tysel has not published a tagged binary release yet. The current installation
-path is a source build with Rust, Node.js 22+, pnpm 11+, and the pinned
-workspace dependencies:
-
-```sh
-git clone https://github.com/wangcch/tysel.git
-cd tysel
-pnpm install
-cargo build --locked --release \
-  -p tysel-cli --bin tysel \
-  -p tysel-runtime --bin tysel-service \
-  -p tysel-isolate --bin tysel-worker
-export PATH="$PWD/target/release:$PATH"
-tysel doctor
-```
-
-Keep all three binaries together. Doctor reports this as an unmanaged source
-installation.
-
-## Managed installer
-
-The managed installer is implemented for Linux and macOS on x64 and arm64, but
-the `latest` URL becomes usable only after the first tagged release publishes
-`install.sh` and signed platform archives.
-
-After that release exists, the install command will be:
+Install the latest published release on Linux or macOS (x64 or arm64):
 
 ```sh
 curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
@@ -55,14 +30,19 @@ tysel check
 tysel test
 ```
 
-Node.js is optional after a managed installation. Once the matching npm
-packages are published, generated dependencies provide editor declarations and
-compiler feedback; the native runtime and packaged production executable do
-not need `node_modules`.
+The matching `@tysel/types` and `@tysel/test` packages are published with each
+native release. Installing those optional development dependencies provides
+editor declarations and compiler feedback; Tysel commands and packaged
+production executables do not require Node.js or `node_modules`.
+
+Rust Wasm Component projects can depend on the matching
+`tysel-component-sdk` crate from crates.io. It is a guest development library,
+not part of the native Tysel installation. The signed Component starter bundle
+also vendors the SDK for version-matched and offline builds.
 
 ## Installer options
 
-After releases are available, select an immutable version:
+Select an immutable published version:
 
 ```sh
 curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh -s -- --version VERSION
@@ -167,34 +147,14 @@ upgrade rotates `trust.json` in the same rollback transaction. Systems that stay
 offline beyond the installed policy's validity window must reinstall from the
 official HTTPS bootstrap.
 
-Release-key rotation uses a bounded overlap ceremony. The transition release
-contains the new active key and the previous retired key, and its trust policy
-is signed by the previous key so installed clients can authenticate the change.
-Release metadata and archives are signed by the new key. Keep
-`TYSEL_RELEASE_PREVIOUS_KEY_HEX` configured for the transition release; remove
-it only after the overlap window when the new key can sign the next policy by
-itself. The repository variables `TYSEL_RELEASE_KEY_VALID_FROM_UNIX` and, during
-rotation, `TYSEL_RELEASE_PREVIOUS_KEY_VALID_FROM_UNIX` record each key's original
-inception time. `TYSEL_RELEASE_PREVIOUS_KEY_VALID_UNTIL_UNIX` records the fixed
-retirement deadline. None of these values may be reset or extended on a later
-release. The workflow compares every new policy with the currently published
-policy and rejects replay, status regression, deadline changes, and premature
-key removal. Clients that miss the complete window must reinstall from the
-official bootstrap. A compromised signing key still requires suspending
-publication and an out-of-band bootstrap recovery; rotation is not a substitute
-for an offline root of trust.
-
 ## Security boundary
 
-The preview bootstrap model uses HTTPS plus the release SHA-256 before executing
+The bootstrap model uses HTTPS plus the release SHA-256 before executing
 the downloaded CLI. The checksum detects corruption but does not independently
 protect against compromise of the HTTPS distribution origin. The installer then
 stores a validated Ed25519 trust policy; `tysel upgrade` requires signed trust,
-channel, manifest, and archive metadata. Stable publication accepts only final
-`MAJOR.MINOR.PATCH` tags. CI first stages and verifies a draft release, then
-publishes matching `@tysel/types` and `@tysel/test` artifacts, and only then
-makes the complete GitHub Release public. Prereleases therefore cannot advance
-the stable pointer, and native releases cannot generate projects whose matching
-npm contracts are unavailable.
+channel, manifest, and archive metadata. Stable channels resolve only final
+`MAJOR.MINOR.PATCH` releases, and every native release is paired with matching
+`@tysel/types`, `@tysel/test`, and `tysel-component-sdk` packages.
 
 Windows native archives are not currently supported. Use WSL on Windows.

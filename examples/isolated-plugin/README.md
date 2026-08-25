@@ -7,20 +7,16 @@ network or filesystem authority.
 
 ## Run
 
-Build the CLI and worker from the repository root, expose their absolute paths,
-then enter this example directory:
+Install Tysel, then run these commands from the example directory:
 
 ```bash
-cargo build -p tysel-cli -p tysel-isolate --bin tysel --bin tysel-worker
-export PATH="$PWD/target/debug:$PATH"
-export TYSEL_WORKER="$PWD/target/debug/tysel-worker"
-cd examples/isolated-plugin
+tysel doctor --install
 tysel config validate
 tysel run
 ```
 
-The worker path remains valid after entering the project directory because it
-was exported as an absolute path.
+The managed installation includes the matching `tysel-worker`; no separate
+worker build or environment variable is required.
 
 The command prints the selected address as `tysel listen HOST:PORT`. Use it in
 the following requests:
@@ -53,7 +49,7 @@ the embedded handler. Linux additionally applies the documented Landlock,
 seccomp, rlimit, and best-effort cgroup controls; macOS is a development check,
 not the production sandbox gate.
 
-## Automated acceptance
+## Maintainer acceptance (source checkout only)
 
 ```bash
 cargo test -p tysel-cli --test examples isolated_plugin_enforces_profile_and_recovers

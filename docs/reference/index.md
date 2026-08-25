@@ -23,16 +23,16 @@ or the sections below to jump to a contract page.
 | Module | Description |
 | --- | --- |
 | [JavaScript APIs](javascript/index.md) | Index and compatibility inventory |
-| [fetch](javascript/fetch.md) | Allowlisted outbound HTTP |
-| [Request and Response](javascript/request.md) | Web-standard message types |
-| [Headers](javascript/headers.md) | Case-insensitive header map |
-| [URL](javascript/url.md) | URL and URLSearchParams |
-| [WebSocket](javascript/websocket.md) | Client and server socket subset |
-| [Crypto](javascript/crypto.md) | Web Crypto subset |
-| [Timers](javascript/timers.md) | setTimeout and setInterval |
-| [Event](javascript/event.md) | Event and EventTarget |
-| [AbortController](javascript/abortcontroller.md) | AbortSignal for fetch and tasks |
-| [TextEncoder](javascript/textencoder.md) | UTF-8 encode and decode |
+| [fetch](https://tysel.dev/reference/javascript/fetch) | Allowlisted outbound HTTP |
+| [Request and Response](https://tysel.dev/reference/javascript/request) | Web-standard message types |
+| [Headers](https://tysel.dev/reference/javascript/headers) | Case-insensitive header map |
+| [URL](https://tysel.dev/reference/javascript/url) | URL and URLSearchParams |
+| [WebSocket](https://tysel.dev/reference/javascript/websocket) | Client and server socket subset |
+| [Crypto](https://tysel.dev/reference/javascript/crypto) | Web Crypto subset |
+| [Timers](https://tysel.dev/reference/javascript/timers) | setTimeout and setInterval |
+| [Event](https://tysel.dev/reference/javascript/event) | Event and EventTarget |
+| [AbortController](https://tysel.dev/reference/javascript/abortcontroller) | AbortSignal for fetch and tasks |
+| [TextEncoder](https://tysel.dev/reference/javascript/textencoder) | UTF-8 encode and decode |
 
 ## Wasm Components
 
@@ -61,7 +61,7 @@ or the sections below to jump to a contract page.
 
 | Module | Description |
 | --- | --- |
-| [Manifest](manifest/index.md) | Field index and validation |
+| [Manifest](manifest/index.md) | Complete configuration field index, defaults, constraints, templates, and validation |
 | [Application and server](manifest/app-server.md) | App identity and inbound server |
 | [Permissions](manifest/permissions.md) | Network, secrets, SQL, filesystem |
 | [Application limits](manifest/limits.md) | Body size, concurrency, timeouts |

@@ -4,28 +4,21 @@ This guide creates, tests, runs, and packages a small HTTP service.
 
 ## Prerequisites
 
-Tysel has not published a binary release yet. Build all three tools from source
-and add their directory to `PATH`:
+Install the latest published Tysel release, then verify the managed toolchain:
 
 ```sh
-git clone https://github.com/wangcch/tysel.git
-cd tysel
-pnpm install
-cargo build --locked --release \
-  -p tysel-cli --bin tysel \
-  -p tysel-runtime --bin tysel-service \
-  -p tysel-isolate --bin tysel-worker
-export PATH="$PWD/target/release:$PATH"
-tysel doctor
+curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
+tysel doctor --install
 ```
 
-See [Installation](install.md) for prerequisites and the managed install,
-upgrade, and rollback contract that activates after a tagged release exists.
+The installer includes everything required to create, run, test, and package a
+Tysel application. You do not need to clone the Tysel repository or install
+Rust, Node.js, or npm. See [Installation](install.md) for version pinning,
+upgrades, and rollback.
 
 ## Create a project
 
 ```sh
-cd ..
 tysel init hello-tysel
 cd hello-tysel
 ```
@@ -36,7 +29,7 @@ or minimal template, along with manifest/package/test choices. Use `--yes` to
 accept explicit choices without prompting or `--no-interactive` in automation;
 every prompt also has a corresponding command-line option.
 
-`init` creates:
+The recommended quick start creates one useful default combination:
 
 ```text
 hello-tysel/
@@ -47,19 +40,38 @@ hello-tysel/
 └── tysel.toml
 ```
 
-It checks all destinations before writing and does not overwrite existing
-files.
+This tree is not a required project model. Only one `tysel.toml` or
+`tysel.json` manifest and its configured application entry are required by
+Tysel. `package.json`, the compiler config, and tests can be included or
+omitted independently. `init` checks all destinations before writing and does
+not overwrite existing files.
 
-Choose JSON explicitly, preview changes, or omit a newly generated
-`package.json`:
+Choose the combination that fits the project:
 
 ```sh
+# Native-first TypeScript, tests included, no npm sidecar
+tysel init hello-native --package-json none --yes
+
+# Existing package, preserved; preview the separate Tysel files
+tysel init . --package-json reuse --dry-run
+
+# JSON manifest, MCP template, no package sidecar or tests
+tysel init hello-mcp \
+  --template mcp \
+  --manifest-format json \
+  --package-json none \
+  --no-tests \
+  --yes
+
+# TOML and JSON are interchangeable for every project shape
 tysel init hello-json --manifest-format json
-tysel init hello-native --package-json none --dry-run
-tysel init hello-mcp --template mcp --package-json none --no-tests --yes
 ```
 
-Inside an existing Node project, `init` preserves `package.json` and existing
+See [Projects and configuration](concepts/projects-and-configuration.md#choose-the-files-you-need)
+for the file roles and combination matrix.
+
+Inside an existing JavaScript or TypeScript project, `init` preserves
+`package.json` and existing
 source files and creates a separate `src/tysel.ts` entry and
 `tsconfig.tysel.json` by default. The Tysel-specific config keeps application
 checking isolated from the existing Node compiler configuration:
@@ -72,22 +84,17 @@ tysel init . --add-scripts # optionally add tysel:* package scripts
 With `--no-tests`, Init also omits test dependencies, the `test` package script,
 and the `test` step from the generated `verify` task.
 
-The generated project pins `@tysel/types` and `@tysel/test` to the native
-toolchain version. Those npm packages are not public yet, so do not install the
-generated dependencies from the registry. Runtime and test commands work
-without them; `tysel check` reports that TypeScript checking was skipped.
-
-To enable editor and compiler declarations during source development, build
-and add the local packages from the adjacent Tysel checkout:
+The generated project pins the published `@tysel/types` and `@tysel/test`
+packages to the native toolchain version. Tysel runtime and test commands work
+immediately without installing them. If you want editor declarations and the
+additional TypeScript compiler pass, install the generated development
+dependencies with your preferred package manager, for example:
 
 ```sh
-pnpm --dir ../tysel --filter @tysel/types build
-pnpm --dir ../tysel --filter @tysel/test build
-pnpm add -D \
-  ../tysel/packages/tysel-types \
-  ../tysel/packages/tysel-test \
-  typescript@7.0.2
+npm install
 ```
+
+This step is optional and does not install or replace the Tysel runtime.
 
 ## Write a Fetch handler
 
@@ -151,7 +158,7 @@ secrets = ["API_TOKEN"]
 ```
 
 The manifest requests authority; the execution profile and deployment policy
-can reduce it further. Review the [manifest reference](reference/manifest/index.md)
+can reduce it further. Review the [complete manifest field index](reference/manifest/index.md#complete-field-index)
 and [capability matrix](capabilities/README.md).
 
 ## Build one executable

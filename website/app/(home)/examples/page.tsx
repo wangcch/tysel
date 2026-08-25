@@ -6,7 +6,6 @@ import {
   featuredExample,
   featuredSnippet,
   recipes,
-  toolchain,
   type Example,
   type ExampleStatus,
 } from "@/lib/examples-catalog";
@@ -32,6 +31,8 @@ function MetaLine({ example }: { example: Example }) {
 }
 
 function ExampleRow({ example }: { example: Example }) {
+  const sourceExternal = example.sourceHref.startsWith("https://");
+
   return (
     <div className="grid gap-3 border-b border-fd-border px-5 py-5 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] sm:gap-8">
       <div>
@@ -45,11 +46,11 @@ function ExampleRow({ example }: { example: Example }) {
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
           <Link
             href={example.sourceHref}
-            target="_blank"
-            rel="noreferrer"
+            target={sourceExternal ? "_blank" : undefined}
+            rel={sourceExternal ? "noreferrer" : undefined}
             className="underline-offset-4 hover:underline"
           >
-            Source
+            {example.sourceLabel ?? "Source"}
           </Link>
           {example.docsHref ? (
             <Link
@@ -69,7 +70,7 @@ function ExampleRow({ example }: { example: Example }) {
       </div>
       <div className="overflow-hidden border border-fd-border bg-fd-muted/30">
         <div className="flex items-center justify-between border-b border-fd-border px-3 py-1.5 font-mono text-[11px] text-fd-muted-foreground">
-          <span>run</span>
+          <span>from the example directory</span>
           <CopyButton value={example.run} />
         </div>
         <pre className="overflow-x-auto px-3 py-3 font-mono text-[12px] leading-5">
@@ -87,11 +88,13 @@ export default function ExamplesPage() {
         Examples
       </p>
       <h1 className="font-heading mt-3 max-w-3xl text-4xl font-medium tracking-tighter text-balance">
-        Pick a profile. Open a grant. Run the tree.
+        Pick a profile. Open a project. Run it.
       </h1>
       <p className="mt-4 max-w-2xl text-sm leading-6 text-fd-muted-foreground">
-        These are acceptance paths in the repository — source, manifest, and
-        verification commands together. They are not marketing snippets.
+        Each entry links to a complete example project or a version-matched
+        Component starter guide. Put the project in your workspace, then run
+        the displayed command from its directory with an installed Tysel
+        release.
       </p>
 
       <section className="mt-12 border border-fd-border">
@@ -136,7 +139,7 @@ export default function ExamplesPage() {
           </div>
           <div className="mt-6 w-full max-w-md overflow-hidden border border-fd-border bg-fd-muted/30 sm:mt-0">
             <div className="flex items-center justify-between border-b border-fd-border px-3 py-1.5 font-mono text-[11px] text-fd-muted-foreground">
-              <span>run</span>
+              <span>from the example directory</span>
               <CopyButton value={featuredExample.run} />
             </div>
             <pre className="overflow-x-auto px-3 py-3 font-mono text-[12px] leading-5">
@@ -158,25 +161,22 @@ export default function ExamplesPage() {
         </div>
       </section>
 
-      <section className="mt-14">
+      <section className="mt-14 border border-fd-border px-5 py-5">
         <h2 className="text-sm font-medium uppercase tracking-[0.16em] text-fd-muted-foreground">
-          Toolchain once
+          One installed toolchain
         </h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-fd-muted-foreground">
-          Build CLI, service, and worker from the repo root. Isolated examples
-          also need{" "}
-          <code className="font-mono text-fd-foreground">TYSEL_WORKER</code> set
-          to the absolute worker path.
+          Install Tysel once, then use the same <code>tysel</code> command in
+          every example project. The managed installation already includes the
+          matching service runtime and isolated worker; no repository build or
+          worker-path override is required.
         </p>
-        <div className="mt-4 overflow-hidden border border-fd-border">
-          <div className="flex items-center justify-between border-b border-fd-border px-4 py-2 font-mono text-xs text-fd-muted-foreground">
-            <span>repo root</span>
-            <CopyButton value={toolchain} />
-          </div>
-          <pre className="overflow-x-auto bg-tysel-ink px-4 py-4 font-mono text-[13px] leading-6 text-white/88">
-            <code>{toolchain}</code>
-          </pre>
-        </div>
+        <Link
+          href="/docs/install"
+          className="mt-3 inline-block text-sm text-tysel-blue underline-offset-4 hover:underline"
+        >
+          Installation guide
+        </Link>
       </section>
 
       <div className="mt-16 space-y-12">

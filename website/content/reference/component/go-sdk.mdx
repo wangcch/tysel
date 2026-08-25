@@ -1,13 +1,21 @@
 ---
 title: "Go Component SDK"
-description: "Status: **experimental and repository-local**. The Go module currently uses a workspace replacement rather than a published semantic version. Keep the SDK, generated bindings, WIT, and Tysel runtime on the same source re"
+description: "Status: **experimental and versioned**. Use the guest SDK source and WIT package vendored in the Component starter bundle for the installed Tysel release. The starter module already uses a local replacement:"
 ---
 
 # Go Component SDK
 
-Status: **experimental and repository-local**. The Go module currently uses a
-workspace replacement rather than a published semantic version. Keep the SDK,
-generated bindings, WIT, and Tysel runtime on the same source revision.
+Status: **experimental and versioned**. Use the guest SDK source and WIT
+package vendored in the Component starter bundle for the installed Tysel
+release. The starter module already uses a local replacement:
+
+```text title="go.mod"
+require github.com/wangcch/tysel/sdk/component-go v0.0.0
+
+replace github.com/wangcch/tysel/sdk/component-go => ./sdk/component-go
+```
+
+The SDK is not currently published as an independent Go module release.
 
 ## Guest interface
 
@@ -23,7 +31,7 @@ enforces 1 MiB input, 1 MiB output, and 4 KiB UTF-8-safe error bounds.
 ## Generated binding adapter
 
 Component Model bindings remain the guest application's responsibility. The
-repository fixture uses Bytecode Alliance `componentize-go` and adapts its
+release starter uses Bytecode Alliance `componentize-go` and adapts its
 generated result type:
 
 ```go
@@ -47,8 +55,8 @@ func Run(input string) witTypes.Result[string, string] {
 }
 ```
 
-The checked-in fixture was generated with `componentize-go` `0.4.1`; generated
-`wit_exports.go` is committed so ordinary builds do not regenerate bindings.
+The starter was generated with `componentize-go` `0.4.1`; generated
+`wit_exports.go` is included so ordinary builds do not regenerate bindings.
 
 Follow [Build a Go Component](/docs/guides/wasm-component-go) for the tested
 workflow and [Component capabilities](/reference/component/capabilities) before adding imports.

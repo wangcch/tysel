@@ -10,7 +10,7 @@ wasm-tools component new \
   -o target/echo.component.wasm
 ```
 
-The generated Component has no implicit WASI imports, implements the repository's
+The generated Component has no implicit WASI imports, implements Tysel's versioned
 `tysel:component/task@0.4.0` world and can be packaged as the `entry` in a
 TOML or JSON Tysel manifest.
 

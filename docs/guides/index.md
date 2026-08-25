@@ -9,6 +9,7 @@ the complete contract for a command, manifest field, or runtime API.
 | --- | --- | --- |
 | Create, test, run, and package an HTTP service | [Getting started](../getting-started.md) | A request succeeds and the packaged executable runs without Node.js. |
 | Add Tysel without replacing an existing Node project | [Create or adopt a project](../concepts/projects-and-configuration.md#create-or-adopt-a-project) | Existing files remain intact and Tysel uses its own compiler configuration. |
+| Find or configure a `tysel.toml` field | [Complete manifest field index](../reference/manifest/index.md#complete-field-index) | Types, defaults, runtime status, cross-field rules, and starting configurations. |
 | Inspect or convert TOML and JSON configuration | [Inspect and convert configuration](../concepts/projects-and-configuration.md#inspect-and-convert-configuration) | Expanded defaults and converted output validate against one schema. |
 | Add a reproducible project workflow | [Reproducible project tasks](../concepts/projects-and-configuration.md#reproducible-project-tasks) | `tysel task verify` runs bounded, shell-free steps. |
 
@@ -18,8 +19,8 @@ the complete contract for a command, manifest field, or runtime API.
 | --- | --- | --- |
 | Build a Fetch-style JSON API | [First service](../getting-started.md#write-a-fetch-handler) | `service` profile; no capability for a local response. |
 | Use SQLite or Postgres | [Example gallery](examples.md#storage) | Trusted service plus the relevant database configuration. |
-| Expose a function as an MCP tool | [MCP example](examples.md#tasks-and-agents) | Registered MCP task; isolated example keeps secret values in the host. |
-| Run generated or third-party JavaScript | [Isolated plugin example](examples.md#isolation) | Linux is the production isolation security target. |
+| Expose a function as an MCP tool | [MCP example](examples.md#agents) | Registered MCP task; isolated example keeps secret values in the host. |
+| Run generated or third-party JavaScript | [Isolated plugin example](examples.md#isolation-and-wasm) | Linux is the production isolation security target. |
 | Suspend for retry, time, or human approval | [Durable execution](../concepts/durable-execution.md) | Durable store and replay-safe boundaries. |
 | Build a language-neutral one-shot task | [Rust Component](wasm-component-rust.md) or [Go Component](wasm-component-go.md) | Experimental `tysel:component/task@0.4.0`; restricted WASI. |
 

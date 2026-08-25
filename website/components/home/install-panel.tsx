@@ -27,8 +27,8 @@ export function InstallPanel({
         <code>{managedInstall}</code>
       </pre>
       <p className="border-t border-white/10 px-4 py-2 text-xs text-white/45">
-        No tagged binary release yet. Use the source path until GitHub Releases
-        publishes install.sh.
+        Installs the complete native toolchain. Rust, Node.js, and npm are not
+        required.
       </p>
     </div>
   );

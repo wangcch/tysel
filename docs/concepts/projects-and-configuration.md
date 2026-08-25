@@ -4,6 +4,71 @@ A Tysel project is a directory containing exactly one application manifest:
 `tysel.toml` or `tysel.json`. Both formats use the same versioned schema. A
 neighboring `package.json` is optional and never overrides Tysel configuration.
 
+## Choose the files you need
+
+Tysel does not require one fixed project layout. The manifest and application
+entry form the runtime project; package-manager, compiler, and test files are
+independent additions.
+
+| File | Required | Purpose |
+| --- | --- | --- |
+| `tysel.toml` **or** `tysel.json` | One is required | Tysel application identity, entry, execution profile, permissions, limits, server settings, and project tasks. Choose TOML for concise hand editing or JSON for JSON-native tooling; behavior is identical. |
+| Application entry such as `src/index.ts` | Required | TypeScript, JavaScript, or Wasm Component code selected by `app.entry`. The path and filename are configurable. |
+| `package.json` | Optional | npm dependencies, editor packages, and convenience scripts. It is not read as Tysel runtime configuration. |
+| `tsconfig.json` or `tsconfig.tysel.json` | Optional for execution | Controls the additional TypeScript compiler pass used by `tysel check`. `tsconfig.tysel.json` takes precedence and keeps Tysel checking separate from an existing project config. |
+| `tests/*.test.ts` | Optional | Tests run by the native `tysel test` runner. They do not require a package script. |
+
+Common combinations are:
+
+| Goal | Command | Result |
+| --- | --- | --- |
+| Native-first project, no npm | `tysel init api --package-json none --yes` | Manifest, source, compiler config, and tests; no `package.json`. |
+| Smallest generated project | `tysel init job --template minimal --package-json none --no-tests --yes` | Manifest, source, and compiler config only. |
+| TypeScript project with editor packages | `tysel init api --yes` | Creates `package.json` with version-matched optional development dependencies. Install them with your preferred package manager when wanted. |
+| Add Tysel beside an existing project | `tysel init . --package-json reuse` | Preserves the existing package and source files, and uses a separate Tysel entry and compiler config. |
+| Add package scripts too | `tysel init . --package-json reuse --add-scripts` | Adds non-conflicting `tysel:*` scripts to the existing package. |
+| JSON-managed configuration | Add `--manifest-format json` to any command | Generates `tysel.json` instead of `tysel.toml`; all other choices remain independent. |
+
+These choices can be mixed as needed. For example, an MCP tool can use JSON,
+omit `package.json`, and omit tests in one command:
+
+```sh
+tysel init tool \
+  --template mcp \
+  --manifest-format json \
+  --package-json none \
+  --no-tests \
+  --yes
+```
+
+## What the manifest configures
+
+The manifest is organized by responsibility rather than by command. Only
+`[app]` with `name` and `entry` is required; every other table is optional and
+receives documented defaults.
+
+| Table | Typical fields | Use it when |
+| --- | --- | --- |
+| Root | `schema_version` | Pinning the manifest contract. Version 1 is the current and only accepted value. |
+| `[app]` | `name`, `entry`, `profile` | Selecting the artifact, source entry, and `service`, `isolated`, or `component` execution boundary. |
+| `[server]` | `listen`, `workers`, `http1`, `http2`, `websocket` | Changing the inbound listener, concurrency, or protocol set. It does not grant outbound access. |
+| `[permissions]` | `fetch`, `secrets`, `postgres`, `fs_read`, `fs_write` | Requesting a host capability. Omission means denied, and deployment policy may deny further. |
+| `[limits]` | Memory, CPU, timeout, concurrency, request and response sizes | Replacing application resource defaults with explicit budgets. |
+| `[durable]` | `store`, `path` | Selecting manifest-backed durable storage and its runtime-relative SQLite path. |
+| `[observability]` | `logs`, `traces`, `metrics` | Declaring log format and telemetry endpoint intent. Some export controls remain environment-based. |
+| `[tasks.<name>]` | `description`, `depends`, `steps` | Composing reproducible Tysel commands without a shell or `package.json` script. |
+
+The [complete manifest field index](../reference/manifest/index.md#complete-field-index)
+lists every field with its type, default, meaning, runtime status, and detailed
+Reference page. It also includes [cross-field rules](../reference/manifest/index.md#cross-field-rules)
+and starting configurations for HTTP services, isolated tools, and Wasm
+Components.
+
+Do not copy the complete manifest merely because every field exists. Begin
+with `[app]`, then add a table only when the workload needs to differ from its
+default or request authority. Reviewers can then see the security and resource
+boundary from the diff instead of searching through boilerplate.
+
 ## Project discovery
 
 Project-aware commands search for the nearest manifest from the current
@@ -18,8 +83,8 @@ Select another project without changing the shell directory with the global
 `-C/--project` option:
 
 ```sh
-tysel -C examples/hello-service check
-tysel -C examples/hello-service build --release
+tysel -C services/api check
+tysel -C services/api build --release
 ```
 
 Automation that needs one exact file can use `--manifest`:
@@ -46,13 +111,16 @@ customized flow:
 tysel init my-service
 ```
 
-The customized flow selects:
+The customized flow selects independent dimensions:
 
 - HTTP service, Queue worker, MCP tool, or minimal template;
 - TOML or JSON manifest;
 - generated or existing application entry;
 - package creation, reuse, or no `package.json`;
 - whether to generate tests.
+
+Selecting JSON does not imply npm, and selecting no `package.json` does not
+disable TypeScript applications or the native test runner.
 
 Every choice is also available as an option for automation:
 
@@ -70,7 +138,7 @@ checks every destination first, preserves existing source and configuration,
 rejects symlinked mutation targets, and rolls back its writes if a later
 operation fails.
 
-When adopting an existing JavaScript project, Tysel defaults to
+When adopting an existing JavaScript or TypeScript project, Tysel defaults to
 `src/tysel.ts` and `tsconfig.tysel.json`. It preserves `package.json` unless
 `--add-scripts` explicitly requests namespaced `tysel:*` scripts:
 
@@ -82,6 +150,22 @@ tysel init . --add-scripts
 Use `--no-interactive` in CI to disable prompts while retaining documented
 defaults. Use `--yes` when all supplied choices should be accepted without
 confirmation.
+
+### Package integration modes
+
+`--package-json` controls only the package sidecar:
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` | Reuse an existing `package.json`; otherwise create one. This is the default. |
+| `create` | Create a new package file and fail if one already exists. |
+| `reuse` | Preserve an existing package file and fail if it is missing. |
+| `none` | Do not create or modify `package.json`, even if one exists. |
+
+`--add-scripts` requires an existing package with `auto` or `reuse`. It adds
+only missing `tysel:*` scripts and refuses to replace a conflicting script.
+Use `--dry-run` to see the exact files that would be created, preserved,
+reused, or updated for any combination.
 
 ## Inspect and convert configuration
 

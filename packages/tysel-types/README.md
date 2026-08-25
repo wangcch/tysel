@@ -1,15 +1,12 @@
 # @tysel/types
 
 Declaration-only public types for applications running on the Tysel native
-runtime. After the first public package release, install it as a development
+runtime. Install the version matching your Tysel toolchain as a development
 dependency:
 
 ```sh
 pnpm add -D @tysel/types
 ```
-
-From a source checkout before that release, build the package and add its local
-directory instead.
 
 Load the declarations from `tsconfig.json`:
 

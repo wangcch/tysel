@@ -1,47 +1,72 @@
 ---
 title: "Build a Go Wasm Component"
-description: "This guide generates the repository's Go bindings, builds a Wasm Component, validates its ABI, and packages it as a native Tysel executable."
+description: "This guide generates bindings for a Go guest from the published Tysel Component starter, builds a Wasm Component, validates its ABI, and packages it as a native Tysel executable."
 ---
 
 # Build a Go Wasm Component
 
-This guide generates the repository's Go bindings, builds a Wasm Component,
-validates its ABI, and packages it as a native Tysel executable.
+This guide generates bindings for a Go guest from the published Tysel
+Component starter, builds a Wasm Component, validates its ABI, and packages it
+as a native Tysel executable.
 
 ## Prerequisites
 
-Use one repository checkout so the experimental runtime, WIT, SDK, and
-generated bindings share a source revision. Install:
+Install:
 
-- the Tysel [source-build prerequisites](/docs/install#current-availability);
+- the published Tysel [toolchain](/docs/install);
 - Go `1.25.5`, matching the fixture module;
 - Bytecode Alliance `componentize-go` `0.4.1`.
 
 ```sh
 go install github.com/bytecodealliance/componentize-go@v0.4.1
-cargo build --locked --release \
-  -p tysel-cli --bin tysel \
-  -p tysel-runtime --bin tysel-service
-export PATH="$PWD/target/release:$PATH"
+tysel doctor --install
 ```
 
 Ensure the Go installation's binary directory is also on `PATH` so
 `componentize-go` is available.
 
-## Generate and build
+## Download the starter
 
-From the repository root:
+Each Tysel GitHub Release includes a version-matched starter bundle. Download
+and verify it, then enter the Go project:
 
 ```sh
-cd sdk/examples/go-echo
-componentize-go -d ../../../wit/component -w task bindings
-componentize-go -d ../../../wit/component -w task build \
+version="$(tysel --version | awk '{print $2}')"
+release="https://github.com/wangcch/tysel/releases/download/v${version}"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz.sha256"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz.sig.json"
+expected="$(tr -d '[:space:]' < tysel-component-starters.tar.gz.sha256)"
+actual="$(shasum -a 256 tysel-component-starters.tar.gz | awk '{print $1}')"
+test "$actual" = "$expected"
+tysel release verify-metadata \
+  tysel-component-starters.tar.gz \
+  tysel-component-starters.tar.gz.sig.json \
+  --trust "${TYSEL_HOME:-$HOME/.tysel}/trust.json"
+tar -xzf tysel-component-starters.tar.gz
+cd tysel-component-starters/go-echo
+```
+
+The immutable tag comes from the installed CLI, so the bundle and native
+toolchain stay on the same release. The bundle vendors the matching guest SDK
+module and Component WIT package and pins the tested binding generator. It does
+not require a Tysel repository checkout.
+If Tysel was installed under a custom managed prefix without `TYSEL_HOME`, pass
+that prefix's `trust.json` to `--trust`.
+
+## Generate and build
+
+From `tysel-component-starters/go-echo`:
+
+```sh
+componentize-go -d wit/component -w task bindings
+componentize-go -d wit/component -w task build \
   -o echo.component.wasm
 ```
 
-The repository commits `wit_exports.go`, so regenerating bindings is useful
-when verifying the pinned toolchain or changing WIT. An ordinary fixture build
-can use the committed bindings.
+The starter includes `wit_exports.go`, so regenerating bindings is useful when
+verifying the pinned toolchain or changing WIT. An ordinary build can use the
+included bindings.
 
 ## Validate and run
 
@@ -75,7 +100,7 @@ target host.
 
 | Symptom | Check |
 | --- | --- |
-| Generated package does not compile | Use `componentize-go` `0.4.1` with the repository's `wit/component` directory. |
+| Generated package does not compile | Use `componentize-go` `0.4.1` with the starter's `wit/component` directory. |
 | Invalid output JSON | Return a value encodable by `encoding/json`; do not construct the ABI string manually. |
 | Process waits without output | Close stdin after writing the single JSON input. |
 | WASI socket or preopen import rejected | Tysel exposes only its [restricted WASI profile](/reference/component/runtime#restricted-wasi-02-profile). |

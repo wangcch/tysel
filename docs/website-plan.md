@@ -16,8 +16,8 @@ platform labels.
 The website must start from the implemented product rather than completed internal plans.
 The repository has completed its production engineering acceptance scope and the
 developer-experience milestone, but that internal milestone is not itself a public stable
-version. The workspace version remains `0.0.1` until the release process assigns a public
-version and channel.
+version. The first public release uses `0.1.0`; Component ABI versions remain independent
+from the product release version and channel.
 
 ### Implemented surface
 

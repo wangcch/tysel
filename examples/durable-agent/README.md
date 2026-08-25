@@ -26,10 +26,12 @@ export OPENAI_API_KEY=YOUR_KEY
 ./demo.sh
 ```
 
-`demo.sh` builds the CLI, starts a run, verifies that it is waiting for
-approval, stops the process, starts a new process over the same stores, sends
-approval, and polls until the saved result is visible. It deliberately does
-not provide a fake draft when LLM configuration fails.
+`demo.sh` uses the installed `tysel` command, starts a run, verifies that it is
+waiting for approval, stops the process, starts a new process over the same
+stores, sends approval, and polls until the saved result is visible. Set
+`TYSEL_BIN` only when the installed command has a nonstandard name or path. The
+script deliberately does not provide a fake draft when LLM configuration
+fails.
 
 Optional provider settings:
 
@@ -72,7 +74,7 @@ Poll `GET /runs/:runId` until the status is `completed` or `rejected`.
 and database writes are wrapped in named durable effects, so completed effects
 are replayed from history instead of being invoked again.
 
-## Automated acceptance
+## Maintainer acceptance (source checkout only)
 
 The CLI integration suite runs the same path against a local fake provider. It
 asserts process restart recovery, one LLM request, one final save, and a stable

@@ -3,6 +3,12 @@
 Every application has one `tysel.toml` or `tysel.json`. Both formats use the
 same schema and validation rules. Unknown fields are rejected.
 
+The manifest is the only Tysel project configuration file. `package.json` is an
+optional dependency/script sidecar, while `tsconfig.json` and
+`tsconfig.tysel.json` configure the optional TypeScript compiler pass. None of
+those files can replace or override the manifest. Projects may combine them as
+needed; see the [configuration combinations](../../concepts/projects-and-configuration.md#choose-the-files-you-need).
+
 ## Root object
 
 | Field | Required | Default | Reference |
@@ -18,6 +24,201 @@ same schema and validation rules. Unknown fields are rejected.
 
 An omitted `schema_version` is accepted for older version-1 manifests. A newer
 unsupported version fails with an upgrade diagnostic.
+
+## Complete field index
+
+This table is the compact inventory for schema version 1. “Default” is the
+effective value shown by `tysel config show` when the field or its parent table
+is omitted. A field being schema-valid does not necessarily mean every runtime
+profile can use it; follow the linked section for enforcement and deployment
+details.
+
+### Application and server fields
+
+| Field | Type | Required / default | Meaning |
+| --- | --- | --- | --- |
+| `schema_version` | Integer | `1` | Selects the manifest contract. Version 1 is the only accepted value. |
+| `app.name` | String | Required | Artifact identity. Starts with a letter or digit; remaining characters may also include `.`, `_`, and `-`. |
+| `app.entry` | String | Required | Project-relative TypeScript, JavaScript, or Component `.wasm` entry. Absolute paths, backslashes, and `..` traversal are rejected. |
+| `app.profile` | Enum | `service` | Execution and trust boundary: `service`, `isolated`, or `component`. |
+| `server.listen` | String | `127.0.0.1:3000` | Inbound socket address. Use `0.0.0.0` only when external interfaces should accept traffic. |
+| `server.workers` | Integer | `1` | Number of QuickJS isolates, from 1 through 64. Multiple workers require `service`. |
+| `server.http1` | Boolean | `true` | Enables HTTP/1.1. Required for inbound WebSocket upgrades. |
+| `server.http2` | Boolean | `false` | Enables cleartext HTTP/2 (h2c), not public TLS termination. |
+| `server.websocket` | Boolean | `false` | Permits inbound HTTP/1.1 WebSocket upgrades. It does not grant outbound network access. |
+
+See [Application and server](app-server.md) for path validation, protocol
+behavior, worker state, Component restrictions, and deployment guidance.
+
+### Permission fields
+
+Every permission list defaults to `[]`. Permission is the intersection of the
+manifest request, execution profile, and deployment policy; adding a value to
+the manifest cannot override a profile-level denial.
+
+| Field | Type | Accepted value | Enables |
+| --- | --- | --- | --- |
+| `permissions.fetch` | Unique string array | Hostnames such as `api.example.com` | Outbound `fetch` and outbound WebSocket connections to matching hosts. |
+| `permissions.secrets` | Unique string array | Environment-variable names | Opaque handles returned by `tysel.secrets.ref`; it does not expose plaintext values. |
+| `permissions.postgres` | Array, at most one item | `name`, `name:read-only`, or `name:read-write` | A named Postgres grant whose URL is injected by the deployment. |
+| `permissions.fs_read` | Unique string array, at most 64 | Directory roots | UTF-8 regular-file reads beneath pinned roots. Relative roots resolve from the project root; absolute roots remain absolute. |
+| `permissions.fs_write` | Unique string array, at most 64 | Directory roots | UTF-8 regular-file writes beneath pinned roots. Relative roots resolve from the project root; absolute roots remain absolute. Read permission is not implied. |
+
+See [Permissions](permissions.md) for hostname semantics, Postgres environment
+mapping, filesystem confinement, and profile-specific denial behavior.
+
+### Limit fields
+
+All limit fields are non-negative integers. Zero is accepted and has literal
+behavior; for example, `max_in_flight = 0` sheds every HTTP request instead of
+meaning “unlimited.”
+
+| Field | Unit | Default | Runtime meaning |
+| --- | --- | ---: | --- |
+| `limits.memory_mb` | MiB | `128` | QuickJS or isolated-worker memory budget. Components are clamped to 64 MiB. |
+| `limits.cpu_ms_per_turn` | Milliseconds | `50` | CPU budget for one JavaScript turn. Components use fuel and epoch interruption instead. |
+| `limits.request_timeout_ms` | Milliseconds | `30000` | Invocation deadline and bound for configured LLM calls. Components are clamped to 60 seconds. |
+| `limits.max_in_flight` | Requests | `1000` | Admitted HTTP requests, held until response completion or WebSocket close. |
+| `limits.max_response_mb` | MiB | `16` | Declared response target. Currently inspected but not propagated into the packaged HTTP server. |
+| `limits.max_request_mb` | MiB | `16` | Inbound request-body limit; oversized requests receive HTTP 413. |
+
+See [Application limits](limits.md) for integer bounds, overload behavior,
+current propagation status, and fixed capability limits.
+
+### Durable, observability, and task fields
+
+| Field | Type | Default | Meaning and current status |
+| --- | --- | --- | --- |
+| `durable.store` | String | `sqlite` | Selects manifest-backed durable storage. Only `sqlite` currently configures a store. |
+| `durable.path` | String | `./data/tysel.db` | Runtime-relative application SQLite path. Durable event-log placement also has host controls. |
+| `observability.logs` | String | `json` | Case-insensitive `json` enables the structured runtime logger; other values disable it. |
+| `observability.traces` | String or null | Unset | Schema-valid OTLP endpoint intent. Not yet propagated into packaged runtime configuration. |
+| `observability.metrics` | String or null | Unset | Schema-valid OTLP endpoint intent. Not yet propagated into packaged runtime configuration. |
+| `tasks.<name>.description` | String or null | Unset | Human-readable task description shown by task discovery. |
+| `tasks.<name>.depends` | Unique string array | `[]` | Other manifest tasks that must complete first; unknown names and cycles are rejected. |
+| `tasks.<name>.steps` | Array of argument arrays | `[]` | Ordered Tysel CLI invocations. No shell expansion, pipes, redirection, or project override is allowed. |
+
+See [Durable storage and observability](durable-observability.md) and
+[Manifest tasks](tasks.md) for active host configuration, task-name rules, and
+the allowed step commands.
+
+## Cross-field rules
+
+These relationships are validated in addition to the individual field types:
+
+| Configuration | Requirement | Why |
+| --- | --- | --- |
+| `app.entry` ends in `.wasm` | `app.profile = "component"` | Tysel accepts a Component Model task, not arbitrary Core Wasm. |
+| `app.profile = "component"` | `app.entry` must end in `.wasm` | Component execution does not load JavaScript or TypeScript. |
+| `server.websocket = true` | `server.http1 = true` | Upgrades use HTTP/1.1. |
+| `server.http1 = false` | `server.http2 = true` | At least one inbound HTTP protocol must remain enabled in the schema. |
+| `server.workers > 1` | `app.profile = "service"` | Isolated and Component profiles accept only one worker. |
+| Outbound `fetch` or WebSocket | Matching `permissions.fetch` hostname and a profile that permits it | The manifest grant alone is not authority. Redirect targets are checked again. |
+| Postgres use | At most one named grant plus `TYSEL_POSTGRES_<NAME>` | Connection URLs and credentials stay outside the manifest. |
+| Component filesystem import | Matching `fs_read` or `fs_write` root plus deployment capability | Component imports, manifest request, and deployment policy must all agree. |
+| Manifest task | At least one non-empty `depends` or `steps` value | Empty workflows are rejected. |
+
+Run `tysel config validate` after editing. Use `tysel inspect` when the question
+is not merely whether syntax is valid, but which capabilities the selected
+profile will actually receive.
+
+## Choose a starting configuration
+
+Start with the smallest manifest that expresses the workload. Omitted tables
+receive defaults; copying every possible field makes later reviews harder.
+
+### Minimal HTTP service
+
+```toml
+schema_version = 1
+
+[app]
+name = "hello"
+entry = "src/index.ts"
+```
+
+This uses the `service` profile and listens on `127.0.0.1:3000` over HTTP/1.1.
+It requests no host capabilities.
+
+### Externally reachable service with bounded storage
+
+```toml
+schema_version = 1
+
+[app]
+name = "orders-api"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "0.0.0.0:3000"
+workers = 2
+
+[permissions]
+postgres = ["main:read-write"]
+secrets = ["PAYMENTS_API_KEY"]
+
+[limits]
+memory_mb = 256
+request_timeout_ms = 15000
+max_in_flight = 200
+max_request_mb = 4
+```
+
+The deployment must provide `TYSEL_POSTGRES_MAIN` when the application uses
+the Postgres grant. If application code calls
+`tysel.secrets.ref("PAYMENTS_API_KEY")`, the deployment must also provide that
+secret; a missing declared value is reported when the handle is requested, not
+while the manifest is loaded. Terminate TLS at an ingress or reverse proxy.
+
+### Isolated MCP tool
+
+```toml
+schema_version = 1
+
+[app]
+name = "customer-lookup"
+entry = "src/index.ts"
+profile = "isolated"
+
+[permissions]
+secrets = ["CUSTOMER_API_KEY"]
+
+[limits]
+memory_mb = 32
+request_timeout_ms = 5000
+
+[tasks.verify]
+steps = [["check"], ["test"]]
+```
+
+The manifest selects the profile and requests the named secret; the application
+source still has to export an MCP task. In the isolated profile,
+`tysel.secrets.ref("CUSTOMER_API_KEY")` returns only a brokered opaque handle,
+while direct network and filesystem access remain denied even if listed under
+permissions. Start from the [MCP tool example](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool)
+and review the [application module](../runtime/application.md#mcp-tasks) and
+[execution profile](../../concepts/execution-profiles.md).
+
+### Wasm Component task
+
+```toml
+schema_version = 1
+
+[app]
+name = "rust-transform"
+entry = "target/transform.component.wasm"
+profile = "component"
+
+[permissions]
+fs_read = ["./input"]
+fs_write = ["./output"]
+```
+
+The Component must import only implemented interfaces. A packaged executable
+also requires an explicit deployment grant such as
+`TYSEL_COMPONENT_CAPABILITIES=tysel:fs/read,tysel:fs/write`; see
+[Component capabilities](../component/capabilities.md).
 
 ## Complete example
 
@@ -89,10 +290,59 @@ The JSON representation has identical field names and values:
 
 Without `--manifest`, project commands search from the selected directory
 upward. Keeping both formats in one directory is an error. The manifest
-directory becomes the project root; `app.entry`, durable storage, and
-filesystem roots resolve from it. A packaged executable has no external
-manifest root, so runtime-relative storage resolves from its process working
-directory.
+directory becomes the project root; `app.entry`, durable storage, and relative
+filesystem roots resolve from it. Absolute filesystem roots remain absolute.
+A packaged executable has no external manifest root, so relative runtime paths
+resolve from its process working directory.
+
+## Schema and editor integration
+
+The installed CLI carries the schema that matches its validator. Save it into
+the project when an editor or CI job needs a file:
+
+```sh
+mkdir -p .tysel
+tysel config schema > .tysel/tysel-manifest-v1.schema.json
+```
+
+For a JSON manifest, a VS Code workspace can associate that local schema in
+`.vscode/settings.json`:
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["/tysel.json"],
+      "url": "./.tysel/tysel-manifest-v1.schema.json"
+    }
+  ]
+}
+```
+
+TOML schema association depends on the editor extension. Point it at the same
+generated Draft 2020-12 schema when supported. Do not add a `$schema` member to
+`tysel.json`: `$schema` is not a version-1 manifest field, and unknown fields
+are rejected. Regenerate the file after upgrading Tysel.
+
+The JSON Schema catches field names, types, enums, numeric ranges, and several
+cross-field rules. `tysel config validate` remains authoritative because it
+also applies runtime validation that an editor may not evaluate.
+
+## Common validation failures
+
+| Diagnostic shape | Likely cause | Correction |
+| --- | --- | --- |
+| Unknown field | Misspelling, wrong table, or a field from another schema version | Check the [complete field index](#complete-field-index); unknown keys are never ignored. |
+| Both manifests found | `tysel.toml` and `tysel.json` exist in the same project root | Keep exactly one root manifest or write a conversion outside the root. |
+| Entry must be project-relative | Absolute path, backslash, drive prefix, or `..` traversal | Use `/` separators and a path beneath the manifest directory. |
+| WebSocket requires HTTP/1.1 | `server.websocket = true` with `server.http1 = false` | Enable HTTP/1.1 or disable WebSocket upgrades. |
+| Worker count requires service | More than one worker with `isolated` or `component` | Use one worker or change to a compatible workload profile. |
+| `.wasm` and profile disagree | Component entry with another profile, or Component profile with a non-Wasm entry | Set both sides of the Component contract together. |
+| Permission values must be unique | Duplicate or empty list member | Remove duplicates and blank entries. |
+| Task dependency failure | Unknown dependency, cycle, duplicate dependency, or empty task | Repair the task graph and keep at least one dependency or step. |
+
+Use `tysel config path` first when an invalid manifest prevents normal project
+commands from showing which file was discovered.
 
 Use the installed binary to inspect the exact schema and expanded values:
 

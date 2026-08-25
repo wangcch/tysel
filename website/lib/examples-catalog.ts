@@ -14,6 +14,7 @@ export type Example = {
   /** Primary verification command from the README. */
   run: string;
   sourceHref: string;
+  sourceLabel?: string;
   docsHref?: string;
   contractHref: string;
 };
@@ -21,12 +22,6 @@ export type Example = {
 function tree(path: string) {
   return `${githubUrl}/tree/main/${path}`;
 }
-
-export const toolchain = `cargo build --locked \\
-  -p tysel-cli --bin tysel \\
-  -p tysel-runtime --bin tysel-service \\
-  -p tysel-isolate --bin tysel-worker
-export PATH="$PWD/target/debug:$PATH"`;
 
 /** Featured path — the Tysel-specific story, not a Hello World. */
 export const featuredExample: Example = {
@@ -37,7 +32,7 @@ export const featuredExample: Example = {
   status: "runnable",
   profile: "service",
   grants: "LLM · secret · SQLite · durable store",
-  run: "cd examples/durable-agent && ./demo.sh",
+  run: "./demo.sh",
   sourceHref: tree("examples/durable-agent"),
   docsHref: "/docs/concepts/durable-execution",
   contractHref: "/reference/runtime/durable",
@@ -79,7 +74,7 @@ export const exampleSections: ExampleSection[] = [
         status: "runnable",
         profile: "service",
         grants: "none",
-        run: "tysel -C examples/hello-service run",
+        run: "tysel run",
         sourceHref: tree("examples/hello-service"),
         docsHref: "/docs/getting-started",
         contractHref: "/reference/runtime/application#http-handler",
@@ -91,7 +86,7 @@ export const exampleSections: ExampleSection[] = [
         status: "runnable",
         profile: "service",
         grants: "none",
-        run: "tysel -C examples/hono-api run",
+        run: "npm install && tysel run",
         sourceHref: tree("examples/hono-api"),
         docsHref: "/docs/compatibility",
         contractHref: "/reference/javascript",
@@ -103,7 +98,7 @@ export const exampleSections: ExampleSection[] = [
         status: "runnable",
         profile: "service",
         grants: "SQLite",
-        run: "tysel -C examples/sqlite-worker run",
+        run: "tysel run",
         sourceHref: tree("examples/sqlite-worker"),
         contractHref: "/reference/runtime/capabilities#sql",
       },
@@ -114,7 +109,7 @@ export const exampleSections: ExampleSection[] = [
         status: "runnable",
         profile: "service",
         grants: "main:read-write",
-        run: "tysel -C examples/postgres-service run",
+        run: "tysel run",
         sourceHref: tree("examples/postgres-service"),
         contractHref: "/reference/runtime/capabilities#sql",
       },
@@ -134,7 +129,7 @@ export const exampleSections: ExampleSection[] = [
         status: "runnable",
         profile: "isolated",
         grants: "brokered secret only",
-        run: "cd examples/mcp-tool && tysel mcp",
+        run: "tysel mcp",
         sourceHref: tree("examples/mcp-tool"),
         contractHref: "/reference/runtime/application#mcp-tasks",
       },
@@ -154,7 +149,7 @@ export const exampleSections: ExampleSection[] = [
         status: "runnable",
         profile: "isolated",
         grants: "host capabilities denied",
-        run: "tysel -C examples/isolated-plugin run",
+        run: "tysel run",
         sourceHref: tree("examples/isolated-plugin"),
         docsHref: "/docs/concepts/execution-profiles",
         contractHref: "/docs/capabilities",
@@ -166,9 +161,9 @@ export const exampleSections: ExampleSection[] = [
         status: "experimental",
         profile: "component",
         grants: "deny by default",
-        run: "cd sdk/examples/rust-echo && printf '{\"value\":42}' | tysel run",
-        sourceHref: tree("sdk/examples/rust-echo"),
-        docsHref: "/docs/guides/wasm-component-rust",
+        run: "printf '{\"value\":42}' | tysel run",
+        sourceHref: "/docs/guides/wasm-component-rust",
+        sourceLabel: "Starter guide",
         contractHref: "/reference/component",
       },
       {
@@ -178,9 +173,9 @@ export const exampleSections: ExampleSection[] = [
         status: "experimental",
         profile: "component",
         grants: "deny by default",
-        run: "cd sdk/examples/go-echo && printf '{\"value\":42}' | tysel run",
-        sourceHref: tree("sdk/examples/go-echo"),
-        docsHref: "/docs/guides/wasm-component-go",
+        run: "printf '{\"value\":42}' | tysel run",
+        sourceHref: "/docs/guides/wasm-component-go",
+        sourceLabel: "Starter guide",
         contractHref: "/reference/component/go-sdk",
       },
     ],

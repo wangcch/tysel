@@ -3,14 +3,14 @@
 > Tysel is a lightweight native TypeScript runtime for services and AI agents. It packages an application and its runtime into one executable with explicit host capabilities and durable execution.
 
 Tysel is Web-API-first and does not promise general Node.js compatibility.
-There is no tagged binary release yet; the current installation path is a
-source build. Do not infer stable public API status from internal milestone or
-architecture records.
+Install the published native toolchain with the managed installer; users do not
+need to clone or build the Tysel repository. Do not infer stable public API
+status from internal milestone or architecture records.
 
 ## Start
 
 - [Documentation overview](https://tysel.dev/docs/): Choose a learning path and see the product contract at a glance.
-- [Install Tysel](https://tysel.dev/docs/install/): Build from source now; understand the managed installer, diagnosis, upgrades, and rollback contract.
+- [Install Tysel](https://tysel.dev/docs/install/): Install a published release and understand diagnosis, upgrades, and rollback.
 - [Getting started](https://tysel.dev/docs/getting-started/): Create, test, run, and package a Fetch-style HTTP service.
 - [Guides](https://tysel.dev/docs/guides/): Find task-oriented paths for development, services, agents, shipping, and operations.
 - [Example gallery](https://tysel.dev/docs/guides/examples/): Choose a complete runnable example by workload and execution profile.

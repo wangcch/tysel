@@ -19,11 +19,11 @@ selected base directory.
 | Option | Accepted values | Behavior |
 | --- | --- | --- |
 | `--template` | `http`, `worker`, `mcp`, `minimal` | Select generated application content. |
-| `--manifest-format` | `toml`, `json` | Select the manifest format. |
+| `--manifest-format` | `toml`, `json` | Select only the manifest serialization; both use the same schema and combine with every other option. |
 | <code>{"--entry <path>"}</code> | Project-relative non-Wasm path | Override the generated JavaScript application entry. `.wasm` is rejected because `init` does not yet generate Component projects. |
-| `--package-json` | `auto`, `create`, `reuse`, `none` | Control npm sidecar adoption. |
+| `--package-json` | `auto`, `create`, `reuse`, `none` | Control only the optional npm sidecar. `auto` reuses an existing file or creates one; `create` requires no existing file; `reuse` requires one; `none` leaves it absent or untouched. |
 | `--add-scripts` | Flag | Add Tysel scripts to a reused `package.json`. |
-| `--no-tests` | Flag | Do not create the starter test. |
+| `--no-tests` | Flag | Do not create the starter test, test dependency/script, or `test` step in the generated `verify` task. |
 | `--dry-run` | Flag | Print the plan without writing files. |
 | `-y, --yes` | Flag | Accept the proposed plan. |
 | `--no-interactive` | Flag | Fail instead of prompting when input is required. |
@@ -31,14 +31,23 @@ selected base directory.
 `init` does not overwrite existing files silently. Use `--dry-run` in existing
 repositories and review the adoption plan before accepting it.
 
-For a Wasm Component, start from the repository's Rust or Go fixture and its
-checked-in manifest; follow the
+Template, manifest format, entry, package integration, and tests are
+independent choices. A `package.json` is not required to run, test, or build an
+application that has no npm dependencies. Fresh projects receive
+`tsconfig.json`; projects that
+already have JavaScript or TypeScript configuration receive a separate
+`tsconfig.tysel.json` when needed.
+
+For a Wasm Component, start from the published Rust or Go Component starter and
+its version-matched manifest; follow the
 [Rust](/docs/guides/wasm-component-rust) or
 [Go](/docs/guides/wasm-component-go) guide instead of `tysel init`.
 
 ```sh
 tysel init api --template http --manifest-format toml --yes
 tysel init . --package-json reuse --add-scripts --dry-run
+tysel init worker --template worker --manifest-format json --package-json none --yes
+tysel init tool --template mcp --package-json none --no-tests --yes
 ```
 
 ## `tysel config`

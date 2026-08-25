@@ -1,29 +1,21 @@
 # Example gallery
 
-The repository examples are runnable acceptance paths, not isolated snippets.
-Each tree includes source, a manifest, and the exact commands used to verify
-it. The website catalog at `/examples` presents the same set as a scanable
-index; this page is the documentation source of truth.
-
-## Run from a checkout
-
-Build the developer tools once, then use `-C` so every command resolves paths
-from the selected example:
+Start a new application with the templates included in the installed CLI:
 
 ```sh
-cargo build --locked \
-  -p tysel-cli --bin tysel \
-  -p tysel-runtime --bin tysel-service \
-  -p tysel-isolate --bin tysel-worker
-export PATH="$PWD/target/debug:$PATH"
-
-tysel -C examples/hello-service config validate
-tysel -C examples/hello-service check
-tysel -C examples/hello-service run
+tysel init my-service --yes
+cd my-service
+tysel task verify
+tysel dev
 ```
 
-Isolated workers need `TYSEL_WORKER` set to the absolute `tysel-worker` path.
-Postgres, LLM, and MCP examples have extra environment in their README.
+The repository examples below are complete reference applications for
+capabilities beyond the starter templates; each linked tree includes source, a
+manifest, and its own README. Wasm Component entries instead link to
+version-matched downloadable starter guides. After putting a project in your
+workspace, run its commands from that directory with the published Tysel
+installation; you do not need to build Tysel or set a worker path. Postgres,
+LLM, and MCP examples require the extra environment documented in their README.
 
 ## Browse by capability
 
@@ -55,30 +47,30 @@ examples: they are intentionally outside the Tysel application contract. The
 
 | Example | Demonstrates | Try | Profile |
 | --- | --- | --- | --- |
-| [Hello service](https://github.com/wangcch/tysel/tree/main/examples/hello-service) | Fetch handler and one-executable build | `tysel -C examples/hello-service run` then `curl http://127.0.0.1:3000/hello` | `service`; no grants |
-| [Hono API](https://github.com/wangcch/tysel/tree/main/examples/hono-api) | Web-API-first npm router | `pnpm install` then `tysel -C examples/hono-api run` | `service`; run `tysel compat` |
+| [Hello service](https://github.com/wangcch/tysel/tree/main/examples/hello-service) | Fetch handler and one-executable build | `tysel run` then `curl http://127.0.0.1:3000/hello` | `service`; no grants |
+| [Hono API](https://github.com/wangcch/tysel/tree/main/examples/hono-api) | Web-API-first npm router | Install its Hono dependency, then run `tysel run` | `service`; run `tysel compat` |
 
 ## Storage
 
 | Example | Demonstrates | Try | Profile |
 | --- | --- | --- | --- |
-| [SQLite worker](https://github.com/wangcch/tysel/tree/main/examples/sqlite-worker) | Persistent counter, runtime-relative file | `tysel -C examples/sqlite-worker run` then `curl 'http://127.0.0.1:3000/?key=visits'` | `service`; SQLite |
-| [Postgres service](https://github.com/wangcch/tysel/tree/main/examples/postgres-service) | Named grant; URL stays in the host | `export TYSEL_POSTGRES_MAIN=…` then `tysel -C examples/postgres-service run` | `service`; `main:read-write` |
+| [SQLite worker](https://github.com/wangcch/tysel/tree/main/examples/sqlite-worker) | Persistent counter, runtime-relative file | `tysel run` then `curl 'http://127.0.0.1:3000/?key=visits'` | `service`; SQLite |
+| [Postgres service](https://github.com/wangcch/tysel/tree/main/examples/postgres-service) | Named grant; URL stays in the host | Set `TYSEL_POSTGRES_MAIN`, then run `tysel run` | `service`; `main:read-write` |
 
 ## Agents
 
 | Example | Demonstrates | Try | Profile |
 | --- | --- | --- | --- |
 | [Durable agent](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) | LLM effect, suspend, restart, approval, single save | `./demo.sh` in the example directory after setting the LLM endpoint | `service`; LLM, secret, SQLite, durable store |
-| [MCP tool](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool) | NDJSON MCP, validation, opaque secret handles | `export TYSEL_WORKER=…` then `tysel mcp` from the example directory | `isolated`; brokered secret only |
+| [MCP tool](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool) | NDJSON MCP, validation, opaque secret handles | `tysel mcp` from the example directory | `isolated`; brokered secret only |
 
 ## Isolation and Wasm
 
 | Example | Demonstrates | Try | Profile |
 | --- | --- | --- | --- |
-| [Isolated plugin](https://github.com/wangcch/tysel/tree/main/examples/isolated-plugin) | Denied fetch/fs probes and worker replacement | `export TYSEL_WORKER=…` then `tysel -C examples/isolated-plugin run` | `isolated`; host-facing capabilities remain denied |
-| [Rust Component](https://github.com/wangcch/tysel/tree/main/sdk/examples/rust-echo) | One-shot JSON task, no ambient WASI | `cd sdk/examples/rust-echo && printf '{"value":42}' \| tysel run` | `component`; experimental |
-| [Go Component](https://github.com/wangcch/tysel/tree/main/sdk/examples/go-echo) | Same world with committed Go bindings | `cd sdk/examples/go-echo && printf '{"value":42}' \| tysel run` | `component`; experimental |
+| [Isolated plugin](https://github.com/wangcch/tysel/tree/main/examples/isolated-plugin) | Denied fetch/fs probes and worker replacement | `tysel run` from the example directory | `isolated`; host-facing capabilities remain denied |
+| [Rust Component starter](wasm-component-rust.md) | One-shot JSON task, no ambient WASI | `printf '{"value":42}' \| tysel run` | `component`; experimental |
+| [Go Component starter](wasm-component-go.md) | Same world with committed Go bindings | `printf '{"value":42}' \| tysel run` | `component`; experimental |
 
 Review the [execution profile](../concepts/execution-profiles.md) and
 [capability matrix](../capabilities/README.md) before adapting an example for

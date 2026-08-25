@@ -36,6 +36,10 @@ Sign artifacts and verify release or reproducibility evidence.
 | `verify-reproducibility` | `<ARTIFACT> --evidence <file> --target <triple>` | `--lockfile` defaults to `Cargo.lock`. |
 | `sign-artifact` | `<ARTIFACT> --target <triple> --key <key>` | Bind an artifact to target metadata. |
 | `verify-artifact` | `<ARTIFACT> --trust <key> --target <triple>` | Verify artifact and target binding. |
+| `verify-metadata` | `<DOCUMENT> <SIGNATURE> --trust <policy>` | Authenticate signed metadata or a platform-neutral release asset. |
+
+`verify-metadata` checks the document digest, Ed25519 signature, signing-key
+status, and policy validity. It does not modify the document or trust policy.
 
 Private signing material must not be stored in the repository or passed
 through logs. Use subcommand `--help` for the exact installed evidence format.

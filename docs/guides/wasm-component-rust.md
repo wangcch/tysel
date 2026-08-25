@@ -1,34 +1,66 @@
 # Build a Rust Wasm Component
 
-This guide builds the repository's Rust fixture, validates its Component ABI,
-runs one JSON task, and packages it as a native executable.
+This guide builds a Rust guest from the published Tysel Component starter,
+validates its ABI, runs one JSON task, and packages it as a native executable.
 
 ## Prerequisites
 
-Tysel and its Component SDK have no tagged public release yet. Work from one
-repository checkout so the runtime, WIT, SDK, and fixture versions match.
-
 Install:
 
-- the Tysel [source-build prerequisites](../install.md#current-availability);
+- the published Tysel [toolchain](../install.md);
 - stable Rust with the `wasm32-unknown-unknown` target;
 - Bytecode Alliance `wasm-tools` `1.247.0`.
 
 ```sh
 cargo install wasm-tools --version 1.247.0 --locked
 rustup target add wasm32-unknown-unknown
-cargo build --locked --release \
-  -p tysel-cli --bin tysel \
-  -p tysel-runtime --bin tysel-service
-export PATH="$PWD/target/release:$PATH"
+tysel doctor --install
 ```
+
+## Download the starter
+
+Each Tysel GitHub Release includes a version-matched starter bundle. Download
+and verify it, then enter the Rust project:
+
+```sh
+version="$(tysel --version | awk '{print $2}')"
+release="https://github.com/wangcch/tysel/releases/download/v${version}"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz.sha256"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz.sig.json"
+expected="$(tr -d '[:space:]' < tysel-component-starters.tar.gz.sha256)"
+actual="$(shasum -a 256 tysel-component-starters.tar.gz | awk '{print $1}')"
+test "$actual" = "$expected"
+tysel release verify-metadata \
+  tysel-component-starters.tar.gz \
+  tysel-component-starters.tar.gz.sig.json \
+  --trust "${TYSEL_HOME:-$HOME/.tysel}/trust.json"
+tar -xzf tysel-component-starters.tar.gz
+cd tysel-component-starters/rust-echo
+```
+
+The immutable tag comes from the installed CLI, so the bundle and native
+toolchain stay on the same release. The bundle vendors the matching
+`tysel-component-sdk` source and Component WIT package, and pins the tested
+`wit-bindgen` version. It does not require a Tysel repository checkout.
+If Tysel was installed under a custom managed prefix without `TYSEL_HOME`, pass
+that prefix's `trust.json` to `--trust`.
+
+For a project created without the starter, depend on the public SDK crate and
+copy the matching WIT package into the project:
+
+```toml
+tysel-component-sdk = "0.1.0"
+```
+
+The crate version follows the Tysel product release. The WIT contract keeps its
+independent `tysel:component/task@0.4.0` ABI version.
 
 ## Build the guest
 
-From the repository root:
+From `tysel-component-starters/rust-echo`:
 
 ```sh
-cd sdk/examples/rust-echo
 cargo build --target wasm32-unknown-unknown --release
 wasm-tools component new \
   target/wasm32-unknown-unknown/release/tysel_rust_echo_component.wasm \
@@ -41,7 +73,7 @@ directly to Tysel fails validation.
 
 ## Validate and run
 
-The fixture manifest selects `profile = "component"` and the generated entry.
+The starter manifest selects `profile = "component"` and the generated entry.
 
 ```sh
 tysel check
@@ -72,7 +104,7 @@ SDK on the target host. Builds still target the build host.
 
 | Symptom | Check |
 | --- | --- |
-| `run` export or ABI error | Regenerate from `wit/component/task.wit` and use world `task`. |
+| `run` export or ABI error | Use the WIT package shipped with the matching starter and world `task`. |
 | Core module rejected | Run `wasm-tools component new` and point the manifest at the resulting Component. |
 | Input JSON error | Send exactly one JSON value and close stdin. |
 | Component exceeds a limit | Check [Component runtime limits](../reference/component/runtime.md#resource-bounds). |

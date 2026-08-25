@@ -32,16 +32,16 @@ isolated plugins, and durable agents.
 
 ## Install
 
-The managed installer is [`install.sh`](install.sh). There is no tagged binary
-release yet; when the first release is published, the official command will be:
+Install the latest published release on Linux or macOS:
 
 ```sh
 curl -fsSL https://github.com/wangcch/tysel/releases/latest/download/install.sh | sh
 tysel doctor --install
 ```
 
-Until then, follow the [installation guide](docs/install.md) to build Tysel from
-source.
+The installer adds the complete native toolchain; cloning this repository,
+Rust, Node.js, and npm are not required. See the [installation guide](docs/install.md)
+for version pinning, upgrades, rollback, and Windows support.
 
 ## Try it
 

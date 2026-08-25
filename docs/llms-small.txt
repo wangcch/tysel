@@ -13,7 +13,7 @@ Important boundaries:
 - The `isolated` profile uses a worker process; Linux is its production security target.
 - The Component profile is experimental.
 - Builds currently target the host platform; cross-compilation is not implemented.
-- There is no tagged binary release yet; install from source.
+- Install the published native toolchain with the managed installer; do not clone the source repository for normal use.
 
 Start with:
 
