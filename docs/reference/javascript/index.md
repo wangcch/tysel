@@ -14,8 +14,9 @@ partial, and intentionally excluded behavior for every global.
 | Security | `crypto.getRandomValues`, supported `crypto.subtle` digest and HMAC operations |
 | Realtime | inbound and outbound `WebSocket` subsets |
 
-The complete support and exclusion matrix, plus ownership and test evidence, is in
-[JavaScript runtime compatibility](../../architecture/javascript-runtime-compatibility.md).
+Use the per-global pages in the
+[public JavaScript API reference](https://tysel.dev/reference/javascript/) for
+the complete supported and excluded behavior.
 
 `partial` is a supported subset, not a promise that undocumented browser
 behavior works. Tysel is server-side and does not implement browser policy,

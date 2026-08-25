@@ -1,9 +1,7 @@
 ---
 title: "Application module"
-description: "An application default-exports a `TyselApp` object. Every member is optional, but the selected command or protocol requires the corresponding handler."
+description: "An application default-exports a TyselApp object. Every member is optional, but the selected command or protocol requires the corresponding handler."
 ---
-
-# Application module
 
 An application default-exports a `TyselApp` object. Every member is optional,
 but the selected command or protocol requires the corresponding handler.
@@ -24,7 +22,8 @@ type FetchHandler = (request: Request) => Response | Promise<Response>;
 
 The runtime calls `fetch` for inbound HTTP requests. It must return a
 `Response` or a promise of one. Request and response bodies are bounded and
-single-use according to the [JavaScript API compatibility matrix](/docs/architecture/javascript-runtime-compatibility).
+single-use according to the
+[Request and Response contract](https://tysel.dev/reference/javascript/request/).
 
 ```ts
 export default {

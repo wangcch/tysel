@@ -1,9 +1,7 @@
 ---
 title: "Limits and defaults"
-description: "This page collects limits that otherwise span the manifest, protocols, and host implementations. Manifest values are configuration contracts. Entries marked **implementation bound** describe the current runtime and may e"
+description: "This page collects limits that otherwise span the manifest, protocols, and host implementations. Manifest values are configuration contracts."
 ---
-
-# Limits and defaults
 
 This page collects limits that otherwise span the manifest, protocols, and
 host implementations. Manifest values are configuration contracts. Entries
@@ -104,7 +102,7 @@ request limit. The smaller applicable bound wins.
 | Execution | 30 seconds | 60 seconds |
 | Input / output | 1 MiB / 1 MiB | 1 MiB / 1 MiB |
 | Guest error retained | — | 4 KiB |
-| AOT artifact | — | 64 MiB |
+| Host-specific optimization metadata | — | 64 MiB |
 
 Limits are generally measured in bytes, not Unicode characters. Reject or
 chunk oversized inputs before calling a capability, and do not expose native

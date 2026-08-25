@@ -55,5 +55,5 @@ tysel test
 ```
 
 Also review the
-[JavaScript runtime compatibility matrix](../architecture/javascript-runtime-compatibility.md)
-for the exact Web API subset.
+[JavaScript API reference](https://tysel.dev/reference/javascript/)
+for the exact supported Web API subset.

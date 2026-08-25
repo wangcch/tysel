@@ -6,8 +6,6 @@ executes with explicit limits. The isolated profile moves application execution 
 restricted worker process on Linux. Durable tasks use a persisted event log and leased
 scheduler lifecycle so work can suspend and resume without replaying completed effects.
 
-Accepted design decisions are recorded in the
-[architecture decision records](../adr/index.md).
 The main system boundaries are:
 
 - Packaging: bundle, manifest, TAP trailer, and native service stub
@@ -17,11 +15,8 @@ The main system boundaries are:
 - Tasks: Cron, Queue, MCP, TaskRPC, and durable execution
 - Operations: structured logs, OTLP export, release evidence, and recovery procedures
 
-The [JavaScript runtime convergence contract](javascript-runtime-convergence.md)
-defines ownership between `runtime-js`, QuickJS bindings, engine-neutral APIs,
-and application packages.
-The [JavaScript runtime compatibility matrix](javascript-runtime-compatibility.md)
-lists the supported server-side Web API subset and explicit exclusions.
+The public [JavaScript API reference](../reference/javascript/index.md) lists the
+supported server-side Web API subset and explicit exclusions.
 
 Production deployment and incident procedures are in the
 [Production operations runbook](../operations/production.md).

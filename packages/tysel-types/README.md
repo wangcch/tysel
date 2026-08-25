@@ -40,4 +40,4 @@ feedback but does not polyfill Tysel APIs under Node.js. The package version
 must match the native Tysel toolchain.
 
 Underscored native bindings are intentionally private and are not declared.
-See the [runtime API](../../docs/api/runtime.md).
+See the [runtime API](https://tysel.dev/reference/runtime/).

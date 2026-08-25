@@ -1,9 +1,7 @@
 ---
 title: "Host capabilities"
-description: "Host methods live on `globalThis.tysel`. Type availability does not grant authority: the execution profile, manifest permission, and host configuration must all permit the call."
+description: "Host methods live on globalThis.tysel. Type availability does not grant authority: the execution profile, manifest permission, and host configuration must all permit the call."
 ---
-
-# Host capabilities
 
 Host methods live on `globalThis.tysel`. Type availability does not grant
 authority: the execution profile, manifest permission, and host configuration
@@ -116,5 +114,6 @@ An accepted inbound socket has `readyState`, `onmessage`, `onclose`, `onerror`,
 `message`, `close`, and `error`. `send` and `close` return promises. The
 accepted-socket type is separate from the outbound Web `WebSocket` global.
 
-Use the [JavaScript API compatibility matrix](/docs/architecture/javascript-runtime-compatibility)
-for the exact WebSocket and outbound `fetch` subset.
+Use the [WebSocket contract](https://tysel.dev/reference/javascript/websocket/)
+and [fetch contract](https://tysel.dev/reference/javascript/fetch/) for the
+exact supported subsets.

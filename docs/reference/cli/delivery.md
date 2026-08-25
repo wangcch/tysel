@@ -21,9 +21,10 @@ tysel build [ENTRY] [OPTIONS]
 compatibility, SBOM, license, and evidence sidecars next to the artifact.
 
 When `ENTRY` ends in `.wasm`, `build` validates the Component Model task ABI
-and imports, retains portable source, and embeds host-specific AOT metadata.
-The resulting executable remains a one-shot JSON task rather than an HTTP
-server. See [Wasm Component runtime](../component/runtime.md#portable-source-and-aot).
+and imports, retains the portable Component, and may include compatible
+host-specific optimization metadata. The resulting executable remains a
+one-shot JSON task rather than an HTTP server. See
+[Wasm Component runtime](../component/runtime.md#portable-component-contract).
 
 ```sh
 tysel build --release --output dist/orders

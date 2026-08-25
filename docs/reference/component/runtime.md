@@ -1,11 +1,10 @@
 # Component runtime and WASI
 
-Tysel executes Components with Wasmtime's Component Model engine under a
-bounded `isolated-task` trust mode. The workspace currently pins the Wasmtime
-runtime crates to `36.0.13`. AOT packages currently carry the separate
-compatibility label `32.0.1`; that label is implementation metadata, not an
-application ABI or an accurate dependency-version report. This known drift
-must be resolved before relying on the label for cross-version compatibility.
+Tysel executes portable Wasm Components under a bounded `isolated-task` trust
+mode. Application compatibility is defined by the public Component ABI,
+accepted WASI imports, and documented resource limits. The embedded engine and
+its dependency versions are not application APIs or portable compatibility
+guarantees.
 
 ## Invocation lifecycle
 
@@ -53,26 +52,27 @@ preopens.
 | JSON input | 1 MiB | 1 MiB |
 | JSON output | 1 MiB | 1 MiB |
 | Guest error retained | 4 KiB | 4 KiB |
-| Host-specific AOT payload | — | 64 MiB |
+| Host-specific optimization metadata | — | 64 MiB |
 | Component instances / memories / tables | 32 / 8 / 8 | Fixed implementation bounds |
 
 Byte limits measure encoded UTF-8, not characters. Fuel and epoch interruption
 bound CPU loops; host filesystem calls also share the invocation deadline.
 
-## Portable source and AOT
+## Portable Component contract
 
-`tysel build` retains the portable Component and produces host-specific AOT
-metadata bound to:
+`tysel build` retains the portable Component as the application artifact.
+Host-specific optimization metadata, when present, is accepted only when it is
+bound to:
 
 - Component ABI version;
-- Wasmtime version and engine compatibility hash;
+- runtime engine compatibility identity;
 - host architecture and operating system;
 - SHA-256 of the portable source.
 
-The runtime rejects incompatible or tampered AOT metadata. The current launcher
-still compiles and executes the retained portable source because authenticated
-AOT trust handoff is not yet connected to native deserialization. Do not claim
-AOT startup behavior until that boundary is implemented and measured.
+The runtime rejects incompatible or tampered optimization metadata and can
+execute from the retained portable Component. Portability and correctness are
+defined by the portable Component contract; optional host-specific metadata
+does not imply a startup-performance guarantee.
 
 See [Limits and defaults](../limits-and-defaults.md) for the cross-runtime
 inventory and [Component ABI](abi.md) for the guest export contract.

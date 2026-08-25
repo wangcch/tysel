@@ -111,5 +111,6 @@ An accepted inbound socket has `readyState`, `onmessage`, `onclose`, `onerror`,
 `message`, `close`, and `error`. `send` and `close` return promises. The
 accepted-socket type is separate from the outbound Web `WebSocket` global.
 
-Use the [JavaScript API compatibility matrix](../../architecture/javascript-runtime-compatibility.md)
-for the exact WebSocket and outbound `fetch` subset.
+Use the [WebSocket contract](https://tysel.dev/reference/javascript/websocket/)
+and [fetch contract](https://tysel.dev/reference/javascript/fetch/) for the
+exact supported subsets.

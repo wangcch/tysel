@@ -3,8 +3,6 @@ title: "Build and image commands"
 description: "Bundle an application and emit one native executable."
 ---
 
-# Build and image commands
-
 ## `tysel build`
 
 Bundle an application and emit one native executable.
@@ -26,9 +24,10 @@ tysel build [ENTRY] [OPTIONS]
 compatibility, SBOM, license, and evidence sidecars next to the artifact.
 
 When `ENTRY` ends in `.wasm`, `build` validates the Component Model task ABI
-and imports, retains portable source, and embeds host-specific AOT metadata.
-The resulting executable remains a one-shot JSON task rather than an HTTP
-server. See [Wasm Component runtime](/reference/component/runtime#portable-source-and-aot).
+and imports, retains the portable Component, and may include compatible
+host-specific optimization metadata. The resulting executable remains a
+one-shot JSON task rather than an HTTP server. See
+[Wasm Component runtime](/reference/component/runtime#portable-component-contract).
 
 ```sh
 tysel build --release --output dist/orders

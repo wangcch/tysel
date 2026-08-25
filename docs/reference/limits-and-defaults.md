@@ -99,7 +99,7 @@ request limit. The smaller applicable bound wins.
 | Execution | 30 seconds | 60 seconds |
 | Input / output | 1 MiB / 1 MiB | 1 MiB / 1 MiB |
 | Guest error retained | — | 4 KiB |
-| AOT artifact | — | 64 MiB |
+| Host-specific optimization metadata | — | 64 MiB |
 
 Limits are generally measured in bytes, not Unicode characters. Reject or
 chunk oversized inputs before calling a capability, and do not expose native

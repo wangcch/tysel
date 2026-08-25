@@ -19,7 +19,8 @@ type FetchHandler = (request: Request) => Response | Promise<Response>;
 
 The runtime calls `fetch` for inbound HTTP requests. It must return a
 `Response` or a promise of one. Request and response bodies are bounded and
-single-use according to the [JavaScript API compatibility matrix](../../architecture/javascript-runtime-compatibility.md).
+single-use according to the
+[Request and Response contract](https://tysel.dev/reference/javascript/request/).
 
 ```ts
 export default {

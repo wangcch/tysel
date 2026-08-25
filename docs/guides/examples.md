@@ -9,13 +9,21 @@ tysel task verify
 tysel dev
 ```
 
-The repository examples below are complete reference applications for
-capabilities beyond the starter templates; each linked tree includes source, a
-manifest, and its own README. Wasm Component entries instead link to
-version-matched downloadable starter guides. After putting a project in your
-workspace, run its commands from that directory with the published Tysel
-installation; you do not need to build Tysel or set a worker path. Postgres,
-LLM, and MCP examples require the extra environment documented in their README.
+The examples below are complete reference applications for capabilities beyond
+the starter templates. Download the source archive matching the installed
+Tysel release, then enter the example you want:
+
+```sh
+version="$(tysel --version | awk '{print $2}')"
+curl -fsSL "https://github.com/wangcch/tysel/archive/refs/tags/v${version}.tar.gz" | tar -xz
+cd "tysel-${version}/examples/hello-service"
+```
+
+Replace `hello-service` with another example directory from this page. This
+downloads version-matched application source; it does not require a fork,
+repository clone, Tysel build, or worker-path override. Wasm Component entries
+instead use their version-matched starter bundles. Postgres, LLM, and MCP
+examples require the extra environment documented in their README.
 
 ## Browse by capability
 

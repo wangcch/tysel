@@ -40,7 +40,7 @@ or the sections below to jump to a contract page.
 | --- | --- |
 | [Wasm Components](component/index.md) | Profile, trust mode, task boundary |
 | [Component ABI](component/abi.md) | `tysel:component/task` world |
-| [Runtime and WASI](component/runtime.md) | Wasmtime limits and restricted WASI |
+| [Runtime and WASI](component/runtime.md) | Portable execution limits and restricted WASI |
 | [Component capabilities](component/capabilities.md) | Filesystem WIT imports |
 | [Rust SDK](component/rust-sdk.md) | Guest types and dispatcher |
 | [Go SDK](component/go-sdk.md) | Generated bindings |

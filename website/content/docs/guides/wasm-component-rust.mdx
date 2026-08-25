@@ -3,8 +3,6 @@ title: "Build a Rust Wasm Component"
 description: "This guide builds a Rust guest from the published Tysel Component starter, validates its ABI, runs one JSON task, and packages it as a native executable."
 ---
 
-# Build a Rust Wasm Component
-
 This guide builds a Rust guest from the published Tysel Component starter,
 validates its ABI, runs one JSON task, and packages it as a native executable.
 
@@ -101,9 +99,10 @@ tysel build --release
 printf '{"value":"packaged"}' | ./dist/rust-echo-component
 ```
 
-The output executable includes the portable Component, the native host, and
-host-specific AOT metadata. It does not need Rust, Go, Wasmtime, or the guest
-SDK on the target host. Builds still target the build host.
+The output executable includes the portable Component and native host, and may
+include compatible host-specific optimization metadata. It does not need Rust,
+Go, a separately installed runtime engine, or the guest SDK on the target host.
+Builds still target the build host.
 
 ## Troubleshooting
 

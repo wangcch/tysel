@@ -87,9 +87,9 @@ tysel build --release
 printf '{"value":"packaged"}' | ./dist/go-echo-component
 ```
 
-The executable retains portable Component source for compatibility and embeds
-host-specific AOT metadata. It runs without Go or `componentize-go` on the
-target host.
+The executable retains the portable Component and may include compatible
+host-specific optimization metadata. It runs without Go or `componentize-go`
+on the target host; portability does not depend on that optional metadata.
 
 ## Troubleshooting
 

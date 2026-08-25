@@ -35,7 +35,7 @@ limits, and best-effort cgroup memory enforcement. Supervisor recovery replaces
 a crashed worker. macOS isolation supports development checks only and is not
 the production sandbox gate.
 
-The experimental `component` profile runs a Wasm Component in Wasmtime under
+The experimental `component` profile runs a portable Wasm Component under
 `isolated-task` trust mode. It receives an empty WASI context and no application
 capability by default. Effective filesystem access requires the guest import,
 manifest root, and deployment policy to intersect. Memory, fuel, time, input,

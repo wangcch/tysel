@@ -26,5 +26,5 @@ path. Public applications should export a conforming object directly and use
 `@tysel/types` for declarations. If this package is published later, its
 version will need to match the native toolchain.
 
-See the [runtime API](../../docs/api/runtime.md) and
+See the [runtime API](https://tysel.dev/reference/runtime/) and
 [durable execution guide](../../docs/concepts/durable-execution.md).

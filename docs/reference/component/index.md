@@ -30,7 +30,7 @@ than Tysel's TypeScript service runtime.
 | `tysel check` | Validates the Component binary, task ABI, WASI imports, capability imports, and manifest grants. TypeScript checking and Node scanning do not apply. |
 | `tysel dev` | Fails. Components are one-shot tasks and do not run as reloadable HTTP services. |
 | `tysel run` | Reads one JSON value from stdin, invokes the Component once, writes one JSON value and a newline to stdout, then exits. |
-| `tysel build` | Packages the portable Component and host-specific AOT metadata into one native executable. |
+| `tysel build` | Packages the portable Component into one native executable and may include compatible host-specific optimization metadata. |
 | Built executable | Uses the same one-shot stdin/stdout contract. Deployment capability policy is deny-by-default. |
 
 ```sh
@@ -55,7 +55,7 @@ printf '{"value":42}' | ./dist/echo-component
 | Need | Reference |
 | --- | --- |
 | Exact task world and JSON boundary | [Component ABI](abi.md) |
-| Wasmtime execution, restricted WASI, AOT behavior, and limits | [Runtime and WASI](runtime.md) |
+| Portable execution, restricted WASI, optimization metadata, and limits | [Runtime and WASI](runtime.md) |
 | Filesystem imports and three-layer grants | [Component capabilities](capabilities.md) |
 | Rust guest types and dispatcher | [Rust SDK](rust-sdk.md) |
 | Go guest dispatcher and generated bindings | [Go SDK](go-sdk.md) |

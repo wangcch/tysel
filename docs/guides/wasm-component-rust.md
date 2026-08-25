@@ -96,9 +96,10 @@ tysel build --release
 printf '{"value":"packaged"}' | ./dist/rust-echo-component
 ```
 
-The output executable includes the portable Component, the native host, and
-host-specific AOT metadata. It does not need Rust, Go, Wasmtime, or the guest
-SDK on the target host. Builds still target the build host.
+The output executable includes the portable Component and native host, and may
+include compatible host-specific optimization metadata. It does not need Rust,
+Go, a separately installed runtime engine, or the guest SDK on the target host.
+Builds still target the build host.
 
 ## Troubleshooting
 

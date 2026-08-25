@@ -25,7 +25,7 @@ export default app;
 | Secrets, SQLite, Postgres, filesystem, LLM, and WebSocket APIs | [Host capabilities](capabilities.md) |
 | Replay-safe workflows and signals | [Durable API](durable.md) |
 | Test declaration, assertions, and handler invocation | [Testing API](testing.md) |
-| `Request`, `Response`, `Headers`, `fetch`, crypto, timers, and other globals | [JavaScript API compatibility](../../architecture/javascript-runtime-compatibility.md) |
+| `Request`, `Response`, `Headers`, `fetch`, crypto, timers, and other globals | [JavaScript API reference](../javascript/index.md) |
 
 ## Stability boundary
 

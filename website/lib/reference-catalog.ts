@@ -128,7 +128,7 @@ export const referenceCatalog: ReferenceSection[] = [
       },
       {
         name: "Runtime and WASI",
-        description: "Wasmtime limits and restricted WASI",
+        description: "Portable execution limits and restricted WASI",
         href: "/reference/component/runtime",
       },
       {

@@ -248,7 +248,6 @@ memory_mb = 128
 cpu_ms_per_turn = 50
 request_timeout_ms = 30000
 max_in_flight = 1000
-max_response_mb = 16
 max_request_mb = 16
 
 [durable]
@@ -257,8 +256,6 @@ path = "./data/tysel.db"
 
 [observability]
 logs = "json"
-traces = "http://127.0.0.1:4318/v1/traces"
-metrics = "http://127.0.0.1:4318/v1/metrics"
 
 [tasks.verify]
 description = "Check and test"

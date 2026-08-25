@@ -7,7 +7,19 @@ const websiteRoot = path.resolve(import.meta.dirname, "..");
 const docsOut = path.join(websiteRoot, "content/docs");
 const referenceOut = path.join(websiteRoot, "content/reference");
 
-const skip = new Set(["website-plan.md", "documentation-roadmap.md"]);
+const publicDocs = {
+  files: new Set(["index.md", "install.md", "getting-started.md", "architecture/README.md"]),
+  directories: new Set([
+    "guides",
+    "concepts",
+    "capabilities",
+    "compatibility",
+    "security",
+    "operations",
+    "performance",
+    "reference",
+  ]),
+};
 
 const titles = {
   "index.md": "Tysel documentation",
@@ -26,7 +38,6 @@ const titles = {
   "operations/production.md": "Production operations",
   "performance/README.md": "Performance and evidence",
   "architecture/README.md": "Architecture",
-  "adr/index.md": "Architecture decision records",
 };
 
 function walk(dir) {
@@ -41,6 +52,12 @@ function walk(dir) {
 
 function posixRel(rel) {
   return rel.split(path.sep).join("/");
+}
+
+function shouldPublish(rel) {
+  const normalized = posixRel(rel);
+  const [directory] = normalized.split("/");
+  return publicDocs.files.has(normalized) || publicDocs.directories.has(directory);
 }
 
 function isReferenceRel(rel) {
@@ -90,7 +107,12 @@ function rewriteLinks(content, fromRel) {
     }
 
     const resolved = path.normalize(path.join(path.dirname(fromRel), file));
-    if (resolved.startsWith("..") || skip.has(path.basename(resolved))) return match;
+    if (resolved.startsWith("..")) return match;
+    if (!shouldPublish(resolved)) {
+      throw new Error(
+        `Public document ${posixRel(fromRel)} links non-public document ${posixRel(resolved)}`,
+      );
+    }
 
     return `](${publicUrlFromRel(resolved)}${hash ? `#${hash}` : ""})`;
   });
@@ -106,22 +128,79 @@ function extractTitle(content, rel) {
 function extractDescription(content) {
   const lines = content.split("\n");
   let started = false;
+  let inFence = false;
   const para = [];
+  const candidates = [];
+
+  function flush() {
+    if (!para.length) return;
+    candidates.push(para.splice(0).join(" "));
+  }
+
   for (const line of lines) {
+    const trimmed = line.trim();
     if (line.startsWith("#")) {
+      flush();
       started = true;
       continue;
     }
     if (!started) continue;
-    if (line.trim() === "") {
-      if (para.length) break;
+    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+      flush();
+      inFence = !inFence;
       continue;
     }
-    if (line.startsWith("```") || line.startsWith("|") || line.startsWith(">")) break;
-    para.push(line.trim());
-    if (para.join(" ").length > 180) break;
+    if (inFence) continue;
+    if (trimmed === "") {
+      flush();
+      continue;
+    }
+    if (
+      trimmed.startsWith("|") ||
+      trimmed.startsWith(">") ||
+      /^(?:[-+*]|\d+\.)\s+/.test(trimmed)
+    ) {
+      flush();
+      continue;
+    }
+    para.push(trimmed);
   }
-  return para.join(" ").replaceAll('"', "'").slice(0, 220);
+  flush();
+
+  const description = candidates
+    .map((candidate) =>
+      candidate
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/\*\*([^*]+)\*\*/g, "$1")
+        .replace(/__([^_]+)__/g, "$1")
+        .replace(/~~([^~]+)~~/g, "$1")
+        .replace(/\*([^*]+)\*/g, "$1")
+        .replaceAll('"', "'")
+        .replace(/^(?:status|状态)\s*[:：][^.。]+[.。]\s*/i, "")
+        .replace(/[:：]$/, ".")
+        .trim(),
+    )
+    .find((candidate) => candidate.length >= 40);
+
+  const plain = (description ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (plain.length <= 180) return plain;
+  if (plain.length <= 220 && /[.!?]$/.test(plain)) return plain;
+
+  const preview = plain.slice(0, 221);
+  const sentenceEnds = [
+    preview.lastIndexOf(". "),
+    preview.lastIndexOf("? "),
+    preview.lastIndexOf("! "),
+  ];
+  const sentenceEnd = Math.max(...sentenceEnds);
+  if (sentenceEnd >= 40) return plain.slice(0, sentenceEnd + 1).trim();
+
+  const cutoff = plain.slice(0, 181).lastIndexOf(" ");
+  return `${plain.slice(0, cutoff).replace(/[,:;]$/, "").trim()}…`;
 }
 
 function escapeMdx(content) {
@@ -156,9 +235,10 @@ function escapeMdx(content) {
 
 function writeMdx(outFile, title, description, body) {
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  const bodyWithoutTitle = body.replace(/^\s*#\s+.*\r?\n(?:\r?\n)?/, "");
   fs.writeFileSync(
     outFile,
-    `---\ntitle: ${JSON.stringify(title)}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`,
+    `---\ntitle: ${JSON.stringify(title)}\ndescription: ${JSON.stringify(description)}\n---\n\n${bodyWithoutTitle}`,
   );
 }
 
@@ -207,7 +287,7 @@ ${supported}
 ${unsupported}
 
 See the [JavaScript API index](/reference/javascript) and the
-[architecture notes](/docs/architecture/javascript-runtime-compatibility).
+[npm compatibility guide](/docs/compatibility).
 `,
     );
   }
@@ -232,9 +312,6 @@ inventory is \`runtime-js/web-api/compatibility.json\`.
 | API | Status |
 | --- | --- |
 ${table}
-
-Rationale and evidence live in
-[JavaScript runtime compatibility](/docs/architecture/javascript-runtime-compatibility).
 `,
   );
 
@@ -253,7 +330,7 @@ fs.mkdirSync(referenceOut, { recursive: true });
 
 for (const file of walk(docsRoot)) {
   const rel = path.relative(docsRoot, file);
-  if (skip.has(path.basename(rel))) continue;
+  if (!shouldPublish(rel)) continue;
 
   let body = fs.readFileSync(file, "utf8");
   if (body.startsWith("---\n")) {
@@ -291,7 +368,6 @@ const docsMetas = {
       "performance",
       "---Internals---",
       "architecture",
-      "adr",
     ],
   },
   "guides/meta.json": { title: "Guides", pages: ["index", "examples"] },
@@ -306,23 +382,7 @@ const docsMetas = {
   },
   "architecture/meta.json": {
     title: "Architecture",
-    pages: ["index", "javascript-runtime-compatibility", "javascript-runtime-convergence"],
-  },
-  "adr/meta.json": {
-    title: "Decisions",
-    pages: [
-      "index",
-      "001-runtime-core-rust",
-      "002-quickjs-ng-engine",
-      "003-web-api-first",
-      "004-build-once-ship-one-file",
-      "005-deny-by-default",
-      "006-process-isolation",
-      "007-durable-replay",
-      "008-wit-capability-abi",
-      "009-no-aot-on-v1-path",
-      "010-static-typescript-parallel",
-    ],
+    pages: ["index"],
   },
   "operations/meta.json": { title: "Operate", pages: ["production"] },
 };
@@ -369,7 +429,9 @@ for (const [rel, json] of Object.entries(referenceMetas)) {
   fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
 }
 
-const imported = walk(docsRoot).filter((file) => !skip.has(path.basename(file))).length;
+const imported = walk(docsRoot).filter(
+  (file) => shouldPublish(path.relative(docsRoot, file)),
+).length;
 console.log(
   `Imported ${imported} markdown pages and generated ${jsCount} JavaScript API pages.`,
 );
