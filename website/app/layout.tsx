@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist_Mono, Inter, Inter_Tight } from "next/font/google";
 import { RootProvider } from "fumadocs-ui/provider/next";
 import { SiteHeader } from "@/components/site-header";
+import { appName, siteUrl } from "@/lib/shared";
 import "./global.css";
 
 /** Body / UI — matches vite.dev (`Inter`). */
@@ -29,13 +30,26 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://tysel.dev"),
+  metadataBase: new URL(siteUrl),
+  applicationName: appName,
   title: {
     default: "Tysel — Write TypeScript. Ship a binary.",
     template: "%s · Tysel",
   },
   description:
     "A native TypeScript runtime for services and agents. One executable, explicit capabilities, and durable work that survives restarts.",
+  authors: [{ name: "Tysel contributors", url: "https://github.com/wangcch/tysel" }],
+  creator: "Tysel contributors",
+  publisher: appName,
+  category: "Developer tools",
+  openGraph: {
+    siteName: appName,
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+  },
   icons: {
     icon: "/brand/tysel-mark.svg",
   },

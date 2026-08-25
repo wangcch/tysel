@@ -1,10 +1,16 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { absoluteUrl, canonicalUrl } from "@/lib/shared";
 
 export const metadata: Metadata = {
   title: "Benchmarks",
   description:
     "Tysel benchmark methodology and release-admission gates, not marketing numbers.",
+  alternates: { canonical: canonicalUrl("/benchmarks") },
+  openGraph: {
+    url: canonicalUrl("/benchmarks"),
+    images: [absoluteUrl("/opengraph-image")],
+  },
 };
 
 const gates = [

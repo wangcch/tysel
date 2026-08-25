@@ -67,6 +67,11 @@ ossutil cp "$output/api/search" "${destination}api/search" --force \
 ossutil set-meta "${destination}_next/static/" \
   "Cache-Control:public,max-age=31536000,immutable" \
   --recursive --force --update -c "$config"
+for social_image in opengraph-image twitter-image; do
+  ossutil set-meta "${destination}${social_image}" \
+    "Content-Type:image/png#Cache-Control:public,max-age=300,must-revalidate" \
+    --force --update -c "$config"
+done
 
 # Keep the index/error behavior and supported redirects in source control.
 ossutil website --method put "oss://${ALIYUN_OSS_BUCKET}" \

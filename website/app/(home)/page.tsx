@@ -1,8 +1,59 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { ArtifactDemo } from "@/components/home/artifact-demo";
 import { FiveMinutes } from "@/components/home/five-minutes";
 import { InstallPanel } from "@/components/home/install-panel";
 import { RuntimeCapabilities } from "@/components/home/runtime-capabilities";
+import { StructuredData } from "@/components/seo/structured-data";
+import { absoluteUrl, canonicalUrl, githubUrl } from "@/lib/shared";
+
+const description =
+  "A native TypeScript runtime for services and agents. One executable, explicit capabilities, and durable work that survives restarts.";
+
+export const metadata: Metadata = {
+  alternates: { canonical: canonicalUrl() },
+  openGraph: {
+    url: canonicalUrl(),
+    title: "Tysel — Write TypeScript. Ship a binary.",
+    description,
+    images: [
+      {
+        url: absoluteUrl("/opengraph-image"),
+        width: 1200,
+        height: 630,
+        alt: "Tysel — Write TypeScript. Ship a binary.",
+      },
+    ],
+  },
+};
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${canonicalUrl()}#website`,
+      url: canonicalUrl(),
+      name: "Tysel",
+      description,
+      inLanguage: "en",
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${canonicalUrl()}#software`,
+      name: "Tysel",
+      description,
+      url: canonicalUrl(),
+      downloadUrl: absoluteUrl("/install.sh"),
+      softwareVersion: "0.1.0",
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "Linux, macOS",
+      isAccessibleForFree: true,
+      license: "https://www.apache.org/licenses/LICENSE-2.0",
+      sameAs: githubUrl,
+    },
+  ],
+};
 
 const proofs = [
   {
@@ -51,6 +102,7 @@ const contracts = [
 export default function HomePage() {
   return (
     <main>
+      <StructuredData data={jsonLd} />
       <section className="relative overflow-hidden border-b border-fd-border">
         <div className="home-atmosphere pointer-events-none absolute inset-0" />
         <div className="home-grid pointer-events-none absolute inset-0" />

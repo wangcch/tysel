@@ -9,11 +9,17 @@ import {
   type Example,
   type ExampleStatus,
 } from "@/lib/examples-catalog";
+import { absoluteUrl, canonicalUrl } from "@/lib/shared";
 
 export const metadata: Metadata = {
   title: "Examples",
   description:
     "Runnable Tysel acceptance paths for services, durable agents, isolation, and Wasm Components.",
+  alternates: { canonical: canonicalUrl("/examples") },
+  openGraph: {
+    url: canonicalUrl("/examples"),
+    images: [absoluteUrl("/opengraph-image")],
+  },
 };
 
 const statusLabel: Record<ExampleStatus, string> = {
@@ -21,6 +27,10 @@ const statusLabel: Record<ExampleStatus, string> = {
   experimental: "Experimental",
   recipe: "Recipe",
 };
+
+const examplesDownload = `version="$(tysel --version | awk '{print $2}')"
+curl -fsSL "https://github.com/wangcch/tysel/archive/refs/tags/v\${version}.tar.gz" | tar -xz
+cd "tysel-\${version}/examples/hello-service"`;
 
 function MetaLine({ example }: { example: Example }) {
   return (
@@ -50,7 +60,7 @@ function ExampleRow({ example }: { example: Example }) {
             rel={sourceExternal ? "noreferrer" : undefined}
             className="underline-offset-4 hover:underline"
           >
-            {example.sourceLabel ?? "Source"}
+            {example.sourceLabel ?? "Development source"}
           </Link>
           {example.docsHref ? (
             <Link
@@ -91,11 +101,25 @@ export default function ExamplesPage() {
         Pick a profile. Open a project. Run it.
       </h1>
       <p className="mt-4 max-w-2xl text-sm leading-6 text-fd-muted-foreground">
-        Each entry links to a complete example project or a version-matched
-        Component starter guide. Put the project in your workspace, then run
-        the displayed command from its directory with an installed Tysel
-        release.
+        Each entry is a complete example project or a version-matched Component
+        starter guide. Download the examples matching your installed release,
+        then run the displayed command from the selected directory.
       </p>
+
+      <section className="mt-10 max-w-3xl border border-fd-border">
+        <div className="flex items-center justify-between border-b border-fd-border px-4 py-2 font-mono text-[11px] text-fd-muted-foreground">
+          <span>download version-matched examples</span>
+          <CopyButton value={examplesDownload} />
+        </div>
+        <pre className="overflow-x-auto px-4 py-4 font-mono text-[12px] leading-5">
+          <code>{examplesDownload}</code>
+        </pre>
+        <p className="border-t border-fd-border px-4 py-3 text-xs leading-5 text-fd-muted-foreground">
+          Replace <code>hello-service</code> with another directory listed below.
+          This downloads application source without a fork, repository clone,
+          or local Tysel build.
+        </p>
+      </section>
 
       <section className="mt-12 border border-fd-border">
         <div className="border-b border-fd-border px-5 py-4 sm:flex sm:items-start sm:justify-between sm:gap-8">
@@ -121,7 +145,7 @@ export default function ExamplesPage() {
                 rel="noreferrer"
                 className="underline-offset-4 hover:underline"
               >
-                Source
+                Development source
               </Link>
               <Link
                 href={featuredExample.docsHref!}
