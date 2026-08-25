@@ -1,0 +1,60 @@
+---
+title: "Application limits"
+description: "The optional `[limits]` table supplies application-level budgets. All fields are non-negative integers; omitted fields receive the values below."
+---
+
+# Application limits
+
+The optional `[limits]` table supplies application-level budgets. All fields
+are non-negative integers; omitted fields receive the values below.
+
+| Field | Default | Unit | Current runtime use |
+| --- | ---: | --- | --- |
+| `memory_mb` | `128` | MiB | QuickJS or isolated-worker memory budget. |
+| `cpu_ms_per_turn` | `50` | ms | CPU budget for one JavaScript turn. |
+| `request_timeout_ms` | `30000` | ms | Invocation deadline; also bounds configured LLM calls. |
+| `max_in_flight` | `1000` | requests | Maximum admitted HTTP requests, held through response-body completion. |
+| `max_response_mb` | `16` | MiB | Declared response target; not yet propagated into the packaged HTTP server. |
+| `max_request_mb` | `16` | MiB | Inbound request-body limit. |
+
+```toml
+[limits]
+memory_mb = 256
+cpu_ms_per_turn = 100
+request_timeout_ms = 15000
+max_in_flight = 200
+max_response_mb = 8
+max_request_mb = 4
+```
+
+The schema permits the full unsigned integer range for the corresponding
+field (`u32` for memory, in-flight, and body limits; `u64` for CPU and request
+timeouts). Platform or runtime ceilings may still reject or constrain values.
+
+Schema acceptance and runtime enforcement are separate facts. In the current
+package format, `memory_mb`, `cpu_ms_per_turn`, `request_timeout_ms`,
+`max_in_flight`, and `max_request_mb` are propagated to the runtime.
+`max_response_mb` remains visible through configuration inspection but requires
+deployment-level enforcement until the package/runtime boundary carries it.
+
+When no admission permit is available, the HTTP server immediately returns
+`503` with error code `OVERLOADED` and `Retry-After: 1`; it does not create an
+unbounded waiter queue. The permit is released after a buffered or streaming
+response reaches end-of-stream, or when the response is dropped. A value of
+zero deliberately sheds every HTTP request and can be used as a circuit breaker.
+An accepted WebSocket holds its permit until the upgraded connection closes.
+
+Individual host capabilities also have fixed safety bounds, such as maximum
+SQL, filesystem, LLM, protocol, and durable payload sizes. See
+[Limits and defaults](/reference/limits-and-defaults) for that inventory.
+
+An oversized inbound request returns HTTP `413` with `BODY_TOO_LARGE`. Other
+limit failures are reported through the relevant host API or the standard
+runtime error envelope. A larger budget is not a substitute for backpressure,
+bounded input validation, or deployment-level resource limits.
+
+For a Component application, `memory_mb` is clamped to the 64 MiB Component
+maximum and `request_timeout_ms` is clamped to 60 seconds. `cpu_ms_per_turn`
+does not apply to Wasm; the engine uses a fixed fuel budget plus epoch
+interruption. HTTP body and concurrency limits do not apply to the one-shot
+stdin/stdout task. See [Component resource bounds](/reference/component/runtime#resource-bounds).

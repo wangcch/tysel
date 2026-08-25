@@ -1,0 +1,111 @@
+---
+title: "Limits and defaults"
+description: "This page collects limits that otherwise span the manifest, protocols, and host implementations. Manifest values are configuration contracts. Entries marked **implementation bound** describe the current runtime and may e"
+---
+
+# Limits and defaults
+
+This page collects limits that otherwise span the manifest, protocols, and
+host implementations. Manifest values are configuration contracts. Entries
+marked **implementation bound** describe the current runtime and may evolve in
+a future version; write applications to handle rejection rather than depend on
+the exact ceiling.
+
+## Application defaults
+
+| Setting | Default | Source |
+| --- | ---: | --- |
+| Listen address | `127.0.0.1:3000` | `server.listen` |
+| HTTP/1.1 / HTTP/2 / WebSocket | on / off / off | `server` |
+| Memory | 128 MiB | `limits.memory_mb` |
+| CPU per JavaScript turn | 50 ms | `limits.cpu_ms_per_turn` |
+| Request timeout | 30,000 ms | `limits.request_timeout_ms` |
+| Concurrent HTTP requests | 1,000 | `limits.max_in_flight` |
+| Request / response target | 16 MiB / 16 MiB | `limits.max_request_mb`, `max_response_mb` |
+| Application SQLite path | `./data/tysel.db` | `durable.path` |
+| Test timeout | 5,000 ms | `tysel test --timeout-ms` |
+
+See [Manifest limits](/reference/manifest/limits) for units and validation.
+The current runtime enforces `max_request_mb` and `max_in_flight`;
+`max_response_mb` is a declared target that is not yet propagated through the
+package format.
+
+## Network and profile bounds
+
+| Surface | Current implementation bound |
+| --- | ---: |
+| Outbound `fetch` body | 16 MiB |
+| Outbound redirects | 20 |
+| Isolated-profile HTTP body | 32 KiB |
+| One outbound WebSocket | 1 active socket per isolate request |
+
+The isolated-profile body ceiling is stricter than the default manifest
+request limit. The smaller applicable bound wins.
+
+## Data capabilities
+
+| Surface | Current implementation bound |
+| --- | ---: |
+| SQLite SQL text | 1 MiB |
+| SQLite parameters | 999 |
+| SQLite rows | 10,000 |
+| Postgres SQL text | 1 MiB |
+| Postgres parameters | 999 |
+| Postgres rows | 10,000 |
+| Postgres serialized result | 1 MiB |
+| Postgres connections | 4 |
+| Filesystem read or write | 1 MiB per operation |
+| Filesystem roots | 64 read and 64 write entries |
+
+## Application task and MCP bounds
+
+| Surface | Current implementation bound |
+| --- | ---: |
+| Tasks or durable exports per module | 256 |
+| Task/export name | 128 bytes |
+| Task metadata | 64 KiB |
+| Task input / result | 1 MiB / 1 MiB |
+| JavaScript task module source | 64 MiB |
+| MCP message | 64 KiB |
+| MCP tools | 256 |
+| MCP tool name | 128 bytes |
+| MCP description | 4 KiB |
+| MCP arguments | 32 KiB |
+
+## Durable bounds
+
+| Surface | Current implementation bound |
+| --- | ---: |
+| Boundary or signal key | 256 bytes |
+| Event or signal payload | 1 MiB |
+| History | 10,000 events and 16 MiB |
+| Pending signal inbox | 1,000 signals and 16 MiB |
+| One durable program | 1 MiB |
+| Program catalog | 10,000 programs and 64 MiB total |
+| Concurrent durable polling | 16 |
+
+## LLM bounds
+
+| Surface | Current implementation bound |
+| --- | ---: |
+| Model or provider identifier | 128 bytes |
+| Provider request identifier | 128 bytes |
+| Input / output | 1 MiB / 1 MiB |
+| Provider error retained | 4 KiB |
+| Timeout | 10 minutes maximum |
+| Concurrent provider calls | 16 by default |
+
+## Component bounds
+
+| Surface | Default | Maximum |
+| --- | ---: | ---: |
+| Component artifact | — | 16 MiB |
+| Linear memory | 64 MiB | 64 MiB |
+| Execution | 30 seconds | 60 seconds |
+| Input / output | 1 MiB / 1 MiB | 1 MiB / 1 MiB |
+| Guest error retained | — | 4 KiB |
+| AOT artifact | — | 64 MiB |
+
+Limits are generally measured in bytes, not Unicode characters. Reject or
+chunk oversized inputs before calling a capability, and do not expose native
+error messages directly to untrusted clients.

@@ -1,0 +1,62 @@
+---
+title: "Tasks and protocol commands"
+description: "List or execute manifest-native workflows."
+---
+
+# Tasks and protocol commands
+
+## `tysel task`
+
+List or execute manifest-native workflows.
+
+```text
+tysel task [NAME] [--list] [--manifest FILE]
+```
+
+With `--list`, the command prints configured tasks. With `NAME`, it resolves
+dependencies once in dependency order and executes each argv step. A failed
+step stops the workflow. Steps inherit the selected project root and manifest.
+
+```sh
+tysel task --list
+tysel task verify
+```
+
+Task steps are argument arrays, not shell commands. See [Manifest tasks](/reference/manifest/tasks)
+for the accepted commands and validation rules.
+
+## `tysel queue`
+
+Submit one JSON message to a registered queue handler and print its result.
+
+```text
+tysel queue <NAME> [ENTRY] [--input JSON] [--message-id ID] [--manifest FILE]
+```
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `NAME` | Required | Registered queue name. |
+| `ENTRY` | Manifest entry | Optional entry override. |
+| `--input` | `null` | JSON value delivered to the handler. |
+| `--message-id` | Generated | Stable message identifier supplied by the caller. |
+
+Malformed JSON, an unknown queue, or a handler failure exits non-zero.
+
+```sh
+tysel queue orders --input '{"id":"ord_123"}' --message-id msg_1
+```
+
+## `tysel mcp`
+
+Serve registered MCP tools over bounded newline-delimited stdio.
+
+```text
+tysel mcp [ENTRY] [--manifest FILE]
+```
+
+`ENTRY` overrides `app.entry`. Protocol input and output are reserved for MCP
+messages; human diagnostics are written separately. Tool registration comes
+from `kind: "mcp"` entries in the application's `tasks` export.
+
+See [Application module](/reference/runtime/application) for queue and MCP handler
+types and [Limits and defaults](/reference/limits-and-defaults) for protocol bounds.

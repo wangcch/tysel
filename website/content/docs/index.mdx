@@ -1,0 +1,96 @@
+---
+title: "Tysel documentation"
+description: "Tysel is a lightweight native TypeScript runtime for services and AI agents. Write against Web APIs, grant host capabilities explicitly, and ship one executable without Node.js or `node_modules` in production."
+---
+
+# Tysel documentation
+
+Tysel is a lightweight native TypeScript runtime for services and AI agents.
+Write against Web APIs, grant host capabilities explicitly, and ship one
+executable without Node.js or `node_modules` in production.
+
+## Start here
+
+| Your goal | Start with | Then read |
+| --- | --- | --- |
+| Build an HTTP service | [Create your first service](/docs/getting-started) | [Runtime API](/reference/runtime) |
+| Add Tysel to an existing project | [Create or adopt a project](/docs/concepts/projects-and-configuration#create-or-adopt-a-project) | [npm compatibility](/docs/compatibility) |
+| Run generated or third-party code | [Choose an execution profile](/docs/concepts/execution-profiles) | [Security model](/docs/security) |
+| Build a Rust or Go Wasm task | [Wasm Component guides](/docs/guides/wasm-component-rust) | [Component reference](/reference/component) |
+| Build work that survives restarts | [Durable execution](/docs/concepts/durable-execution) | [Durable agent example](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) |
+| Evaluate Tysel for production | [Production operations](/docs/operations/production) | [Performance evidence](/docs/performance) |
+
+Browse the [task-oriented guide map](/docs/guides), the
+[runnable example gallery](/docs/guides/examples), or the
+[API reference](/reference) when you already know what you need.
+
+## Five-minute path
+
+Tysel has not published a tagged binary release yet, so first follow the
+[source installation](/docs/install#current-availability). Then create and run a
+small service:
+
+```sh
+tysel init hello-tysel --yes
+cd hello-tysel
+tysel task verify
+tysel dev
+```
+
+Call the address printed by the server, then package the application:
+
+```sh
+curl http://127.0.0.1:3000/hello
+tysel task release
+./dist/hello-tysel
+```
+
+The developer installation contains three cooperating tools. The application
+artifact is still one executable.
+
+## At a glance
+
+| Area | What Tysel provides | Primary command or API |
+| --- | --- | --- |
+| Develop | Project creation, validation, tests, and reload | `tysel init`, `check`, `test`, `dev` |
+| Deliver | One native application executable and release evidence | `tysel build --release` |
+| Bound authority | Explicit network, secret, database, and filesystem grants | `tysel inspect` and the manifest |
+| Run services | Fetch handlers, Web APIs, HTTP, and WebSocket | `export default { fetch() {} }` |
+| Run tasks | Cron, Queue, and MCP handlers on one bounded task model | `tasks` export |
+| Run Wasm Components | Language-neutral, one-shot JSON tasks with restricted WASI | `profile = "component"` |
+| Resume work | Persisted steps, effects, sleep, retry, and signals | `durable` export |
+
+## Understand the contract
+
+Tysel is Web-API-first, not a general Node.js compatibility layer. Node
+builtins, native addons, subprocesses, dynamic libraries, and ambient host
+access are outside the application contract. The `service` profile is for
+trusted first-party code. The `isolated` profile uses a separate worker
+process; Linux is its production security target. Cross-compilation is not
+currently implemented.
+
+Read [how Tysel works](/docs/concepts/how-tysel-works), browse the
+[JavaScript API reference](/reference/javascript), and
+run [`tysel compat`](/docs/compatibility) before adopting a dependency.
+
+## Explore by area
+
+- **Learn:** [how Tysel works](/docs/concepts/how-tysel-works),
+  [projects and configuration](/docs/concepts/projects-and-configuration),
+  [execution profiles](/docs/concepts/execution-profiles), and
+  [durable execution](/docs/concepts/durable-execution).
+- **Build:** [runtime API](/reference/runtime),
+  [Wasm Components](/reference/component),
+  [capability matrix](/docs/capabilities), and
+  [runnable examples](/docs/guides/examples).
+- **Look up:** [API reference](/reference),
+  [CLI](/reference/cli), [manifest](/reference/manifest),
+  [compatibility](/docs/compatibility), and
+  [JavaScript APIs](/reference/javascript).
+- **Operate:** [installation and upgrades](/docs/install),
+  [security](/docs/security),
+  [production operations](/docs/operations/production), and
+  [performance evidence](/docs/performance).
+
+For tools that consume documentation, use the full [`llms.txt`](llms.txt) or
+the compact [`llms-small.txt`](llms-small.txt) index.

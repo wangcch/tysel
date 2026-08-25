@@ -1,0 +1,14 @@
+---
+title: "ADR-005：Capability 默认拒绝，权限取四层交集"
+description: "状态：Accepted"
+---
+
+# ADR-005：Capability 默认拒绝，权限取四层交集
+
+状态：Accepted
+
+## 决策
+
+应用默认没有环境变量、文件系统、网络、子进程或 FFI 等环境权限。外部行为必须通过 Capability。
+
+有效权限 = Runtime Build ∩ 应用声明 ∩ 部署策略 ∩ OS Sandbox。运行时不能扩大权限。

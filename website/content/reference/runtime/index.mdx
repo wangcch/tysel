@@ -1,0 +1,51 @@
+---
+title: "Runtime reference"
+description: "Tysel applications export handlers and use browser-style globals plus the `globalThis.tysel` host object. `@tysel/types` provides the public declarations for editors and static checks; it does not install a JavaScript po"
+---
+
+# Runtime reference
+
+Tysel applications export handlers and use browser-style globals plus the
+`globalThis.tysel` host object. `@tysel/types` provides the public declarations
+for editors and static checks; it does not install a JavaScript polyfill.
+
+```ts
+import type { TyselApp } from "@tysel/types";
+
+const app: TyselApp = {
+  async fetch(request) {
+    return new Response(`received ${request.method}`);
+  },
+};
+
+export default app;
+```
+
+## Surface map
+
+| Surface | Reference |
+| --- | --- |
+| JSON values, profiles, trust modes, and shared value types | [Core types](/reference/runtime/types) |
+| Default export, HTTP handler, cron, queue, and MCP tasks | [Application module](/reference/runtime/application) |
+| Secrets, SQLite, Postgres, filesystem, LLM, and WebSocket APIs | [Host capabilities](/reference/runtime/capabilities) |
+| Replay-safe workflows and signals | [Durable API](/reference/runtime/durable) |
+| Test declaration, assertions, and handler invocation | [Testing API](/reference/runtime/testing) |
+| `Request`, `Response`, `Headers`, `fetch`, crypto, timers, and other globals | [JavaScript API compatibility](/docs/architecture/javascript-runtime-compatibility) |
+
+## Stability boundary
+
+Public application code should use only:
+
+- the default application export described here;
+- Web globals listed in the compatibility inventory;
+- `globalThis.tysel` members declared by `@tysel/types`;
+- exports documented for `@tysel/test` in test modules.
+
+Underscored host hooks and imports from internal runtime files are not public
+contracts. A declaration in `@tysel/types` describes the accepted TypeScript
+shape; availability still depends on the execution profile, manifest grants,
+and host configuration.
+
+See the [Capability matrix](/docs/capabilities) for that three-part
+availability check and [Limits and defaults](/reference/limits-and-defaults) for
+fixed payload bounds.

@@ -1,0 +1,29 @@
+---
+title: "JavaScript APIs"
+description: "The supported server-side Web API subset. Each page is the contract for one global."
+---
+
+# JavaScript APIs
+
+Tysel implements a bounded server-side Web API profile. Use these pages to look
+up a global. Use [guides](/docs/guides) when you want a workflow.
+
+`partial` means the listed behavior is a supported contract, not that the
+corresponding browser specification is implemented in full. The machine-readable
+inventory is `runtime-js/web-api/compatibility.json`.
+
+| API | Status |
+| --- | --- |
+| [URL and URLSearchParams](/reference/javascript/url) | `partial` |
+| [Headers](/reference/javascript/headers) | `partial` |
+| [Request and Response](/reference/javascript/request) | `partial` |
+| [TextEncoder and TextDecoder](/reference/javascript/textencoder) | `partial` |
+| [Timers](/reference/javascript/timers) | `supported` |
+| [Event and EventTarget](/reference/javascript/event) | `partial` |
+| [AbortController and AbortSignal](/reference/javascript/abortcontroller) | `partial` |
+| [Crypto](/reference/javascript/crypto) | `partial` |
+| [fetch](/reference/javascript/fetch) | `partial` |
+| [WebSocket](/reference/javascript/websocket) | `partial` |
+
+Rationale and evidence live in
+[JavaScript runtime compatibility](/docs/architecture/javascript-runtime-compatibility).

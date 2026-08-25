@@ -1,0 +1,86 @@
+---
+title: "Component capabilities"
+description: "Components receive no application capability by default. Authority is the intersection of three independently checked layers:"
+---
+
+# Component capabilities
+
+Components receive no application capability by default. Authority is the
+intersection of three independently checked layers:
+
+```text
+actual Component import
+  ∩ manifest permission
+  ∩ deployment policy
+  = effective capability
+```
+
+A missing layer denies instantiation or linking. Unknown capability imports and
+unknown deployment-policy values fail instead of being ignored.
+
+## Implemented imports
+
+The current Component host implements only these application interfaces:
+
+```wit
+package tysel:fs@0.4.0;
+
+interface read {
+    call: func(input: string) -> result<string, string>;
+}
+
+interface write {
+    call: func(input: string) -> result<string, string>;
+}
+```
+
+| Import | Manifest request | Deployment grant | Input | Successful output |
+| --- | --- | --- | --- | --- |
+| `tysel:fs/read@0.4.0` | Non-empty `permissions.fs_read` | `tysel:fs` or `tysel:fs/read` | JSON string containing a path | JSON string containing UTF-8 file contents |
+| `tysel:fs/write@0.4.0` | Non-empty `permissions.fs_write` | `tysel:fs` or `tysel:fs/write` | `{"path": string, "data": string}` | JSON `null` |
+
+Each imported interface exports a function named `call`. Files remain limited
+to 1 MiB and must resolve beneath a pinned manifest root.
+
+## Manifest and deployment configuration
+
+```toml
+[permissions]
+fs_read = ["./input"]
+fs_write = ["./output"]
+```
+
+For a packaged executable, deployment policy is empty unless explicitly set:
+
+```sh
+export TYSEL_COMPONENT_CAPABILITIES=tysel:fs/read,tysel:fs/write
+printf '{"path":"./input/job.json"}' | ./dist/file-component
+```
+
+Accepted policy tokens are:
+
+| Token | Effect |
+| --- | --- |
+| `tysel:fs` | Allow both implemented filesystem interfaces when requested by the manifest and imported by the guest. |
+| `tysel:fs/read` | Allow only reads. |
+| `tysel:fs/write` | Allow only writes. |
+
+Tokens are comma-separated and whitespace is ignored. A typo or any other
+capability is an error. During local `tysel run`, Tysel derives the deployment
+grant from the manifest to make the checked project runnable; the built
+executable remains deployment-denied by default.
+
+For the Component profile, `tysel check` and `tysel inspect` list only
+filesystem requests under capabilities. HTTP, secrets, databases, LLM,
+WebSocket, and durable handlers appear under `Denied`; `tysel build` likewise
+omits them from its capability summary.
+
+## Unimplemented WIT files
+
+The repository contains early `0.0.1` WIT sketches for HTTP, SQLite, LLM,
+secrets, MCP, and core task capabilities. They are architecture inputs, not
+available Component imports. Only `tysel:component/task@0.4.0` and the two
+filesystem imports above are current application contracts.
+
+See [Manifest permissions](/reference/manifest/permissions), the
+[Security model](/docs/security), and [Runtime and WASI](/reference/component/runtime).

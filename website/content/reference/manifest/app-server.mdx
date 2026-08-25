@@ -1,0 +1,75 @@
+---
+title: "Application and server"
+description: "The required `app` table identifies the artifact, entry module, and execution profile."
+---
+
+# Application and server
+
+## `[app]`
+
+The required `app` table identifies the artifact, entry module, and execution
+profile.
+
+| Field | Required | Default | Accepted value |
+| --- | --- | --- | --- |
+| `name` | Yes | — | Letters, digits, `.`, `_`, and `-`; the first character must be a letter or digit. |
+| `entry` | Yes | — | A project-relative TypeScript, JavaScript, or WebAssembly Component path. |
+| `profile` | No | `service` | `service`, `isolated`, or `component`. |
+
+`entry` cannot be absolute, traverse with `..`, use a Windows drive prefix, or
+contain backslashes or control characters. The profile changes the trust and
+host-capability boundary; it is not only an optimization preset.
+
+For the `component` profile, use a `.wasm` Component Model binary implementing
+`tysel:component/task@0.4.0`. Core Wasm modules are rejected. The application
+is a one-shot stdin/stdout task, so listener and WebSocket fields do not create
+an HTTP service; `server.workers` must remain `1`. A `.wasm` entry requires the
+`component` profile, and that profile requires a `.wasm` entry. The same check
+applies when a CLI command receives an explicit `ENTRY` override.
+
+```toml
+[app]
+name = "orders-api"
+entry = "src/index.ts"
+profile = "service"
+```
+
+See [Execution profiles](/docs/concepts/execution-profiles) and the
+[Capability matrix](/docs/capabilities). Component-specific behavior
+is in the [Wasm Component reference](/reference/component).
+
+## `[server]`
+
+The optional server table controls the inbound listener and protocols.
+
+| Field | Default | Accepted value and behavior |
+| --- | --- | --- |
+| `listen` | `127.0.0.1:3000` | Socket address. Use `0.0.0.0` when a container must accept external traffic. |
+| `workers` | `1` | QuickJS isolates for a `service` application, from `1` to `64`. Values above `1` are rejected for `isolated` and `component` profiles. |
+| `http1` | `true` | Enable HTTP/1.1. |
+| `http2` | `false` | Enable cleartext HTTP/2. |
+| `websocket` | `false` | Permit inbound HTTP/1.1 WebSocket upgrades. |
+
+At least one of `http1` and `http2` must be enabled. `websocket = true`
+requires HTTP/1.1. When both HTTP versions are enabled, the listener accepts
+HTTP/1.1 and h2c; HTTP/2-only mode requires h2c prior knowledge. Tysel does not
+terminate public TLS, so deploy an ingress or reverse proxy for HTTPS.
+
+Each service worker owns an independent JavaScript global scope and its own
+runtime memory limit. Increase `workers` only for stateless handlers, or when
+application state is deliberately externalized. More workers can improve
+parallel throughput, but multiply isolate memory and may worsen startup or tail
+latency. The default remains one to preserve single-global-state semantics.
+
+```toml
+[server]
+listen = "0.0.0.0:3000"
+workers = 2
+http1 = true
+http2 = true
+websocket = true
+```
+
+Server body and concurrency settings live under [limits](/reference/manifest/limits), while
+handler response and error contracts are documented under
+[Errors and machine output](/reference/errors-and-output).

@@ -1,0 +1,11 @@
+{
+  "title": "Manifest",
+  "pages": [
+    "index",
+    "app-server",
+    "permissions",
+    "limits",
+    "durable-observability",
+    "tasks"
+  ]
+}

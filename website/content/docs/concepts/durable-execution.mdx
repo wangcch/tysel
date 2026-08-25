@@ -1,0 +1,95 @@
+---
+title: "Durable execution"
+description: "Durable handlers can suspend, survive a process restart, and resume without repeating completed work. You write ordinary `async` functions; Tysel stores the state needed to continue at explicit durable boundaries."
+---
+
+# Durable execution
+
+Durable handlers can suspend, survive a process restart, and resume without
+repeating completed work. You write ordinary `async` functions; Tysel stores
+the state needed to continue at explicit durable boundaries.
+
+## Define and start a handler
+
+```ts
+import type { DurableContext } from "@tysel/types";
+
+const approvalFlow = async (
+  ctx: DurableContext,
+  input: { orderId: string },
+) => {
+  const order = await ctx.step("load-order", () => loadOrder(input.orderId));
+  const draft = await ctx.effect("create-draft", () => createDraft(order));
+
+  await ctx.sleep("10m");
+  const decision = await ctx.waitForSignal<{ approved: boolean }>("approval");
+
+  return { draft, approved: decision.approved };
+};
+
+export default {
+  durable: { approvalFlow },
+  async fetch(request) {
+    const started = tysel.durable.start("approvalFlow", {
+      orderId: new URL(request.url).searchParams.get("orderId")!,
+    });
+    return Response.json(started, { status: 202 });
+  },
+};
+```
+
+`tysel.durable.start` returns a task ID and either a completed or suspended
+status. Send an external event with
+`tysel.durable.sendSignal(taskId, "approval", payload)`.
+
+## Durable boundaries
+
+| API | Use |
+| --- | --- |
+| `ctx.step(name, operation)` | Record a deterministic computation result. |
+| `ctx.effect(name, operation)` | Record the result of an external side effect. |
+| `ctx.sleep(duration)` | Persist a wake-up time and release execution. |
+| `ctx.waitForSignal(name)` | Suspend until a named signal is persisted. |
+| `ctx.retry(policy, operation)` | Record bounded attempts and delays. |
+| `ctx.now()` | Return a replay-safe time value. |
+| `ctx.random()` | Return a replay-safe random value. |
+
+Durable boundaries must be awaited sequentially. Inputs, signal payloads, and
+results must be JSON serializable and are limited to 1 MiB.
+
+## Replay model
+
+When a task resumes, Tysel runs its handler from the beginning against its
+persisted history. Completed named boundaries return their recorded result.
+New code runs only after the recorded history has been consumed.
+
+This means:
+
+- put external calls and writes inside `effect`;
+- give boundaries stable, meaningful names;
+- do not branch on ambient time or randomness—use `ctx.now()` and
+  `ctx.random()`;
+- keep the order of existing boundaries compatible with in-flight tasks;
+- make downstream effects idempotent when the external system supports it.
+
+Durable execution prevents Tysel from intentionally repeating a completed
+recorded effect. It cannot create an atomic transaction with an arbitrary
+external service. Use provider idempotency keys when a network failure could
+occur between the external commit and local history persistence.
+
+## Storage
+
+SQLite is the default durable store:
+
+```toml
+[durable]
+store = "sqlite"
+path = "./data/tysel.db"
+```
+
+The store is operational state. Back it up, protect it as sensitive data, and
+set an explicit working directory for relative paths. Do not run two
+independent schedulers against the same SQLite file. See
+[production operations](/docs/operations/production) for recovery guidance and
+the [durable agent example](https://github.com/wangcch/tysel/tree/main/examples/durable-agent)
+for a complete restart-and-signal flow.

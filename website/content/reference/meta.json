@@ -1,0 +1,15 @@
+{
+  "title": "Reference",
+  "pages": [
+    "index",
+    "javascript",
+    "runtime",
+    "cli",
+    "manifest",
+    "environment",
+    "limits-and-defaults",
+    "errors-and-output",
+    "[Capability matrix](/docs/capabilities)",
+    "[npm compatibility](/docs/compatibility)"
+  ]
+}

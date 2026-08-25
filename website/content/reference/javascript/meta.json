@@ -1,0 +1,16 @@
+{
+  "title": "JavaScript",
+  "pages": [
+    "index",
+    "url",
+    "headers",
+    "request",
+    "textencoder",
+    "timers",
+    "event",
+    "abortcontroller",
+    "crypto",
+    "fetch",
+    "websocket"
+  ]
+}

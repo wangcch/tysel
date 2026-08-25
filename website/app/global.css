@@ -1,0 +1,128 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+@theme {
+  /* Vite-inspired stack: Inter body, Inter Tight headings, mono for code. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-tysel-ink: #111318;
+  --color-tysel-white: #ffffff;
+  --color-tysel-blue: #5b5ce2;
+  --color-tysel-lime: #c9ff63;
+  --color-tysel-mist: #f1f3f7;
+}
+
+:root {
+  /* SiteHeader: h-14 + 1px border. Docs layout is 100dvh and sits below it. */
+  --site-header-height: calc(3.5rem + 1px);
+  --fd-banner-height: var(--site-header-height);
+  --color-fd-background: #ffffff;
+  --color-fd-foreground: #111318;
+  --color-fd-muted: #f1f3f7;
+  --color-fd-muted-foreground: #5c6370;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #111318;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #111318;
+  --color-fd-border: #e4e7ee;
+  --color-fd-primary: #5b5ce2;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-accent: #f1f3f7;
+  --color-fd-accent-foreground: #111318;
+  --color-fd-ring: #5b5ce2;
+}
+
+.dark {
+  --color-fd-background: #111318;
+  --color-fd-foreground: #f7f8fb;
+  --color-fd-muted: #1a1c24;
+  --color-fd-muted-foreground: #9aa1ad;
+  --color-fd-popover: #16181f;
+  --color-fd-popover-foreground: #f7f8fb;
+  --color-fd-card: #16181f;
+  --color-fd-card-foreground: #f7f8fb;
+  --color-fd-border: #2a2d38;
+  --color-fd-primary: #5b5ce2;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-accent: #1f222c;
+  --color-fd-accent-foreground: #f7f8fb;
+  --color-fd-ring: #c9ff63;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+header [data-search-full] {
+  border-radius: 0;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+.home-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--color-fd-border) 70%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--color-fd-border) 70%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 20%, transparent 75%);
+}
+
+.home-atmosphere {
+  background:
+    radial-gradient(ellipse 55% 45% at 12% 18%, color-mix(in oklab, var(--color-tysel-blue) 22%, transparent), transparent 70%),
+    radial-gradient(ellipse 40% 35% at 88% 12%, color-mix(in oklab, var(--color-tysel-lime) 12%, transparent), transparent 65%);
+}
+
+.home-terminal {
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 6%, transparent);
+}
+
+@keyframes home-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes home-code-fade {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.home-fade-up {
+  animation: home-fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.home-fade-up-delay {
+  animation-delay: 0.12s;
+}
+
+.home-code-fade {
+  animation: home-code-fade 0.35s ease-out both;
+}
+
+.page-enter {
+  animation: home-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-fade-up,
+  .home-fade-up-delay,
+  .home-code-fade,
+  .page-enter {
+    animation: none;
+  }
+}

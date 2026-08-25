@@ -1,0 +1,73 @@
+---
+title: "JavaScript runtime convergence"
+description: "The JavaScript runtime has one source boundary:"
+---
+
+# JavaScript runtime convergence
+
+The JavaScript runtime has one source boundary:
+
+- `runtime-js/` owns JavaScript executed inside an isolate and its TypeScript
+  contracts.
+- `tysel-engine-qjs` owns QuickJS lifecycle, native host bindings, resource
+  limits, completion queues, and engine-specific module adapters.
+- `tysel-engine` owns backend-neutral values, errors, limits, and the
+  `ExecutionEngine` abstraction.
+- application packages consume runtime contracts; they do not redefine them.
+
+## Completed convergence slices
+
+- Web APIs, capability clients, durable control, and replay-safe durable
+  primitives moved out of Rust string literals into `runtime-js`.
+- QuickJS embeds those sources at compile time, so packaged applications do not
+  acquire a runtime filesystem dependency.
+- The application SDK re-exports the canonical durable context and retry policy
+  instead of maintaining a second definition.
+- JavaScript syntax, TypeScript contracts, embed paths, and all existing
+  QuickJS behavior are covered by automated tests.
+- Fetch, task discovery/invocation, and durable module startup adapters are
+  owned by the internal `runtime-js/bootstrap` layer rather than Rust string
+  literals.
+- `compatibility.json` binds the runtime-js version, supported TAP range,
+  Component ABI, and QuickJS adapter identity; Rust contract tests compare it
+  with the packaging implementation.
+- Large embedded artifacts are assembled deterministically from ordered,
+  syntax-checked authored sources; repository checks reject stale generated
+  output.
+- The first Web API conformance slice covers deterministic Headers iteration,
+  iterable URLSearchParams operations and encoding, relative and dot-segment
+  URL resolution, live URL/search-parameter mutation, body consumption, and
+  buffered Request/Response cloning inside QuickJS.
+- A machine-readable compatibility inventory and human-readable matrix define
+  supported behavior and exclusions without claiming browser conformance; the
+  engine compatibility manifest binds the selected profile and schema version.
+- Event and EventTarget provide one listener implementation shared by
+  AbortSignal and incoming/outgoing WebSockets.
+- AbortController and AbortSignal propagate through a per-operation native
+  cancellation token, so aborted fetches stop their network work without
+  poisoning subsequent isolate I/O.
+- Incoming and outgoing WebSockets share stable event-listener semantics,
+  including deduplication, removal, object listeners, `once`, event targets,
+  and callback-failure isolation from the native read pump.
+- Concurrent fetch responses use independent native body IDs. Cancellation is
+  scoped to one stream, backpressure remains bounded, and request cleanup drops
+  unconsumed bodies before an isolate is reused.
+- Web Crypto validates integer random-value views, quotas, algorithms, key
+  usages, and BufferSource inputs with stable TypeError/DOMException contracts.
+- `@tysel/types` re-exports the capability and durable contracts owned by
+  `runtime-js` and adds only the ambient application-facing global declaration;
+  workspace examples consume that package instead of local host declarations.
+- `runtime-js/web-api` publishes explicit subset types so callers can describe
+  Tysel behavior without treating TypeScript's complete DOM library as the
+  runtime contract.
+
+## Compatibility boundary
+
+Browser-only features listed as unsupported in the compatibility matrix are
+not convergence gaps. Adding one is a new compatibility decision and requires
+an implementation, an explicit subset type, a QuickJS test, and a matrix
+update in the same change.
+
+The convergence is complete when adding or changing a JavaScript-visible API
+requires one implementation change, one type-contract change, and one
+conformance test—without editing embedded JavaScript in Rust.

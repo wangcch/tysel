@@ -1,0 +1,25 @@
+---
+title: "TextEncoder and TextDecoder"
+description: "Supported TextEncoder and TextDecoder contract in the Tysel JavaScript runtime."
+---
+
+# TextEncoder and TextDecoder
+
+Status: `partial`. This page is the supported server-side subset, not
+the full browser specification. Behavior outside the lists below is not a
+contract.
+
+Source of truth: `runtime-js/web-api/compatibility.json`
+(`tysel-server-web-subset`, stable).
+
+## Supported
+
+- UTF-8 encode and decode
+
+## Not supported
+
+- legacy encodings
+- streaming decode options
+
+See the [JavaScript API index](/reference/javascript) and the
+[architecture notes](/docs/architecture/javascript-runtime-compatibility).

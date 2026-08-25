@@ -1,0 +1,84 @@
+---
+title: "How Tysel works"
+description: "Tysel turns a TypeScript application into a self-contained native executable. The executable contains the application bundle, its validated manifest, source map, compatibility metadata, and the native runtime required to"
+---
+
+# How Tysel works
+
+Tysel turns a TypeScript application into a self-contained native executable.
+The executable contains the application bundle, its validated manifest, source
+map, compatibility metadata, and the native runtime required to execute it.
+
+## From source to executable
+
+```text
+TypeScript source
+      │
+      ├─ type and compatibility checks
+      ├─ JavaScript bundle + source map
+      └─ validated tysel.toml or tysel.json
+                    │
+                    ▼
+          Tysel application package
+                    │
+                    ▼
+        native runtime + embedded package
+                    │
+                    ▼
+             one executable
+```
+
+`tysel build` performs this packaging on the current host. The generated file
+does not need Node.js, V8, npm, or `node_modules` at runtime. Cross-compilation
+is not currently implemented, so Linux artifacts should be built on Linux and
+macOS artifacts on macOS.
+
+## Runtime ownership
+
+Application JavaScript executes in QuickJS isolates. The native host owns
+network sockets, storage connections, secrets, filesystem handles, limits, and
+durable scheduling. JavaScript can reach those resources only through the
+runtime APIs and the grants in the application manifest.
+
+This separation gives Tysel a narrow application contract:
+
+- application code uses Web-standard APIs and `globalThis.tysel`;
+- the manifest declares requested authority and resource limits;
+- the host validates and enforces that contract;
+- an execution profile determines the final trust boundary.
+
+The effective authority is the intersection of the application manifest,
+deployment policy, execution profile, and runtime support. Declaring a
+permission never creates more authority than the selected profile permits.
+
+CLI commands discover the nearest manifest from the current directory upward
+and execute from that project root. TOML and JSON share one versioned schema;
+`package.json` is optional. See
+[projects and configuration](/docs/concepts/projects-and-configuration).
+
+## Request and task lifecycle
+
+HTTP applications export a Fetch-style handler. Cron, Queue, and MCP handlers
+use the same bounded execution environment. Each invocation receives a
+deadline and executes with configured memory, CPU-turn, concurrency, request,
+and response limits.
+
+Durable handlers add a persisted event history. A durable boundary records its
+result before work advances, allowing the runtime to release the JavaScript
+isolate while a task sleeps or waits for a signal. On restart, completed
+boundaries are replayed from history rather than executed again.
+
+## Development and delivery
+
+The developer toolchain contains three cooperating tools:
+
+- `tysel`: project, test, build, diagnostic, and release commands;
+- `tysel-service`: the service runtime and application build stub;
+- `tysel-worker`: the restricted worker used by isolated applications.
+
+They are a toolchain detail. `tysel build` embeds the selected application and
+runtime into one executable for delivery.
+
+Next, choose an [execution profile](/docs/concepts/execution-profiles), review the
+[manifest](/reference/manifest), or build the
+[first service](/docs/getting-started).

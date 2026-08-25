@@ -1,0 +1,83 @@
+---
+title: "Component runtime and WASI"
+description: "Tysel executes Components with Wasmtime's Component Model engine under a bounded `isolated-task` trust mode. The workspace currently pins the Wasmtime runtime crates to `36.0.13`. AOT packages currently carry the separat"
+---
+
+# Component runtime and WASI
+
+Tysel executes Components with Wasmtime's Component Model engine under a
+bounded `isolated-task` trust mode. The workspace currently pins the Wasmtime
+runtime crates to `36.0.13`. AOT packages currently carry the separate
+compatibility label `32.0.1`; that label is implementation metadata, not an
+application ABI or an accurate dependency-version report. This known drift
+must be resolved before relying on the label for cross-version compatibility.
+
+## Invocation lifecycle
+
+```text
+read bounded stdin
+  → validate JSON
+  → compile portable Component
+  → validate imports and policy
+  → instantiate restricted WASI
+  → call run(string)
+  → validate bounded JSON output
+  → write stdout + newline
+```
+
+Only one invocation runs per process execution. `tysel run` and the packaged
+executable read stdin until EOF, so the caller must close stdin after writing
+the JSON value.
+
+## Restricted WASI 0.2 profile
+
+Tysel accepts only the following WASI interface families when required by a
+guest language runtime:
+
+| Family | Allowed interfaces | Effective authority |
+| --- | --- | --- |
+| CLI | environment, exit, stdin/stdout/stderr, terminal input/output variants | No inherited arguments or environment; stdio is not inherited as an application channel. Tysel owns the JSON task channel. |
+| Clocks | monotonic clock, wall clock | Language-runtime clock support. |
+| Filesystem runtime | types, preopens | No preopened directories. |
+| I/O | error, poll, streams | Language-runtime plumbing only. |
+| Random | random | Language-runtime randomness. |
+
+Imports must use WASI `0.2.x`. Other WASI interfaces are rejected before
+instantiation. In particular, sockets and network access are not available.
+Filesystem application access uses Tysel's own capability ABI, not WASI
+preopens.
+
+## Resource bounds
+
+| Resource | Default or effective bound | Maximum |
+| --- | ---: | ---: |
+| Portable Component | 16 MiB | 16 MiB |
+| Linear memory | `limits.memory_mb`, clamped to 64 MiB | 64 MiB |
+| Fuel | 10,000,000 units | 100,000,000 units |
+| Execution time | `limits.request_timeout_ms`, default 30 seconds | 60 seconds |
+| JSON input | 1 MiB | 1 MiB |
+| JSON output | 1 MiB | 1 MiB |
+| Guest error retained | 4 KiB | 4 KiB |
+| Host-specific AOT payload | — | 64 MiB |
+| Component instances / memories / tables | 32 / 8 / 8 | Fixed implementation bounds |
+
+Byte limits measure encoded UTF-8, not characters. Fuel and epoch interruption
+bound CPU loops; host filesystem calls also share the invocation deadline.
+
+## Portable source and AOT
+
+`tysel build` retains the portable Component and produces host-specific AOT
+metadata bound to:
+
+- Component ABI version;
+- Wasmtime version and engine compatibility hash;
+- host architecture and operating system;
+- SHA-256 of the portable source.
+
+The runtime rejects incompatible or tampered AOT metadata. The current launcher
+still compiles and executes the retained portable source because authenticated
+AOT trust handoff is not yet connected to native deserialization. Do not claim
+AOT startup behavior until that boundary is implemented and measured.
+
+See [Limits and defaults](/reference/limits-and-defaults) for the cross-runtime
+inventory and [Component ABI](/reference/component/abi) for the guest export contract.

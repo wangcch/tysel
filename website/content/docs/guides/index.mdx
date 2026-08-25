@@ -1,0 +1,46 @@
+---
+title: "Guides"
+description: "Guides are organized around outcomes. Use the reference section when you need the complete contract for a command, manifest field, or runtime API."
+---
+
+# Guides
+
+Guides are organized around outcomes. Use the reference section when you need
+the complete contract for a command, manifest field, or runtime API.
+
+## Start and develop
+
+| Outcome | Guide | What you will verify |
+| --- | --- | --- |
+| Create, test, run, and package an HTTP service | [Getting started](/docs/getting-started) | A request succeeds and the packaged executable runs without Node.js. |
+| Add Tysel without replacing an existing Node project | [Create or adopt a project](/docs/concepts/projects-and-configuration#create-or-adopt-a-project) | Existing files remain intact and Tysel uses its own compiler configuration. |
+| Inspect or convert TOML and JSON configuration | [Inspect and convert configuration](/docs/concepts/projects-and-configuration#inspect-and-convert-configuration) | Expanded defaults and converted output validate against one schema. |
+| Add a reproducible project workflow | [Reproducible project tasks](/docs/concepts/projects-and-configuration#reproducible-project-tasks) | `tysel task verify` runs bounded, shell-free steps. |
+
+## Services, tasks, and agents
+
+| Outcome | Start with | Required boundary |
+| --- | --- | --- |
+| Build a Fetch-style JSON API | [First service](/docs/getting-started#write-a-fetch-handler) | `service` profile; no capability for a local response. |
+| Use SQLite or Postgres | [Example gallery](/docs/guides/examples#storage) | Trusted service plus the relevant database configuration. |
+| Expose a function as an MCP tool | [MCP example](/docs/guides/examples#tasks-and-agents) | Registered MCP task; isolated example keeps secret values in the host. |
+| Run generated or third-party JavaScript | [Isolated plugin example](/docs/guides/examples#isolation) | Linux is the production isolation security target. |
+| Suspend for retry, time, or human approval | [Durable execution](/docs/concepts/durable-execution) | Durable store and replay-safe boundaries. |
+| Build a language-neutral one-shot task | [Rust Component](/docs/guides/wasm-component-rust) or [Go Component](/docs/guides/wasm-component-go) | Experimental `tysel:component/task@0.4.0`; restricted WASI. |
+
+## Ship and operate
+
+| Outcome | Guide | Important limit |
+| --- | --- | --- |
+| Build one executable | [Build one executable](/docs/getting-started#build-one-executable) | The target must match the build host. |
+| Generate a non-root container context | [Production deployment](/docs/operations/production#deployment) | A Linux executable is required. |
+| Diagnose, upgrade, or roll back the toolchain | [Installation lifecycle](/docs/install#diagnose) | Managed operations apply to all three developer tools together. |
+| Review production readiness | [Production operations](/docs/operations/production) | Release evidence, platform scope, recovery, and monitoring are part of the gate. |
+
+## How to use a guide
+
+Run commands against the release you plan to deploy. Verify the result at each
+boundary, keep manifest permissions minimal, and follow links into
+[API reference](/reference) for defaults, errors, and unsupported
+behavior. The [example gallery](/docs/guides/examples) points to complete source trees
+when a single snippet is not enough.

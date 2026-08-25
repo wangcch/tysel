@@ -1,0 +1,85 @@
+---
+title: "Execution profiles"
+description: "An execution profile defines where application code runs and which trust boundary Tysel enforces. Select it with `[app].profile` in `tysel.toml` or `tysel.json`."
+---
+
+# Execution profiles
+
+An execution profile defines where application code runs and which trust
+boundary Tysel enforces. Select it with `[app].profile` in `tysel.toml` or
+`tysel.json`.
+
+## `service`
+
+Use `service` for first-party application code. JavaScript runs in an isolate
+inside the service process. Host resources remain deny-by-default and require
+manifest grants, but application code shares the process with the native host.
+
+This profile supports the complete host capability surface, including
+allowlisted network access, SQLite, Postgres, filesystem roots, LLM providers,
+inbound and outbound WebSockets, and durable handlers.
+
+```toml
+[app]
+name = "orders"
+entry = "src/index.ts"
+profile = "service"
+```
+
+## `isolated`
+
+Use `isolated` for plugins, generated code, and other code that should not
+share a process with the host. Application JavaScript runs in a separate
+`tysel-worker` process. Host-facing network, database, filesystem, LLM, and
+WebSocket capabilities are denied even if the manifest lists them.
+
+```toml
+[app]
+name = "plugin"
+entry = "src/index.ts"
+profile = "isolated"
+```
+
+On Linux, workers add Landlock filesystem rules, seccomp syscall filtering,
+resource limits, and best-effort cgroup memory enforcement. The supervisor
+replaces a worker after a crash. macOS supports development checks, but is not
+the production isolation security gate.
+
+The isolated profile reduces authority; it does not make arbitrary hostile
+native code safe. Tysel application code is JavaScript executed by the managed
+engine. Native addons, subprocesses, dynamic libraries, and ambient OS access
+are not part of the application model.
+
+## `component`
+
+Use `component` for a Wasm Component implementing
+`tysel:component/task@0.4.0`. The manifest entry points to a `.wasm` Component
+and the runtime invokes its bounded JSON task interface.
+
+```toml
+[app]
+name = "echo-component"
+entry = "echo.component.wasm"
+profile = "component"
+```
+
+The Component ABI is experimental and intentionally smaller than the
+TypeScript service API. Components are one-shot JSON tasks: `tysel run` reads
+stdin and writes stdout once, while `tysel dev` is not supported. Core Wasm
+modules and general WASI applications are outside this profile.
+
+Start with the [Wasm Component reference](/reference/component),
+then follow the [Rust](/docs/guides/wasm-component-rust) or
+[Go](/docs/guides/wasm-component-go) guide.
+
+## Choosing a profile
+
+| Need | Profile |
+| --- | --- |
+| First-party HTTP service or durable agent | `service` |
+| AI-generated function or third-party JavaScript plugin | `isolated` |
+| Language-neutral task compiled as a Wasm Component | `component` |
+
+For production isolation requirements, read the
+[security model](/docs/security) and
+[operations runbook](/docs/operations/production).

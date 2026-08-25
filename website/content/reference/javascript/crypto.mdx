@@ -1,0 +1,29 @@
+---
+title: "Crypto"
+description: "Supported Crypto contract in the Tysel JavaScript runtime."
+---
+
+# Crypto
+
+Status: `partial`. This page is the supported server-side subset, not
+the full browser specification. Behavior outside the lists below is not a
+contract.
+
+Source of truth: `runtime-js/web-api/compatibility.json`
+(`tysel-server-web-subset`, stable).
+
+## Supported
+
+- getRandomValues
+- SHA-256/384/512 digest
+- raw HMAC import/sign/verify
+
+## Not supported
+
+- randomUUID
+- key export
+- encryption
+- asymmetric algorithms
+
+See the [JavaScript API index](/reference/javascript) and the
+[architecture notes](/docs/architecture/javascript-runtime-compatibility).

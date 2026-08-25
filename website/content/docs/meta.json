@@ -1,0 +1,23 @@
+{
+  "title": "Tysel",
+  "pages": [
+    "index",
+    "---Start---",
+    "install",
+    "getting-started",
+    "---Guides---",
+    "guides",
+    "---Learn---",
+    "concepts",
+    "---Lookup---",
+    "capabilities",
+    "compatibility",
+    "---Operate---",
+    "security",
+    "operations",
+    "performance",
+    "---Internals---",
+    "architecture",
+    "adr"
+  ]
+}
