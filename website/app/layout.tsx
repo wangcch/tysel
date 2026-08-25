@@ -49,7 +49,10 @@ export default function Layout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <body className="flex min-h-screen flex-col font-sans">
-        <RootProvider theme={{ defaultTheme: "dark", enableSystem: true }}>
+        <RootProvider
+          search={{ options: { type: "static", api: "/api/search" } }}
+          theme={{ defaultTheme: "dark", enableSystem: true }}
+        >
           <SiteHeader />
           {children}
         </RootProvider>

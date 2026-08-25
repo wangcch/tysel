@@ -1,0 +1,91 @@
+name: website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/scripts/deploy-website-oss.sh"
+      - ".github/workflows/website.yml"
+      - "brand/**"
+      - "docs/**"
+      - "website/**"
+  pull_request:
+    paths:
+      - ".github/scripts/deploy-website-oss.sh"
+      - ".github/workflows/website.yml"
+      - "brand/**"
+      - "docs/**"
+      - "website/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          version: 11.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+      - name: Install website dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: website
+      - name: Build static website
+        run: pnpm build
+        working-directory: website
+      - name: Verify static export
+        run: |
+          test -s website/out/index.html
+          test -s website/out/404.html
+          test -s website/out/api/search
+          jq -e '.type == "advanced"' website/out/api/search > /dev/null
+          test -n "$(find website/out/_next/static -type f -print -quit)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: website-static-${{ github.sha }}
+          path: website/out
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: website-production
+      url: https://tysel.dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: website-static-${{ github.sha }}
+          path: website/out
+      - name: Install pinned ossutil
+        env:
+          OSSUTIL_SHA256: dcc512e4a893e16bbee63bc769339d8e56b21744fd83c8212a9d8baf28767343
+          OSSUTIL_URL: https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip
+        run: |
+          curl --fail --silent --show-error --location \
+            --output "$RUNNER_TEMP/ossutil.zip" "$OSSUTIL_URL"
+          echo "$OSSUTIL_SHA256  $RUNNER_TEMP/ossutil.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/ossutil.zip" -d "$RUNNER_TEMP/ossutil"
+          echo "$RUNNER_TEMP/ossutil/ossutil-v1.7.19-linux-amd64" >> "$GITHUB_PATH"
+      - name: Deploy to Alibaba Cloud OSS Hong Kong
+        env:
+          ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+          ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+          ALIYUN_OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+        run: bash .github/scripts/deploy-website-oss.sh website/out

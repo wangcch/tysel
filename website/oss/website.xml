@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WebsiteConfiguration>
+  <IndexDocument>
+    <Suffix>index.html</Suffix>
+    <SupportSubDir>true</SupportSubDir>
+    <Type>0</Type>
+  </IndexDocument>
+  <ErrorDocument>
+    <Key>404.html</Key>
+    <HttpStatus>404</HttpStatus>
+  </ErrorDocument>
+  <RoutingRules>
+    <RoutingRule>
+      <RuleNumber>1</RuleNumber>
+      <Condition>
+        <KeyPrefixEquals>install.sh</KeyPrefixEquals>
+        <KeySuffixEquals>install.sh</KeySuffixEquals>
+        <HttpErrorCodeReturnedEquals>404</HttpErrorCodeReturnedEquals>
+      </Condition>
+      <Redirect>
+        <RedirectType>External</RedirectType>
+        <Protocol>https</Protocol>
+        <HostName>github.com</HostName>
+        <ReplaceKeyWith>wangcch/tysel/releases/latest/download/install.sh</ReplaceKeyWith>
+        <HttpRedirectCode>307</HttpRedirectCode>
+      </Redirect>
+    </RoutingRule>
+    <RoutingRule>
+      <RuleNumber>2</RuleNumber>
+      <Condition>
+        <KeyPrefixEquals>docs/reference</KeyPrefixEquals>
+        <HttpErrorCodeReturnedEquals>404</HttpErrorCodeReturnedEquals>
+      </Condition>
+      <Redirect>
+        <RedirectType>External</RedirectType>
+        <Protocol>https</Protocol>
+        <HostName>tysel.dev</HostName>
+        <ReplaceKeyPrefixWith>reference</ReplaceKeyPrefixWith>
+        <EnableReplacePrefix>true</EnableReplacePrefix>
+        <PassQueryString>true</PassQueryString>
+        <HttpRedirectCode>301</HttpRedirectCode>
+      </Redirect>
+    </RoutingRule>
+  </RoutingRules>
+</WebsiteConfiguration>

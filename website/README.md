@@ -10,6 +10,30 @@ pnpm dev
 
 Open [http://localhost:4000](http://localhost:4000).
 
+## Production deployment
+
+`pnpm build` exports the complete site to `out/`. Pull requests build and verify
+the export; pushes to `main` that change the website, docs, or brand deploy it to
+the Hong Kong OSS bucket through `.github/workflows/website.yml`. Text assets are
+precompressed because this deployment intentionally does not require a CDN.
+
+Create the `website-production` GitHub Environment with:
+
+- secret `ALIYUN_OSS_ACCESS_KEY_ID`
+- secret `ALIYUN_OSS_ACCESS_KEY_SECRET`
+- variable `ALIYUN_OSS_BUCKET` containing only the bucket name
+
+The RAM identity needs object list/read/write/delete permissions for that bucket
+and `oss:PutBucketWebsite`. Enable bucket versioning before the first deployment:
+deployment synchronizes with `--delete`, so versioning is the recovery path for
+an accidental or incomplete upload.
+
+Configure the bucket as public-read, bind `tysel.dev`, and install its TLS
+certificate in OSS. In Cloudflare, point the apex CNAME at the Hong Kong bucket
+endpoint with proxying disabled (DNS only). The checked-in OSS website
+configuration serves directory indexes and redirects `/install.sh` to the latest
+GitHub Release.
+
 | Path | Source |
 | --- | --- |
 | `/` | Product homepage (bun.sh-density layout) |
