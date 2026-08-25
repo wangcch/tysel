@@ -807,7 +807,6 @@ memory_mb = 64
 cpu_ms_per_turn = 50
 request_timeout_ms = 30000
 max_in_flight = 256
-max_response_mb = 4
 
 [durable]
 store = "sqlite"
@@ -837,7 +836,16 @@ steps = [["build", "--release"]]
         verify.description = Some("Check the application".into());
         verify.steps = vec![vec!["check".into()]];
     }
-    Ok(manifest.to_string_pretty(format)?)
+    let rendered = manifest.to_string_pretty(format)?;
+    let rendered = rendered
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            !line.starts_with("max_response_mb =") && !line.starts_with("\"max_response_mb\":")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!("{rendered}\n"))
 }
 
 fn is_application_name(name: &str) -> bool {
@@ -982,7 +990,19 @@ mod tests {
         let parsed = Manifest::parse_with_format(&rendered, ManifestFormat::Json).unwrap();
         assert_eq!(parsed.app.profile, "isolated");
         assert_eq!(parsed.server.listen, "127.0.0.1:0");
+        assert!(!rendered.contains("max_response_mb"));
         assert!(Template::Mcp.source().contains("kind: \"mcp\""));
+    }
+
+    #[test]
+    fn generated_manifests_omit_schema_only_response_limit() {
+        for format in [ManifestFormat::Toml, ManifestFormat::Json] {
+            let rendered =
+                manifest("app", Path::new("src/index.ts"), format, Template::Http, true).unwrap();
+            assert!(!rendered.contains("max_response_mb"), "{rendered}");
+            let parsed = Manifest::parse_with_format(&rendered, format).unwrap();
+            assert_eq!(parsed.limits.max_response_mb, 16);
+        }
     }
 
     #[test]

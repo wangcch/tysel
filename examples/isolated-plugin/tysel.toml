@@ -20,7 +20,6 @@ memory_mb = 32
 cpu_ms_per_turn = 50
 request_timeout_ms = 5000
 max_in_flight = 32
-max_response_mb = 1
 
 [observability]
 logs = "json"
