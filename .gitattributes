@@ -1,0 +1,3 @@
+# Keep the repository language breakdown focused on the runtime and SDKs.
+website/** linguist-detectable=false
+brand/** linguist-detectable=false
