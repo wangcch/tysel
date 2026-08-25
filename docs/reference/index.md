@@ -1,42 +1,83 @@
 # API reference
 
 Reference pages describe exact interfaces: accepted values, defaults, side
-effects, errors, and stability boundaries. The public website publishes this
-section at `/docs/reference/` so contracts stay separate from guides. Start with a
+effects, errors, and stability boundaries. Start with a
 [guide](../guides/index.md) when you want a workflow rather than a contract.
 
-## Browse by surface
+The website index at `/reference` renders a flat module catalog. Use the sidebar
+or the sections below to jump to a contract page.
 
-| Surface | Start here | Authoritative source |
-| --- | --- | --- |
-| JavaScript globals | [JavaScript APIs](javascript/index.md) | `runtime-js/web-api/compatibility.json` |
-| Application exports and `tysel.*` | [Runtime](runtime/index.md) | `@tysel/types` and the runtime implementation |
-| Wasm Component ABI, SDKs, and restricted WASI | [Wasm Components](component/index.md) | Versioned WIT, guest SDKs, and Wasmtime host implementation |
-| Commands and flags | [CLI](cli/index.md) | Installed command definitions and `tysel <command> --help` |
-| Manifest keys | [Manifest](manifest/index.md) | Bundled Draft 2020-12 JSON Schema |
-| Host settings | [Environment variables](environment.md) | Installer, CLI, and host adapters |
-| Defaults and hard bounds | [Limits and defaults](limits-and-defaults.md) | Schema defaults and native implementation constants |
-| Exit codes and error envelopes | [Errors and machine output](errors-and-output.md) | CLI and HTTP response implementations |
-| Grants by execution profile | [Capability matrix](../capabilities/README.md) | Manifest, profile, and host enforcement |
-| npm or Node.js assumptions | [npm compatibility](../compatibility/README.md) | Compatibility catalog and project scan |
+## Runtime
 
-## Lookup by symbol
-
-| Symbol or command | Reference |
+| Module | Description |
 | --- | --- |
-| `fetch`, `Request`, `Headers`, `URL`, `crypto`, `WebSocket` | [JavaScript APIs](javascript/index.md) |
-| `JsonValue`, `MaybePromise`, `ExecutionProfile`, `TrustMode` | [Core types](runtime/types.md) |
-| `TyselApp`, `FetchHandler`, `RequestContext` | [Application module](runtime/application.md) |
-| `tysel.secrets`, `tysel.sqlite`, `tysel.postgres`, `tysel.fs`, `tysel.llm` | [Host capabilities](runtime/capabilities.md) |
-| `DurableContext`, `tysel.durable` | [Durable API](runtime/durable.md) |
-| `test`, `assert`, `invokeFetch` | [Testing API](runtime/testing.md) |
-| `tysel:component/task@0.4.0`, `tysel:fs/read@0.4.0`, `tysel:fs/write@0.4.0` | [Wasm Components](component/index.md) |
-| `tysel init`, `tysel config` | [Project and configuration commands](cli/project.md) |
-| `tysel check`, `compat`, `test`, `dev`, `run`, `inspect` | [Develop and test commands](cli/development.md) |
-| `tysel task`, `queue`, `mcp` | [Tasks and protocols](cli/tasks.md) |
-| `tysel build`, `image` | [Build and image](cli/delivery.md) |
-| `tysel doctor`, `upgrade` | [Installation lifecycle](cli/installation.md) |
-| `tysel bench`, `release` | [Benchmarks and release evidence](cli/evidence.md) |
+| [Runtime](runtime/index.md) | Overview of exports and `globalThis.tysel` |
+| [Core types](runtime/types.md) | `JsonValue`, profiles, trust modes |
+| [Application module](runtime/application.md) | `fetch`, cron, queue, MCP exports |
+| [Host capabilities](runtime/capabilities.md) | secrets, SQL, filesystem, LLM, WebSocket |
+| [Durable API](runtime/durable.md) | effects, sleep, signals, resume |
+| [Testing API](runtime/testing.md) | `test`, `assert`, `invokeFetch` |
+
+## Web APIs
+
+| Module | Description |
+| --- | --- |
+| [JavaScript APIs](javascript/index.md) | Index and compatibility inventory |
+| [fetch](javascript/fetch.md) | Allowlisted outbound HTTP |
+| [Request and Response](javascript/request.md) | Web-standard message types |
+| [Headers](javascript/headers.md) | Case-insensitive header map |
+| [URL](javascript/url.md) | URL and URLSearchParams |
+| [WebSocket](javascript/websocket.md) | Client and server socket subset |
+| [Crypto](javascript/crypto.md) | Web Crypto subset |
+| [Timers](javascript/timers.md) | setTimeout and setInterval |
+| [Event](javascript/event.md) | Event and EventTarget |
+| [AbortController](javascript/abortcontroller.md) | AbortSignal for fetch and tasks |
+| [TextEncoder](javascript/textencoder.md) | UTF-8 encode and decode |
+
+## Wasm Components
+
+| Module | Description |
+| --- | --- |
+| [Wasm Components](component/index.md) | Profile, trust mode, task boundary |
+| [Component ABI](component/abi.md) | `tysel:component/task` world |
+| [Runtime and WASI](component/runtime.md) | Wasmtime limits and restricted WASI |
+| [Component capabilities](component/capabilities.md) | Filesystem WIT imports |
+| [Rust SDK](component/rust-sdk.md) | Guest types and dispatcher |
+| [Go SDK](component/go-sdk.md) | Generated bindings |
+
+## CLI
+
+| Module | Description |
+| --- | --- |
+| [CLI](cli/index.md) | Global syntax and command map |
+| [Project commands](cli/project.md) | `init`, `config`, schema |
+| [Develop and test](cli/development.md) | `check`, `compat`, `test`, `dev`, `run`, `inspect` |
+| [Tasks and protocols](cli/tasks.md) | `task`, `queue`, `mcp` |
+| [Build and image](cli/delivery.md) | `build`, `image` |
+| [Installation](cli/installation.md) | `doctor`, `upgrade` |
+| [Evidence](cli/evidence.md) | `bench`, `release` |
+
+## Manifest and host
+
+| Module | Description |
+| --- | --- |
+| [Manifest](manifest/index.md) | Field index and validation |
+| [Application and server](manifest/app-server.md) | App identity and inbound server |
+| [Permissions](manifest/permissions.md) | Network, secrets, SQL, filesystem |
+| [Application limits](manifest/limits.md) | Body size, concurrency, timeouts |
+| [Durable and observability](manifest/durable-observability.md) | Store, logs, telemetry |
+| [Manifest tasks](manifest/tasks.md) | Project workflow definitions |
+| [Environment variables](environment.md) | Installer, CLI, host adapters |
+| [Limits and defaults](limits-and-defaults.md) | Hard bounds |
+| [Errors and output](errors-and-output.md) | Exit codes and JSON envelopes |
+
+## Related guides
+
+| Topic | Link |
+| --- | --- |
+| Capability matrix | [docs/capabilities](../capabilities/README.md) |
+| npm compatibility | [docs/compatibility](../compatibility/README.md) |
+| Example gallery | [docs/guides/examples](../guides/examples.md) |
 
 ## Version-local truth
 
