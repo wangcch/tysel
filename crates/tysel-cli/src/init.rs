@@ -32,8 +32,8 @@ const PACKAGE_JSON: &str = r#"{
     "test": "tysel test"
   },
   "devDependencies": {
-    "@tysel/test": "0.0.1",
-    "@tysel/types": "0.0.1",
+    "@tysel/test": "__TYSEL_VERSION__",
+    "@tysel/types": "__TYSEL_VERSION__",
     "typescript": "7.0.2"
   }
 }
@@ -632,8 +632,10 @@ fn ensure_safe_destination(root: &Path, destination: &Path) -> Result<()> {
 
 fn generated_package_json(name: &str, include_tests: bool) -> Result<String> {
     let package_name = name.to_ascii_lowercase().replace('_', "-");
-    let mut package: serde_json::Value =
-        serde_json::from_str(&PACKAGE_JSON.replace("__NAME__", &package_name))?;
+    let template = PACKAGE_JSON
+        .replace("__NAME__", &package_name)
+        .replace("__TYSEL_VERSION__", env!("CARGO_PKG_VERSION"));
+    let mut package: serde_json::Value = serde_json::from_str(&template)?;
     if !include_tests {
         package["scripts"].as_object_mut().expect("template scripts").remove("test");
         package["devDependencies"]

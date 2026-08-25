@@ -46,7 +46,10 @@ printf '%s\n' \
   release-manifest.json.sig.json \
   stable-version \
   trust.json \
-  trust.json.sig.json >> "$expected"
+  trust.json.sig.json \
+  tysel-component-starters.tar.gz \
+  tysel-component-starters.tar.gz.sha256 \
+  tysel-component-starters.tar.gz.sig.json >> "$expected"
 sort -o "$expected" "$expected"
 
 find "$release_output" -maxdepth 1 -type f -exec basename {} \; | sort > "$actual"
@@ -64,6 +67,26 @@ install_sha256="$(sha256sum "$release_output/install.sh" | awk '{print $1}')"
   echo "install.sh checksum does not match" >&2
   exit 1
 }
+starters="$release_output/tysel-component-starters.tar.gz"
+starters_sha256="$(sha256sum "$starters" | awk '{print $1}')"
+[[ "$(tr -d '[:space:]' < "${starters}.sha256")" == "$starters_sha256" ]] || {
+  echo "Component starter archive checksum does not match" >&2
+  exit 1
+}
+signature_sha256="$(jq -er '.document_sha256' "${starters}.sig.json")"
+[[ "$signature_sha256" == "$starters_sha256" ]] || {
+  echo "Component starter signature does not describe the archive" >&2
+  exit 1
+}
+for member in \
+  tysel-component-starters/LICENSE \
+  tysel-component-starters/rust-echo/wit/component/task.wit \
+  tysel-component-starters/go-echo/wit/component/task.wit; do
+  tar -tzf "$starters" | grep -Fx "$member" > /dev/null || {
+    echo "Component starter archive is missing ${member}" >&2
+    exit 1
+  }
+done
 
 for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
   archive="$release_output/tysel-${version}-${target}.tar.gz"
@@ -90,7 +113,10 @@ jq -e '
   "$release_output/trust.json" > /dev/null
 
 active_key="$(jq -er '.keys[] | select(.status == "active") | .key_id' "$release_output/trust.json")"
-for document in release-manifest.json channel-pointer.json; do
+for document in \
+  release-manifest.json \
+  channel-pointer.json \
+  tysel-component-starters.tar.gz; do
   jq -e --arg key "$active_key" '.key_id == $key' \
     "$release_output/${document}.sig.json" > /dev/null
 done

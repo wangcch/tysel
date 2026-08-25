@@ -318,8 +318,8 @@ fn init_writes_a_hello_service_skeleton() {
     assert!(!dir.join("tests/tysel-test.d.ts").exists());
     let package: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("package.json")).unwrap()).unwrap();
-    assert_eq!(package["devDependencies"]["@tysel/test"], "0.0.1");
-    assert_eq!(package["devDependencies"]["@tysel/types"], "0.0.1");
+    assert_eq!(package["devDependencies"]["@tysel/test"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(package["devDependencies"]["@tysel/types"], env!("CARGO_PKG_VERSION"));
     let tsconfig: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("tsconfig.json")).unwrap()).unwrap();
     assert_eq!(

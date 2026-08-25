@@ -27,6 +27,9 @@ for required in package/package.json package/dist/index.d.ts package/README.md p
 done
 tar -xOf "$types_archive" package/package.json | jq -e '
   (.dependencies // {} | length) == 0
+  and .repository.type == "git"
+  and .repository.url == "git+https://github.com/wangcch/tysel.git"
+  and .repository.directory == "packages/tysel-types"
   and (.scripts.preinstall // null) == null
   and (.scripts.install // null) == null
   and (.scripts.postinstall // null) == null' > /dev/null
@@ -37,7 +40,7 @@ if grep -Eq '^package/(src|node_modules)/' <<< "$test_contents" \
   echo "@tysel/test archive contains TypeScript source or dependencies" >&2
   exit 1
 fi
-for required in package/package.json package/dist/index.js package/dist/index.d.ts package/README.md; do
+for required in package/package.json package/dist/index.js package/dist/index.d.ts package/README.md package/LICENSE; do
   grep -Fxq "$required" <<< "$test_contents" || {
     echo "@tysel/test archive is missing ${required}" >&2
     exit 1
@@ -45,6 +48,9 @@ for required in package/package.json package/dist/index.js package/dist/index.d.
 done
 tar -xOf "$test_archive" package/package.json | jq -e '
   .dependencies["@tysel/types"] == .version
+  and .repository.type == "git"
+  and .repository.url == "git+https://github.com/wangcch/tysel.git"
+  and .repository.directory == "packages/tysel-test"
   and (.scripts.preinstall // null) == null
   and (.scripts.install // null) == null
   and (.scripts.postinstall // null) == null' > /dev/null

@@ -1,12 +1,18 @@
 [package]
 name = "tysel-component-sdk"
 version.workspace = true
+publish = ["crates-io"]
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 description = "Language-level JSON task contract for Tysel Wasm Components."
 readme = "README.md"
+repository = "https://github.com/wangcch/tysel"
+homepage = "https://tysel.dev"
+documentation = "https://docs.rs/tysel-component-sdk"
+keywords = ["wasm", "component-model", "tysel"]
+categories = ["wasm"]
 
 [lints]
 workspace = true

@@ -3574,7 +3574,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "tysel-bench-compare"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3590,7 +3590,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-build"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -3609,14 +3609,14 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-fs"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "tysel-cap-llm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -3632,7 +3632,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-mcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3641,7 +3641,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-postgres"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3655,7 +3655,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-sqlite"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -3664,7 +3664,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-capability"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "semver",
  "serde",
@@ -3673,7 +3673,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3702,7 +3702,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-component-sdk"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3710,7 +3710,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-distribution"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "semver",
  "serde",
@@ -3720,7 +3720,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-durable"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "native-tls",
  "postgres",
@@ -3736,14 +3736,14 @@ dependencies = [
 
 [[package]]
 name = "tysel-engine"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "tysel-engine-qjs"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3774,7 +3774,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-engine-wasm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -3789,7 +3789,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-ipc"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3799,7 +3799,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-isolate"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "libc",
  "serde_json",
@@ -3814,7 +3814,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-manifest"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3824,7 +3824,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-observability"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
@@ -3836,7 +3836,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-package"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "semver",
  "serde",
@@ -3847,14 +3847,14 @@ dependencies = [
 
 [[package]]
 name = "tysel-policy"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "tysel-capability",
 ]
 
 [[package]]
 name = "tysel-release-signing"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -3866,7 +3866,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-runtime"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3900,7 +3900,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-scheduler"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "thiserror",
  "tysel-task",
@@ -3908,7 +3908,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-task"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -3916,7 +3916,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-task-rpc"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3926,7 +3926,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-testkit"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",

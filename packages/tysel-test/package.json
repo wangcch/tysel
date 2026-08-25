@@ -1,9 +1,14 @@
 {
   "name": "@tysel/test",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "license": "Apache-2.0",
   "description": "Test helpers for Tysel fetch handlers and durable tasks.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangcch/tysel.git",
+    "directory": "packages/tysel-test"
+  },
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -11,7 +16,7 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": ["dist", "LICENSE", "README.md"],
   "sideEffects": false,
   "publishConfig": {
     "access": "public"

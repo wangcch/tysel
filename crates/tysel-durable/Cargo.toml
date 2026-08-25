@@ -1,6 +1,7 @@
 [package]
 name = "tysel-durable"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

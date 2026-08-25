@@ -1,9 +1,14 @@
 {
   "name": "@tysel/types",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "license": "Apache-2.0",
   "description": "Shared TypeScript types for Tysel applications and capabilities.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangcch/tysel.git",
+    "directory": "packages/tysel-types"
+  },
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {

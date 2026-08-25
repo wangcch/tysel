@@ -3,6 +3,13 @@
 Rust guest-side helpers for the experimental
 `tysel:component/task@0.4.0` Wasm Component interface.
 
+Add the SDK to a Rust guest project:
+
+```toml
+[dependencies]
+tysel-component-sdk = "0.1.0"
+```
+
 ```rust
 use serde::{Deserialize, Serialize};
 use tysel_component_sdk::{Task, dispatch};
@@ -33,5 +40,5 @@ Call `dispatch::<Double>(input)` from the WIT-generated `Guest::run`
 implementation. The helper validates JSON and enforces the same 1 MiB
 input/output and 4 KiB error limits as the host.
 
-See the [Rust echo Component](../../sdk/examples/rust-echo/README.md) and the
-[Component SDK overview](../../sdk/README.md).
+See the [Rust Component guide](https://tysel.dev/docs/guides/wasm-component-rust)
+and [SDK reference](https://tysel.dev/reference/component/rust-sdk).

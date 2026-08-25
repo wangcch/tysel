@@ -86,8 +86,7 @@ pub enum ReleaseCommand {
     /// Validate a release trust policy without performing network access.
     #[command(hide = true)]
     ValidateTrust { trust: PathBuf },
-    /// Authenticate signed release metadata with an installed trust policy.
-    #[command(hide = true)]
+    /// Authenticate release metadata or a platform-neutral asset with a trust policy.
     VerifyMetadata {
         document: PathBuf,
         signature: PathBuf,

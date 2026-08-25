@@ -9,6 +9,21 @@ if [[ "$rust_version_count" -ne 1 ]]; then
   exit 1
 fi
 
+public_rust_crates="$(jq -r '
+  [.packages[] | select(.publish != []) | .name] | sort | join(",")
+' <<< "$workspace_metadata")"
+if [[ "$public_rust_crates" != "tysel-component-sdk" ]]; then
+  echo "unexpected publishable Rust crates: ${public_rust_crates:-none}" >&2
+  exit 1
+fi
+sdk_registries="$(jq -r '
+  .packages[] | select(.name == "tysel-component-sdk") | .publish | join(",")
+' <<< "$workspace_metadata")"
+if [[ "$sdk_registries" != "crates-io" ]]; then
+  echo "tysel-component-sdk must publish only to crates.io" >&2
+  exit 1
+fi
+
 version="$rust_versions"
 for manifest in \
   packages/tysel/package.json \
@@ -18,6 +33,22 @@ for manifest in \
   package_version="$(jq -er '.version' "$manifest")"
   if [[ "$package_version" != "$version" ]]; then
     echo "${manifest} version ${package_version} does not match Rust ${version}" >&2
+    exit 1
+  fi
+done
+
+runtime_js_version="$(jq -er '.runtimeJsVersion' runtime-js/compatibility.json)"
+if [[ "$runtime_js_version" != "$version" ]]; then
+  echo "runtime-js compatibility version ${runtime_js_version} does not match Rust ${version}" >&2
+  exit 1
+fi
+
+for license_copy in \
+  crates/tysel-component-sdk/LICENSE \
+  packages/tysel-test/LICENSE \
+  packages/tysel-types/LICENSE; do
+  if ! cmp -s LICENSE "$license_copy"; then
+    echo "${license_copy} must match the repository LICENSE" >&2
     exit 1
   fi
 done
