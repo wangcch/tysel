@@ -12,6 +12,16 @@
   --color-tysel-blue: #5b5ce2;
   --color-tysel-lime: #c9ff63;
   --color-tysel-mist: #f1f3f7;
+  /* Squared chrome. rounded-full stays circular (infinity, not these tokens). */
+  --radius: 0;
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+  --radius-4xl: 0;
 }
 
 :root {
@@ -56,6 +66,11 @@ html {
 }
 
 header [data-search-full] {
+  border-radius: 0;
+}
+
+/* Fumadocs prose hardcodes 5px; it does not read --radius-*. */
+.prose :where(code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
   border-radius: 0;
 }
 
