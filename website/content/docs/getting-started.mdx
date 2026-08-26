@@ -104,19 +104,26 @@ This step is optional and does not install or replace the Tysel runtime.
 The generated entry exports a Fetch-style application:
 
 ```ts
+import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "../tysel-env.js";
+
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request) {
     return Response.json({
       message: "Hello from Tysel",
       path: new URL(request.url).pathname,
     });
   },
-};
+} satisfies TyselApp<TyselEnv>;
 ```
+
+`tysel-env.d.ts` is generated from the manifest. After changing permissions,
+run `tysel types` to refresh it.
 
 Validate the manifest, TypeScript, capabilities, and imports:
 
 ```sh
+tysel types --check
 tysel check
 tysel compat
 ```

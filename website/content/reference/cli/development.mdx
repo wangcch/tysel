@@ -11,12 +11,46 @@ instead of using upward discovery.
 | Command | Options | Contract |
 | --- | --- | --- |
 | `tysel check` | `--manifest` | Validate the manifest, bundle, TypeScript, capability use, and Node builtin use. |
+| `tysel types` | `--output`, `--check`, `--manifest` | Generate or verify a manifest-scoped TypeScript capability environment. |
 | `tysel compat` | `--json`, `--strict`, `--deny-unknown`, `--manifest` | Classify imports and dependencies against the compatibility catalog. |
 | `tysel inspect` | `--manifest` | Print effective capabilities and limits. |
 
 `compat --strict` applies the command's strict compatibility policy;
 `--deny-unknown` additionally treats unclassified dependencies as failures.
 Use `--json` when a CI job needs a report rather than human text.
+
+## `tysel types`
+
+```text
+tysel types [-o FILE] [--check] [--manifest FILE]
+```
+
+Generate `tysel-env.d.ts` from the effective manifest. The exported `TyselEnv`
+contains core runtime utilities plus only the declared service capabilities.
+Secret names become string literals, filesystem read/write methods are selected
+independently, and read-only Postgres exposes only `query`.
+`tysel init` generates this file for typed projects and wires the entry module
+to `TyselApp<TyselEnv>` automatically.
+
+Use the generated environment to narrow an application handler:
+
+```ts
+import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "../tysel-env.js";
+
+export default {
+  async fetch(_request, runtime) {
+    return Response.json({ isolateId: runtime.isolateId });
+  },
+} satisfies TyselApp<TyselEnv>;
+```
+
+`--output` must remain relative to the project root. `--check` performs no write and exits non-zero when the declaration is missing
+or stale. Run it in CI after changing manifest permissions. Runtime enforcement
+remains authoritative; generated types do not grant capabilities. LLM provider
+configuration currently lives outside the manifest and is therefore not added
+to `TyselEnv` automatically. The global Web `fetch` declaration also cannot be
+narrowed to manifest hostnames; runtime allowlist enforcement remains required.
 
 ## `tysel test`
 

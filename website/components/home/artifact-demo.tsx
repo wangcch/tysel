@@ -7,14 +7,16 @@ const frames = [
     id: "source",
     label: "src/index.ts",
     hint: "A Fetch handler is the whole application.",
-    code: `export default {
-  async fetch(request: Request): Promise<Response> {
+    code: `import type { TyselApp } from "@tysel/types";
+
+export default {
+  async fetch(request) {
     return Response.json({
       message: "Hello from Tysel",
       path: new URL(request.url).pathname,
     });
   },
-};`,
+} satisfies TyselApp;`,
   },
   {
     id: "build",

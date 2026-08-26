@@ -79,12 +79,14 @@ status and message. In this example, `route` is the application's existing
 router and the logged category is deliberately allowlisted:
 
 ```ts
+import type { TyselApp } from "@tysel/types";
+
 function safeCategory(error: unknown): "type" | "unexpected" {
   return error instanceof TypeError ? "type" : "unexpected";
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request) {
     try {
       return await route(request);
     } catch (error) {
@@ -95,7 +97,7 @@ export default {
       );
     }
   },
-};
+} satisfies TyselApp;
 ```
 
 Keep `safeCategory` bounded; do not log request bodies, authorization headers,

@@ -1,38 +1,66 @@
 ---
 title: "Application module"
-description: "An application default-exports a TyselApp object. Every member is optional, but the selected command or protocol requires the corresponding handler."
+description: "An application default-exports a TyselApp object. It must expose at least one HTTP, task, or durable entrypoint; the selected command or protocol requires the corresponding handler."
 ---
 
-An application default-exports a `TyselApp` object. Every member is optional,
-but the selected command or protocol requires the corresponding handler.
+An application default-exports a `TyselApp` object. It must declare at least one
+HTTP, task-registry, or durable-registry entrypoint group; the selected command
+or protocol still requires a concrete handler in that group.
+
+Export a plain object and apply `satisfies TyselApp` (or
+`TyselApp<TyselEnv>` when generated capability types are available). This is
+the default and requires no runtime SDK import. Use `defineApp` only when one
+property must contextually infer another, such as an MCP handler from its input
+schema.
 
 ```ts
-interface TyselApp {
-  fetch?: FetchHandler;
+interface TyselAppMembers {
+  fetch?: RuntimeFetchHandler;
   tasks?: Record<string, CronTask | QueueTask | McpTask>;
   durable?: Record<string, DurableHandler>;
 }
+
+type TyselApp = RequireAtLeastOne<TyselAppMembers>;
 ```
 
 ## HTTP handler
 
 ```ts
 type FetchHandler = (request: Request) => Response | Promise<Response>;
+
+type RuntimeFetchHandler = (
+  request: Request,
+  runtime: TyselRuntime,
+) => Response | Promise<Response>;
 ```
 
-The runtime calls `fetch` for inbound HTTP requests. It must return a
-`Response` or a promise of one. Request and response bodies are bounded and
+The runtime calls `fetch` for inbound HTTP requests and injects the public
+capability host as `runtime`. One-argument handlers remain valid, and
+`globalThis.tysel` remains available for compatibility. The handler must return
+a `Response` or a promise of one. Request and response bodies are bounded and
 single-use according to the
 [Request and Response contract](https://tysel.dev/reference/javascript/request/).
 
 ```ts
+import type { TyselApp } from "@tysel/types";
+
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request, runtime) {
     const url = new URL(request.url);
-    return Response.json({ method: request.method, path: url.pathname });
+    return Response.json({
+      method: request.method,
+      path: url.pathname,
+      isolateId: runtime.isolateId,
+    });
   },
 } satisfies TyselApp;
 ```
+
+Prefer `satisfies TyselApp` over repeating parameter and return annotations. It
+checks the complete default-export contract, contextually types each handler,
+and preserves the application's precise inferred type for tests and adapters.
+Use `TyselApp<TyselRuntimeWith<...>>` when a handler should expose only an
+explicit subset of runtime capabilities.
 
 ## Request context
 
@@ -85,20 +113,38 @@ to invoke a registered handler from the CLI.
 
 ## MCP tasks
 
+MCP is the main case where `defineApp` adds value: it makes the literal `input`
+schema the source of the handler parameter type. `tysel init --template mcp`
+therefore adds the matching `tysel` SDK dependency.
+
 ```ts
-interface McpTask {
-  kind: "mcp";
-  description: string;
-  input: Record<string, string>;
-  handler(input: object, context: RequestContext): unknown | Promise<unknown>;
-}
+import { defineApp } from "tysel";
+
+export default defineApp({
+  tasks: {
+    lookup: {
+      kind: "mcp",
+      description: "Look up a customer",
+      input: { customerId: "string" },
+      async handler(input) {
+        return { customerId: input.customerId };
+      },
+    },
+  },
+});
 ```
 
-`input` describes named tool inputs for discovery. Handler input and result
-must be JSON serializable. Each schema value is one of `string`, `number`,
-`integer`, `boolean`, `object`, or `array`, and every declared property is
+`defineApp()` keeps `input` as the single source of truth and contextually
+infers the handler parameter. `InferMcpInput<Schema>` remains available for
+advanced type composition, but ordinary handlers do not need to name it.
+Handler input and result must be JSON serializable. TypeScript rejects schema
+values outside the `McpInputType` vocabulary. Every declared property is
 required by the current protocol adapter. [`tysel mcp`](/reference/cli/tasks#tysel-mcp)
 serves the registered tools over newline-delimited stdio.
+
+For a single MCP task or a registry that mixes MCP with cron/queue tasks, the
+optional `mcp({...})` constructor provides the same inference locally. It is a
+convenience helper rather than the default documented application shape.
 
 ## Durable handlers
 

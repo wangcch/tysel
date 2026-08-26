@@ -121,11 +121,11 @@ remain undiscoverable.
 | --- | --- | --- |
 | JSON | `JsonPrimitive`, `JsonValue`, `JsonObject`, `MaybePromise` | [JSON values](#json-values) |
 | Execution | `ExecutionProfile`, `TrustMode`, `CapabilityRequirement`, `RequestContext` | [Execution and trust](#execution-and-trust) |
-| Application | `FetchHandler`, `CronTask`, `QueueTask`, `McpInputSchema`, `McpTask`, `AppTask`, `TyselApp` | [Application module](/reference/runtime/application) |
+| Application | `FetchHandler`, `RuntimeFetchHandler`, `CronTask`, `QueueTask`, `McpInputType`, `McpInputSchema`, `InferMcpInput`, `McpTask`, `AppTask`, `TyselApp` | [Application module](/reference/runtime/application) |
 | Durable handler | `DurableHandler`, `DurableDuration`, `DurableRetryPolicy`, `DurableContext`, `DurableHost` | [Durable API](/reference/runtime/durable) |
 | Durable control | `DurableSuspendedResult`, `DurableCompletedResult`, `DurableStartResult`, `DurableControlClient` | [Durable control](/reference/runtime/durable#control-api) |
 | SQL and files | `SqlParameter`, `SqlRow`, `SqlClient`, `FileSystemClient` | [Host capabilities](/reference/runtime/capabilities) |
 | Secrets | `SecretReference`, `SecretClient` | [Secrets](/reference/runtime/capabilities#secrets) |
 | LLM | `LlmGenerateOptions`, `LlmUsage`, `LlmResponse`, `LlmClient` | [LLM generation](/reference/runtime/capabilities#llm-generation) |
 | Accepted WebSocket | `AcceptedWebSocketEvent`, `AcceptedWebSocketEventType`, `AcceptedWebSocketListener`, `AcceptedWebSocket` | [WebSockets](/reference/runtime/capabilities#websockets) |
-| Runtime host | `TyselRuntime`, `Tysel` | [Runtime overview](/reference/runtime) |
+| Runtime host | `TyselRuntime`, `TyselRuntimeWith`, `Tysel` | [Runtime overview](/reference/runtime) |

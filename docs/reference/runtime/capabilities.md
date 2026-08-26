@@ -1,8 +1,9 @@
 # Host capabilities
 
-Host methods live on `globalThis.tysel`. Type availability does not grant
-authority: the execution profile, manifest permission, and host configuration
-must all permit the call.
+HTTP handlers receive host methods through their `runtime` argument. The same
+object remains available as `globalThis.tysel` for compatibility and for task
+or durable handlers. Type availability does not grant authority: the execution
+profile, manifest permission, and host configuration must all permit the call.
 
 ## Capability summary
 

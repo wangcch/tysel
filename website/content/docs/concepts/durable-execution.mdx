@@ -10,7 +10,8 @@ the state needed to continue at explicit durable boundaries.
 ## Define and start a handler
 
 ```ts
-import type { DurableContext } from "@tysel/types";
+import type { DurableContext, TyselApp } from "@tysel/types";
+import type { TyselEnv } from "../tysel-env.js";
 
 const approvalFlow = async (
   ctx: DurableContext,
@@ -27,14 +28,17 @@ const approvalFlow = async (
 
 export default {
   durable: { approvalFlow },
-  async fetch(request) {
-    const started = tysel.durable.start("approvalFlow", {
+  async fetch(request, runtime) {
+    const started = runtime.durable.start("approvalFlow", {
       orderId: new URL(request.url).searchParams.get("orderId")!,
     });
     return Response.json(started, { status: 202 });
   },
-};
+} satisfies TyselApp<TyselEnv>;
 ```
+
+Typed projects created by `tysel init` already contain `tysel-env.d.ts`. Run
+`tysel types` after changing the durable store or other manifest capabilities.
 
 `tysel.durable.start` returns a task ID and either a completed or suspended
 status. Send an external event with

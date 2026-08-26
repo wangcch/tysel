@@ -7,14 +7,16 @@ It packages your application and runtime into one executable—without Node.js,
 V8, or `node_modules` in production.
 
 ```ts
+import type { TyselApp } from "@tysel/types";
+
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request) {
     return Response.json({
       message: "Hello from Tysel",
       path: new URL(request.url).pathname,
     });
   },
-};
+} satisfies TyselApp;
 ```
 
 ## Why Tysel

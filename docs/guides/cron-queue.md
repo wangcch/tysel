@@ -7,13 +7,15 @@ second application protocol.
 ## Define both handlers
 
 ```ts
+import type { TyselApp } from "@tysel/types";
+
 interface Job {
   id: string;
   action: string;
 }
 
 export default {
-  async fetch(): Promise<Response> {
+  async fetch() {
     return Response.json({ queues: ["jobs"], cron: ["heartbeat"] });
   },
   tasks: {
@@ -41,7 +43,7 @@ export default {
       },
     },
   },
-};
+} satisfies TyselApp;
 ```
 
 The small HTTP handler keeps the same module runnable under `tysel run` while

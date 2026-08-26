@@ -30,10 +30,11 @@ tysel check
 tysel test
 ```
 
-The matching `@tysel/types` and `@tysel/test` packages are published with each
-native release. Installing those optional development dependencies provides
-editor declarations and compiler feedback; Tysel commands and packaged
-production executables do not require Node.js or `node_modules`.
+The matching `@tysel/types`, `@tysel/test`, and `tysel` SDK packages are
+published with each native release. Installing those optional development
+dependencies provides editor declarations, compiler feedback, and MCP schema
+inference; Tysel commands and packaged production executables do not require
+Node.js or `node_modules`.
 
 Rust Wasm Component projects can depend on the matching
 `tysel-component-sdk` crate from crates.io. It is a guest development library,
@@ -189,6 +190,7 @@ require every trust-policy replacement to be authenticated by the installed
 policy and to advance monotonically. `tysel upgrade` requires signed trust,
 channel, manifest, and archive metadata. Stable resolves only final
 `MAJOR.MINOR.PATCH` releases; canary resolves only prereleases. Every native release is paired with matching
-`@tysel/types`, `@tysel/test`, and `tysel-component-sdk` packages.
+`@tysel/types`, `@tysel/test`, the `tysel` application SDK, and
+`tysel-component-sdk` packages.
 
 Windows native archives are not currently supported. Use WSL on Windows.

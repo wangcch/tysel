@@ -40,16 +40,19 @@ const examples: Example[] = [
     blurb:
       "A Fetch handler is enough for a first-party service. No host grant until you call one.",
     filename: "src/index.ts",
-    code: `export default {
-  async fetch(request: Request): Promise<Response> {
+    code: `import type { TyselApp } from "@tysel/types";
+
+export default {
+  async fetch(request, runtime) {
     const url = new URL(request.url);
 
     return Response.json({
       method: request.method,
       path: url.pathname,
+      isolateId: runtime.isolateId,
     });
   },
-};`,
+} satisfies TyselApp;`,
     grant: "service · no host capability required",
     docsHref: "/reference/runtime/application#http-handler",
     exampleHref:
@@ -62,7 +65,9 @@ const examples: Example[] = [
     blurb:
       "LLM call, human approval, then resume after restart — completed effects replay instead of re-running.",
     filename: "src/agent.ts",
-    code: `const agent = async (ctx: DurableContext, input: Input) => {
+    code: `import type { DurableContext, TyselApp } from "@tysel/types";
+
+const agent = async (ctx: DurableContext, input: Input) => {
   const draft = await ctx.effect("draft", () =>
     tysel.llm.generate({
       model: "default",
@@ -74,7 +79,7 @@ const examples: Example[] = [
   return { draft, approval };
 };
 
-export default { durable: { agent } };`,
+export default { durable: { agent } } satisfies TyselApp;`,
     grant: "service · durable store + LLM + declared secret",
     docsHref: "/reference/runtime/durable",
     exampleHref:
@@ -110,7 +115,9 @@ return Response.json({
     blurb:
       "Validated JSON tools over bounded stdio. Isolated workers only see brokered secret handles.",
     filename: "src/index.ts",
-    code: `export default {
+    code: `import { defineApp } from "tysel";
+
+export default defineApp({
   tasks: {
     lookup: {
       kind: "mcp",
@@ -124,7 +131,7 @@ return Response.json({
       },
     },
   },
-};`,
+});`,
     grant: "isolated · brokered secret handle only",
     docsHref: "/reference/runtime/application#mcp-tasks",
     exampleHref: "https://github.com/wangcch/tysel/tree/main/examples/mcp-tool",
@@ -175,9 +182,11 @@ return Response.json({ rows });`,
     blurb:
       "Inbound upgrades need an explicit server flag. Outbound sockets follow the same fetch allowlist.",
     filename: "src/socket.ts",
-    code: `export default {
-  fetch(): Response {
-    const socket = tysel.acceptWebSocket();
+    code: `import type { TyselApp } from "@tysel/types";
+
+export default {
+  fetch(_request, runtime) {
+    const socket = runtime.acceptWebSocket();
 
     socket.onmessage = async (event) => {
       await socket.send(\`echo: \${event.data ?? ""}\`);
@@ -185,7 +194,7 @@ return Response.json({ rows });`,
 
     return new Response(null, { status: 101 });
   },
-};`,
+} satisfies TyselApp;`,
     grant: "service · server.websocket = true",
     docsHref: "/reference/runtime/capabilities#websockets",
   },

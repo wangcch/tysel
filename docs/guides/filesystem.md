@@ -37,19 +37,28 @@ Keep them separate even when an application currently needs both.
 
 ## Transform one file
 
+Generate the capability environment after updating the manifest:
+
+```sh
+tysel types
+```
+
 ```ts
+import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "../tysel-env.js";
+
 export default {
-  async fetch(): Promise<Response> {
-    const source = await tysel.fs.read("input/jobs.json");
+  async fetch(_request, runtime) {
+    const source = await runtime.fs.read("input/jobs.json");
     const input = JSON.parse(source) as { items: string[] };
     const result = {
       count: input.items.length,
       items: input.items.map((item) => item.toUpperCase()),
     };
-    await tysel.fs.write("output/result.json", JSON.stringify(result, null, 2));
+    await runtime.fs.write("output/result.json", JSON.stringify(result, null, 2));
     return Response.json(result);
   },
-};
+} satisfies TyselApp<TyselEnv>;
 ```
 
 Run the complete [filesystem transform example](https://github.com/wangcch/tysel/tree/main/examples/filesystem-transform):

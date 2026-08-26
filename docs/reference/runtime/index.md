@@ -1,17 +1,19 @@
 # Runtime reference
 
-Tysel applications export handlers and use browser-style globals plus the
-`globalThis.tysel` host object. `@tysel/types` provides the public declarations
-for editors and static checks; it does not install a JavaScript polyfill.
+Tysel applications export handlers and use browser-style globals. HTTP handlers
+receive the Tysel capability host as their second argument;
+`globalThis.tysel` remains available for compatibility and non-HTTP handlers.
+`@tysel/types` provides the public declarations for editors and static checks;
+it does not install a JavaScript polyfill.
 
 ```ts
 import type { TyselApp } from "@tysel/types";
 
-const app: TyselApp = {
-  async fetch(request) {
-    return new Response(`received ${request.method}`);
+const app = {
+  async fetch(request, runtime) {
+    return new Response(`isolate ${runtime.isolateId} received ${request.method}`);
   },
-};
+} satisfies TyselApp;
 
 export default app;
 ```

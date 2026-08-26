@@ -28,13 +28,27 @@ CLI exit non-zero.
 
 ```ts
 invokeFetch(
-  handler: FetchHandler,
+  handler: (request: Request) => Response | Promise<Response>,
   input: Request | string | URL,
   init?: RequestInit,
 ): Promise<Response>
 ```
 
 Invoke an application fetch handler without starting a listener.
+
+Handlers that use the injected runtime can be tested with an explicit mock:
+
+```ts
+invokeFetchWithRuntime(
+  handler: (request: Request, runtime: Runtime) => Response | Promise<Response>,
+  runtime: Runtime,
+  input: Request | string | URL,
+  init?: RequestInit,
+): Promise<Response>
+```
+
+`invokeFetchWithRuntime` is generic over the runtime shape, so focused tests can
+provide only the capabilities their handler declares.
 
 ```ts
 import { assert, invokeFetch, test } from "@tysel/test";
