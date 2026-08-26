@@ -18,22 +18,28 @@ fn main() {
 fn run() -> Result<()> {
     let mut arguments = std::env::args_os().skip(1);
     let command = arguments.next().and_then(|value| value.into_string().ok());
-    let current = arguments.next().map(PathBuf::from);
-    let successor = arguments.next().map(PathBuf::from);
-    let signature = arguments.next().map(PathBuf::from);
-    let now = arguments
-        .next()
-        .and_then(|value| value.into_string().ok())
-        .map(|value| value.parse::<u64>().context("invalid verification time"))
-        .transpose()?;
-    anyhow::ensure!(arguments.next().is_none(), usage());
-
-    match (command.as_deref(), current, successor, signature, now) {
-        (Some("validate"), Some(policy), None, None, None) => {
+    match command.as_deref() {
+        Some("validate") => {
+            let policy = required_path(&mut arguments)?;
+            anyhow::ensure!(arguments.next().is_none(), usage());
             validate_trust_policy(&read_policy(&policy)?)?;
             println!("valid trust policy {}", policy.display());
         }
-        (Some("verify-transition"), Some(current), Some(successor), Some(signature), Some(now)) => {
+        Some("verify") => {
+            let policy = required_path(&mut arguments)?;
+            let signature = required_path(&mut arguments)?;
+            let now = required_time(&mut arguments)?;
+            anyhow::ensure!(arguments.next().is_none(), usage());
+            verify_release_metadata_signature(&policy, &signature, &policy, now)
+                .context("authenticate trust policy")?;
+            println!("valid trust-policy signature");
+        }
+        Some("verify-transition") => {
+            let current = required_path(&mut arguments)?;
+            let successor = required_path(&mut arguments)?;
+            let signature = required_path(&mut arguments)?;
+            let now = required_time(&mut arguments)?;
+            anyhow::ensure!(arguments.next().is_none(), usage());
             let current_policy = read_policy(&current)?;
             let successor_policy = read_policy(&successor)?;
             validate_trust_policy_transition(&current_policy, &successor_policy)?;
@@ -48,6 +54,19 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+fn required_path(arguments: &mut impl Iterator<Item = std::ffi::OsString>) -> Result<PathBuf> {
+    arguments.next().map(PathBuf::from).context(usage())
+}
+
+fn required_time(arguments: &mut impl Iterator<Item = std::ffi::OsString>) -> Result<u64> {
+    arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .context(usage())?
+        .parse::<u64>()
+        .context("invalid verification time")
+}
+
 fn read_policy(path: &Path) -> Result<TrustPolicy> {
     let metadata =
         std::fs::metadata(path).with_context(|| format!("inspect {}", path.display()))?;
@@ -58,5 +77,5 @@ fn read_policy(path: &Path) -> Result<TrustPolicy> {
 }
 
 fn usage() -> &'static str {
-    "usage: tysel-trust-policy validate <policy> | verify-transition <current> <successor> <successor-signature> <now-unix>"
+    "usage: tysel-trust-policy validate <policy> | verify <policy> <signature> <now-unix> | verify-transition <current> <successor> <successor-signature> <now-unix>"
 }

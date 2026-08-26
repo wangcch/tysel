@@ -26,7 +26,7 @@ const MAX_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
 pub struct Options {
     pub check: bool,
     pub version: Option<String>,
-    pub channel: String,
+    pub channel: Option<String>,
     pub yes: bool,
     pub force: bool,
     pub rollback: bool,
@@ -46,10 +46,16 @@ struct UpgradeReport {
 }
 
 pub fn run(options: Options) -> Result<()> {
-    anyhow::ensure!(options.channel == "stable", "only the stable channel is supported");
+    if let Some(channel) = options.channel.as_deref() {
+        parse_channel(channel)?;
+    }
     anyhow::ensure!(
-        !(options.rollback && (options.check || options.version.is_some() || options.force)),
-        "--rollback cannot be combined with --check, --version, or --force"
+        !(options.rollback
+            && (options.check
+                || options.version.is_some()
+                || options.channel.is_some()
+                || options.force)),
+        "--rollback cannot be combined with --check, --version, --channel, or --force"
     );
     anyhow::ensure!(
         !(options.json && !options.check && !options.yes),
@@ -61,7 +67,6 @@ pub fn run(options: Options) -> Result<()> {
     let _lock = UpgradeLock::acquire(layout.upgrade_lock(), Duration::from_secs(5))?;
     let state_bytes = fs::read(layout.state_file()).context("read managed state.json")?;
     let state = InstallState::from_json(&state_bytes)?;
-    anyhow::ensure!(state.channel == Channel::Stable, "managed installation is not on stable");
     validate_active_install(&layout, &state)?;
     if options.rollback {
         return rollback(&layout, &state, &state_bytes, &options);
@@ -93,8 +98,15 @@ fn upgrade(
     }
     let client = release_client()?;
     let refreshed_trust = resolve_trust_policy(&client, trust, staging)?;
-    let (manifest, manifest_path) =
-        resolve_manifest(&client, &refreshed_trust, staging, options.version.as_deref())?;
+    let selected_channel =
+        options.channel.as_deref().map(parse_channel).transpose()?.unwrap_or(state.channel);
+    let (manifest, manifest_path) = resolve_manifest(
+        &client,
+        &refreshed_trust,
+        staging,
+        options.version.as_deref(),
+        selected_channel,
+    )?;
     let current = state.active_semver()?;
     let next = Version::parse(&manifest.version).context("parse selected release version")?;
     let updater = Version::parse(env!("CARGO_PKG_VERSION")).context("parse updater version")?;
@@ -107,8 +119,17 @@ fn upgrade(
         .find(|asset| asset.target == state.target)
         .with_context(|| format!("selected release has no asset for {}", state.target))?;
     platform::ensure_compatible(&asset.platform, state.target)?;
-    if next < current && !options.force {
-        anyhow::bail!("downgrading from {current} to {next} requires --force");
+    if next < current
+        && downgrade_requires_force(
+            state.channel,
+            selected_channel,
+            options.channel.is_some(),
+            options.force,
+        )
+    {
+        anyhow::bail!(
+            "downgrading from {current} to {next} requires --force or an explicit --channel switch"
+        );
     }
     if next == current && !options.force {
         let refreshed = fs::read(&refreshed_trust)?;
@@ -187,21 +208,44 @@ fn upgrade(
         &manifest.version,
     )?;
     fs::copy(&manifest_path, extracted.join("release-manifest.json"))?;
-
-    let destination = layout.version_dir(&next);
-    if destination.exists() {
-        release::verify_installation(
-            &manifest_path,
-            &destination,
-            state.target.canonical(),
-            &manifest.version,
-        )?;
-    } else {
-        fs::rename(&extracted, &destination).context("publish verified version directory")?;
-    }
+    let selected_manifest_bytes = fs::read(&manifest_path)?;
+    let selected_manifest_sha = hash_file(&extracted.join("release-manifest.json"))?;
 
     let old_link = fs::read_link(layout.active_bin_link()).context("read active bin link")?;
-    replace_link(layout, &next)?;
+    let previous_trust = fs::read(trust)?;
+    let destination = layout.version_dir(&next);
+    let destination_backup = staging.join("replaced-version");
+    let mut replaced_destination = false;
+    match fs::symlink_metadata(&destination) {
+        Ok(metadata) => {
+            anyhow::ensure!(
+                metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+                "managed version destination is not a directory"
+            );
+            let existing_is_reusable = release::verify_installation(
+                &manifest_path,
+                &destination,
+                state.target.canonical(),
+                &manifest.version,
+            )
+            .is_ok()
+                && installed_manifest_matches(&destination, &selected_manifest_bytes);
+            if !existing_is_reusable {
+                fs::rename(&destination, &destination_backup)
+                    .context("quarantine damaged version directory")?;
+                if let Err(error) = fs::rename(&extracted, &destination) {
+                    let _ = fs::rename(&destination_backup, &destination);
+                    return Err(error).context("publish repaired version directory");
+                }
+                replaced_destination = true;
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::rename(&extracted, &destination).context("publish verified version directory")?;
+        }
+        Err(error) => return Err(error).context("inspect managed version destination"),
+    }
+
     let new_state = InstallState {
         schema_version: INSTALL_STATE_SCHEMA_VERSION,
         active_version: next.to_string(),
@@ -210,13 +254,13 @@ fn upgrade(
         } else {
             Some(current.to_string())
         },
-        channel: state.channel,
+        channel: manifest.channel,
         target: state.target,
         install_method: InstallMethod::Upgrade,
-        manifest_sha256: hash_file(&destination.join("release-manifest.json"))?,
+        manifest_sha256: selected_manifest_sha,
     };
-    let previous_trust = fs::read(trust)?;
-    let activation = write_state(layout, &new_state)
+    let activation = replace_link(layout, &next)
+        .and_then(|()| write_state(layout, &new_state))
         .and_then(|()| {
             write_bytes_atomically(&layout.root().join("trust.json"), &fs::read(&refreshed_trust)?)
         })
@@ -225,6 +269,10 @@ fn upgrade(
         let _ = replace_link_target(layout, &old_link);
         let _ = write_bytes_atomically(&layout.state_file(), state_bytes);
         let _ = write_bytes_atomically(&layout.root().join("trust.json"), &previous_trust);
+        if replaced_destination {
+            let _ = fs::remove_dir_all(&destination);
+            let _ = fs::rename(&destination_backup, &destination);
+        }
         return Err(error).context("upgrade activation failed; previous release was restored");
     }
     emit(
@@ -247,7 +295,7 @@ fn resolve_trust_policy(
     staging: &Path,
 ) -> Result<PathBuf> {
     let base = env::var("TYSEL_DOWNLOAD_BASE").unwrap_or_else(|_| DEFAULT_DOWNLOAD_BASE.into());
-    let release_base = format!("{}/latest/download", base.trim_end_matches('/'));
+    let release_base = format!("{}/download/trust", base.trim_end_matches('/'));
     let trust = staging.join("refreshed-trust.json");
     let signature = staging.join("refreshed-trust.json.sig.json");
     download_to(client, &format!("{release_base}/trust.json"), &trust, 1024 * 1024)?;
@@ -280,6 +328,7 @@ fn rollback(
     let previous_version = Version::parse(previous).context("parse previous version")?;
     confirm(options, &state.active_semver()?, &previous_version)?;
     let manifest_path = layout.version_manifest(&previous_version);
+    let previous_manifest = ReleaseManifest::from_json(&fs::read(&manifest_path)?)?;
     release::verify_installation(
         &manifest_path,
         &layout.version_dir(&previous_version),
@@ -292,7 +341,7 @@ fn rollback(
         schema_version: INSTALL_STATE_SCHEMA_VERSION,
         active_version: previous.into(),
         previous_version: Some(state.active_version.clone()),
-        channel: state.channel,
+        channel: previous_manifest.channel,
         target: state.target,
         install_method: InstallMethod::Upgrade,
         manifest_sha256: hash_file(&manifest_path)?,
@@ -322,6 +371,7 @@ fn resolve_manifest(
     trust: &Path,
     staging: &Path,
     requested: Option<&str>,
+    selected_channel: Channel,
 ) -> Result<(ReleaseManifest, PathBuf)> {
     let base = env::var("TYSEL_DOWNLOAD_BASE").unwrap_or_else(|_| DEFAULT_DOWNLOAD_BASE.into());
     let mut channel_contract = None;
@@ -329,8 +379,7 @@ fn resolve_manifest(
         Version::parse(version).context("invalid --version semantic version")?;
         format!("{}/download/v{version}/release-manifest.json", base.trim_end_matches('/'))
     } else {
-        let pointer_url =
-            format!("{}/latest/download/channel-pointer.json", base.trim_end_matches('/'));
+        let pointer_url = channel_pointer_url(&base, selected_channel);
         let pointer_path = staging.join("channel-pointer.json");
         let pointer_signature = staging.join("channel-pointer.json.sig.json");
         download_to(client, &pointer_url, &pointer_path, 1024 * 1024)?;
@@ -342,7 +391,7 @@ fn resolve_manifest(
             now_unix()?,
         )?;
         let pointer = ChannelPointer::from_json(&fs::read(&pointer_path)?)?;
-        ensure_stable_channel(pointer.channel, "channel pointer")?;
+        ensure_channel(pointer.channel, selected_channel, "channel pointer")?;
         let url = pointer.manifest_url.clone();
         channel_contract = Some(pointer);
         url
@@ -373,7 +422,9 @@ fn resolve_manifest(
         now_unix()?,
     )?;
     let manifest = ReleaseManifest::from_json(&fs::read(&manifest_path)?)?;
-    ensure_stable_channel(manifest.channel, "release manifest")?;
+    if requested.is_none() {
+        ensure_channel(manifest.channel, selected_channel, "release manifest")?;
+    }
     if let Some(pointer) = &channel_contract {
         anyhow::ensure!(manifest.channel == pointer.channel, "channel manifest channel mismatch");
         anyhow::ensure!(manifest.version == pointer.version, "channel manifest version mismatch");
@@ -465,7 +516,10 @@ fn extract_archive(
     let extract = staging.join("extract");
     fs::create_dir(&extract)?;
     let status = Command::new("sh")
-        .args(["-c", "ulimit -f 262144; exec tar -xzf \"$1\" -C \"$2\"", "sh"])
+        // POSIX shells may use 512-byte blocks for -f, while bash commonly
+        // uses KiB. This permits at least 512 MiB per file; tree_size below
+        // enforces the exact 512 MiB aggregate limit.
+        .args(["-c", "ulimit -f 1048576; exec tar -xzf \"$1\" -C \"$2\"", "sh"])
         .arg(archive)
         .arg(&extract)
         .status()?;
@@ -489,6 +543,10 @@ fn tree_size(path: &Path) -> Result<u64> {
             .context("extracted release size overflow")?;
     }
     Ok(total)
+}
+
+fn installed_manifest_matches(destination: &Path, selected: &[u8]) -> bool {
+    fs::read(destination.join("release-manifest.json")).is_ok_and(|installed| installed == selected)
 }
 
 fn validate_active_install(layout: &ManagedLayout, state: &InstallState) -> Result<()> {
@@ -558,9 +616,46 @@ fn confirm_trust_refresh(options: &Options) -> Result<()> {
     Ok(())
 }
 
-fn ensure_stable_channel(channel: Channel, document: &str) -> Result<()> {
-    anyhow::ensure!(channel == Channel::Stable, "{document} is not for the stable channel");
+fn parse_channel(value: &str) -> Result<Channel> {
+    match value {
+        "stable" => Ok(Channel::Stable),
+        "canary" => Ok(Channel::Canary),
+        _ => anyhow::bail!("unsupported release channel {value}; expected stable or canary"),
+    }
+}
+
+fn channel_name(channel: Channel) -> &'static str {
+    match channel {
+        Channel::Stable => "stable",
+        Channel::Canary => "canary",
+    }
+}
+
+fn channel_pointer_url(base: &str, channel: Channel) -> String {
+    let base = base.trim_end_matches('/');
+    match channel {
+        Channel::Stable => format!("{base}/latest/download/channel-pointer.json"),
+        Channel::Canary => format!("{base}/download/canary/channel-pointer.json"),
+    }
+}
+
+fn ensure_channel(actual: Channel, expected: Channel, document: &str) -> Result<()> {
+    anyhow::ensure!(
+        actual == expected,
+        "{document} is for {}, expected {}",
+        channel_name(actual),
+        channel_name(expected)
+    );
     Ok(())
+}
+
+fn downgrade_requires_force(
+    installed_channel: Channel,
+    selected_channel: Channel,
+    channel_was_explicit: bool,
+    force: bool,
+) -> bool {
+    !force && !(channel_was_explicit && selected_channel != installed_channel)
 }
 
 fn replace_link(layout: &ManagedLayout, version: &Version) -> Result<()> {
@@ -605,18 +700,30 @@ fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
 
 fn post_switch_doctor(layout: &ManagedLayout) -> Result<()> {
     let binary = layout.active_bin_link().join("tysel");
+    let diagnostics_path =
+        layout.root().join(format!(".post-switch-doctor-{}", std::process::id()));
+    let diagnostics = OpenOptions::new().write(true).create_new(true).open(&diagnostics_path)?;
     let path = env::var_os("PATH").unwrap_or_default();
     let joined =
         env::join_paths(std::iter::once(layout.active_bin_link()).chain(env::split_paths(&path)))?;
-    let mut child = Command::new(binary)
-        .args(["doctor", "--install", "--json"])
-        .env("PATH", joined)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let status = wait_for_child(&mut child, Duration::from_secs(15), "post-switch doctor")?;
-    anyhow::ensure!(status.success(), "post-switch doctor failed");
+    let status = (|| -> Result<_> {
+        let mut child = Command::new(binary)
+            .args(["doctor", "--install", "--json"])
+            .env("PATH", joined)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(diagnostics.try_clone()?))
+            .stderr(Stdio::from(diagnostics))
+            .spawn()?;
+        wait_for_child(&mut child, Duration::from_secs(15), "post-switch doctor")
+    })();
+    let output = fs::read_to_string(&diagnostics_path).unwrap_or_default();
+    let _ = fs::remove_file(&diagnostics_path);
+    let status = status?;
+    anyhow::ensure!(
+        status.success(),
+        "post-switch doctor failed{}",
+        if output.trim().is_empty() { String::new() } else { format!(":\n{}", output.trim()) }
+    );
     Ok(())
 }
 
@@ -778,11 +885,49 @@ mod tests {
     }
 
     #[test]
-    fn stable_resolution_rejects_other_channels() {
-        ensure_stable_channel(Channel::Stable, "channel pointer").unwrap();
-        let error = ensure_stable_channel(Channel::Beta, "channel pointer").unwrap_err();
-        assert!(error.to_string().contains("not for the stable channel"));
-        assert!(ensure_stable_channel(Channel::Nightly, "release manifest").is_err());
+    fn channel_resolution_requires_an_exact_match() {
+        ensure_channel(Channel::Stable, Channel::Stable, "channel pointer").unwrap();
+        ensure_channel(Channel::Canary, Channel::Canary, "release manifest").unwrap();
+        let error =
+            ensure_channel(Channel::Canary, Channel::Stable, "channel pointer").unwrap_err();
+        assert!(error.to_string().contains("for canary, expected stable"));
+    }
+
+    #[test]
+    fn channel_endpoints_are_physically_separate() {
+        let base = "https://github.com/wangcch/tysel/releases/";
+        assert_eq!(
+            channel_pointer_url(base, Channel::Stable),
+            "https://github.com/wangcch/tysel/releases/latest/download/channel-pointer.json"
+        );
+        assert_eq!(
+            channel_pointer_url(base, Channel::Canary),
+            "https://github.com/wangcch/tysel/releases/download/canary/channel-pointer.json"
+        );
+    }
+
+    #[test]
+    fn only_a_real_channel_switch_can_bypass_the_downgrade_guard() {
+        assert!(downgrade_requires_force(Channel::Stable, Channel::Stable, true, false));
+        assert!(downgrade_requires_force(Channel::Canary, Channel::Canary, true, false));
+        assert!(!downgrade_requires_force(Channel::Canary, Channel::Stable, true, false));
+        assert!(!downgrade_requires_force(Channel::Stable, Channel::Stable, false, true));
+    }
+
+    #[test]
+    fn version_directory_is_reused_only_for_the_authenticated_manifest_bytes() {
+        let root = root("manifest-reuse");
+        fs::create_dir_all(&root).unwrap();
+        let selected = br#"{"schemaVersion":1}"#;
+        fs::write(root.join("release-manifest.json"), selected).unwrap();
+        assert!(installed_manifest_matches(&root, selected));
+
+        fs::write(root.join("release-manifest.json"), [selected.as_slice(), b"\n"].concat())
+            .unwrap();
+        assert!(!installed_manifest_matches(&root, selected));
+        fs::remove_file(root.join("release-manifest.json")).unwrap();
+        assert!(!installed_manifest_matches(&root, selected));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]

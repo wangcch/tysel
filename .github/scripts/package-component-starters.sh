@@ -9,10 +9,7 @@ fi
 output_dir="$1"
 version="$2"
 source_date_epoch="$3"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-  echo "version must be a final semantic version" >&2
-  exit 2
-}
+bash "$(dirname "$0")/release-channel.sh" "$version" > /dev/null
 [[ "$source_date_epoch" =~ ^(0|[1-9][0-9]*)$ ]] || {
   echo "source-date-epoch must be a non-negative integer" >&2
   exit 2

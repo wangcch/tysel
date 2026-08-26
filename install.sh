@@ -5,6 +5,9 @@ set -eu
 PROGRAM=tysel-install
 DEFAULT_DOWNLOAD_BASE=https://github.com/wangcch/tysel/releases
 CHANNEL=stable
+CHANNEL_EXPLICIT=0
+CHANNEL_RESOLVED=0
+CHANNEL_BASE=
 VERSION=
 if [ -n "${TYSEL_HOME:-}" ]; then
   PREFIX=$TYSEL_HOME
@@ -24,13 +27,33 @@ ACTIVATED=0
 OLD_LINK=
 OLD_STATE=
 OLD_TRUST=
+PROFILE_TEMP=
+PROFILE_PATH=
+PROFILE_BACKUP=
+PROFILE_EXISTED=0
+VERSION_BACKUP=
+VERSION_REPLACED=0
 
 say() { printf '%s\n' "$*"; }
+warn() { printf '%s: warning: %s\n' "$PROGRAM" "$*" >&2; }
 fail() { printf '%s: %s\n' "$PROGRAM" "$*" >&2; exit 1; }
+
+restore_profile() {
+  [ -n "$PROFILE_PATH" ] || return 0
+  if [ "$PROFILE_EXISTED" -eq 1 ]; then
+    [ -f "$PROFILE_BACKUP" ] || return 1
+    cp -p "$PROFILE_BACKUP" "$PROFILE_PATH" || return 1
+  else
+    rm -f "$PROFILE_PATH" || return 1
+  fi
+  PROFILE_PATH=
+  PROFILE_BACKUP=
+  PROFILE_EXISTED=0
+}
 
 usage() {
   cat <<'EOF'
-usage: install.sh [--version <semver>] [--channel stable] [--prefix <absolute-path>]
+usage: install.sh [--version <semver>] [--channel stable|canary] [--prefix <absolute-path>]
                   [--no-modify-path] [--dry-run]
 EOF
 }
@@ -57,11 +80,19 @@ cleanup() {
       rm -f "$PREFIX/trust.json" || true
     fi
   fi
+  if [ "$status" -ne 0 ] && [ -n "$PROFILE_PATH" ]; then
+    restore_profile 2>/dev/null || true
+  fi
+  if [ "$status" -ne 0 ] && [ "$VERSION_REPLACED" -eq 1 ]; then
+    rm -rf "$version_dir" 2>/dev/null || true
+    mv "$VERSION_BACKUP" "$version_dir" 2>/dev/null || true
+  fi
   [ -z "$WORK_DIR" ] || rm -rf "$WORK_DIR"
   if [ "$LOCK_ACQUIRED" -eq 1 ]; then
     rm -f "$LOCK_PATH" 2>/dev/null || true
   fi
   [ -z "$LOCK_CANDIDATE" ] || rm -f "$LOCK_CANDIDATE" 2>/dev/null || true
+  [ -z "$PROFILE_TEMP" ] || rm -f "$PROFILE_TEMP" 2>/dev/null || true
   exit "$status"
 }
 trap cleanup EXIT HUP INT TERM
@@ -76,6 +107,7 @@ while [ "$#" -gt 0 ]; do
     --channel)
       [ "$#" -ge 2 ] || fail "--channel requires a value"
       CHANNEL=$2
+      CHANNEL_EXPLICIT=1
       shift 2
       ;;
     --prefix)
@@ -90,7 +122,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ "$CHANNEL" = stable ] || fail "unsupported channel: $CHANNEL"
+case "$CHANNEL" in
+  stable|canary) ;;
+  *) fail "unsupported channel: $CHANNEL (expected stable or canary)" ;;
+esac
+VERSION_REQUESTED=$VERSION
 [ -n "$PREFIX" ] || fail "HOME is not set; pass --prefix or TYSEL_HOME"
 case "$PREFIX" in
   /*) ;;
@@ -102,7 +138,38 @@ case "$PREFIX" in
 esac
 
 valid_version() {
-  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$'
+  candidate=$1
+  case "$candidate" in
+    *+*) return 1 ;;
+  esac
+  printf '%s\n' "$candidate" \
+    | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$' \
+    || return 1
+  core=${candidate%%-*}
+  old_ifs=$IFS
+  IFS=.
+  set -- $core
+  IFS=$old_ifs
+  for identifier in "$@"; do
+    case "$identifier" in
+      0|[1-9]|[1-9][0-9]*) ;;
+      *) return 1 ;;
+    esac
+  done
+  case "$candidate" in
+    *-*) prerelease=${candidate#*-} ;;
+    *) return 0 ;;
+  esac
+  old_ifs=$IFS
+  IFS=.
+  set -- $prerelease
+  IFS=$old_ifs
+  for identifier in "$@"; do
+    case "$identifier" in
+      0|[1-9]|[1-9][0-9]*) ;;
+      0[0-9]*) return 1 ;;
+    esac
+  done
 }
 
 detect_target() {
@@ -141,23 +208,35 @@ download() {
 
 if [ -z "$VERSION" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then
-    VERSION='<stable-version>'
+    VERSION="<${CHANNEL}-version>"
   else
     version_file=$(mktemp "${TMPDIR:-/tmp}/tysel-version.XXXXXX") || fail "cannot create a temporary file"
-    download "${DOWNLOAD_BASE%/}/latest/download/stable-version" "$version_file"
+    if [ "$CHANNEL" = stable ]; then
+      CHANNEL_BASE="${DOWNLOAD_BASE%/}/latest/download"
+    else
+      CHANNEL_BASE="${DOWNLOAD_BASE%/}/download/canary"
+    fi
+    download "${CHANNEL_BASE}/${CHANNEL}-version" "$version_file"
+    [ "$(wc -c < "$version_file" | tr -d '[:space:]')" -le 128 ] \
+      || fail "release channel version pointer exceeds the 128-byte limit"
     VERSION=$(tr -d '[:space:]' < "$version_file")
     rm -f "$version_file"
+    CHANNEL_RESOLVED=1
   fi
 fi
-[ "$VERSION" = '<stable-version>' ] || valid_version "$VERSION" || fail "invalid semantic version: $VERSION"
+[ "$VERSION" = '<stable-version>' ] || [ "$VERSION" = '<canary-version>' ] \
+  || valid_version "$VERSION" || fail "invalid semantic version: $VERSION"
 
-if [ "$VERSION" = '<stable-version>' ]; then
+case "$VERSION" in
+  '<stable-version>'|'<canary-version>')
   release_base="${DOWNLOAD_BASE%/}/download/v<VERSION>"
   archive="tysel-<VERSION>-${TARGET}.tar.gz"
-else
+  ;;
+*)
   release_base="${DOWNLOAD_BASE%/}/download/v${VERSION}"
   archive="tysel-${VERSION}-${TARGET}.tar.gz"
-fi
+  ;;
+esac
 
 say "Tysel install plan"
 say "  version: $VERSION"
@@ -200,13 +279,40 @@ mkdir "$WORK_DIR"
 archive_path="$WORK_DIR/$archive"
 checksum_path="$WORK_DIR/$archive.sha256"
 manifest_path="$WORK_DIR/release-manifest.json"
+manifest_signature_path="$WORK_DIR/release-manifest.json.sig.json"
 trust_path="$WORK_DIR/trust.json"
+trust_signature_path="$WORK_DIR/trust.json.sig.json"
+channel_pointer_path="$WORK_DIR/channel-pointer.json"
+channel_pointer_signature_path="$WORK_DIR/channel-pointer.json.sig.json"
 download "${release_base}/${archive}" "$archive_path"
 download "${release_base}/${archive}.sha256" "$checksum_path"
 download "${release_base}/release-manifest.json" "$manifest_path"
-download "${release_base}/trust.json" "$trust_path"
+download "${release_base}/release-manifest.json.sig.json" "$manifest_signature_path"
+download "${release_base}/${archive}.sig.json" "${archive_path}.sig.json"
+trust_base="${DOWNLOAD_BASE%/}/download/trust"
+download "${trust_base}/trust.json" "$trust_path"
+download "${trust_base}/trust.json.sig.json" "$trust_signature_path"
+if [ "$CHANNEL_RESOLVED" -eq 1 ]; then
+  download "${CHANNEL_BASE}/channel-pointer.json" "$channel_pointer_path"
+  download "${CHANNEL_BASE}/channel-pointer.json.sig.json" "$channel_pointer_signature_path"
+fi
 
 [ "$(wc -c < "$archive_path" | tr -d '[:space:]')" -le 268435456 ] || fail "release archive exceeds the 256 MiB bootstrap limit"
+[ "$(wc -c < "$manifest_path" | tr -d '[:space:]')" -le 4194304 ] \
+  || fail "release manifest exceeds the 4 MiB limit"
+for metadata_path in "$manifest_signature_path" "$trust_path" "$trust_signature_path" \
+  "${archive_path}.sig.json"; do
+  [ "$(wc -c < "$metadata_path" | tr -d '[:space:]')" -le 1048576 ] \
+    || fail "release signature or trust metadata exceeds the 1 MiB limit"
+done
+if [ "$CHANNEL_RESOLVED" -eq 1 ]; then
+  for metadata_path in "$channel_pointer_path" "$channel_pointer_signature_path"; do
+    [ "$(wc -c < "$metadata_path" | tr -d '[:space:]')" -le 1048576 ] \
+      || fail "release channel metadata exceeds the 1 MiB limit"
+  done
+fi
+[ "$(wc -c < "$checksum_path" | tr -d '[:space:]')" -le 1024 ] \
+  || fail "release checksum sidecar exceeds the 1 KiB limit"
 expected=$(awk 'NR == 1 { print $1 }' "$checksum_path")
 case "$expected" in
   [0-9a-f][0-9a-f]*) [ "${#expected}" -eq 64 ] || fail "invalid SHA-256 sidecar" ;;
@@ -242,32 +348,33 @@ done < "$members"
 
 extract_dir="$WORK_DIR/extract"
 mkdir "$extract_dir"
+# POSIX shells may express -f in 512-byte blocks, while bash commonly uses KiB.
+# This therefore allows at least 512 MiB per file; the tree limit below is exact.
 (ulimit -f 1048576 2>/dev/null || true; tar -xzf "$archive_path" -C "$extract_dir") \
   || fail "cannot extract release archive"
 stage_root="$extract_dir/$root_name"
+extracted_sizes="$WORK_DIR/extracted-file-sizes"
+find "$stage_root" -type f -exec wc -c {} \; > "$extracted_sizes" \
+  || fail "cannot measure extracted release"
+extracted_size=$(awk '{ total += $1 } END { printf "%.0f\n", total + 0 }' "$extracted_sizes")
+[ "$extracted_size" -le 536870912 ] || fail "extracted release exceeds the 512 MiB limit"
 for binary in tysel tysel-service tysel-worker; do
   [ -f "$stage_root/bin/$binary" ] && [ -x "$stage_root/bin/$binary" ] \
     || fail "release is missing executable bin/$binary"
 done
 
-"$stage_root/bin/tysel" release verify-installation "$manifest_path" "$stage_root" \
-  --target "$TARGET" --version "$VERSION" >/dev/null \
-  || fail "release manifest, hashes, or binary identities did not verify"
-"$stage_root/bin/tysel" release validate-trust "$trust_path" >/dev/null \
-  || fail "release trust policy did not validate"
-cp "$manifest_path" "$stage_root/release-manifest.json"
-
-version_dir="$PREFIX/versions/v$VERSION"
-if [ -e "$version_dir" ]; then
-  "$version_dir/bin/tysel" release verify-installation "$manifest_path" "$version_dir" \
-    --target "$TARGET" --version "$VERSION" >/dev/null \
-    || fail "existing version directory is not the requested verified release"
-else
-  mv "$stage_root" "$version_dir"
-fi
-
+previous_version=
 if [ -L "$PREFIX/bin" ]; then
   OLD_LINK=$(readlink "$PREFIX/bin")
+  case "$OLD_LINK" in
+    versions/v*/bin)
+      previous_version=${OLD_LINK#versions/v}
+      previous_version=${previous_version%/bin}
+      valid_version "$previous_version" \
+        || fail "$PREFIX/bin is not a managed Tysel symbolic link"
+      ;;
+    *) fail "$PREFIX/bin is not a managed Tysel symbolic link" ;;
+  esac
 elif [ -e "$PREFIX/bin" ]; then
   fail "$PREFIX/bin exists and is not a managed symbolic link"
 fi
@@ -279,12 +386,95 @@ if [ -f "$PREFIX/trust.json" ]; then
   OLD_TRUST="$WORK_DIR/previous-trust.json"
   cp "$PREFIX/trust.json" "$OLD_TRUST"
 fi
-previous_version=
-case "$OLD_LINK" in
-  versions/v*/bin) previous_version=${OLD_LINK#versions/v}; previous_version=${previous_version%/bin} ;;
+
+# A healthy managed installation authenticates downloaded code before it is
+# executed. A fresh or damaged installation retains the documented HTTPS
+# bootstrap path so the verified staging tree can still repair it.
+verifier="$stage_root/bin/tysel"
+if [ -n "$OLD_LINK" ] && [ -f "$PREFIX/trust.json" ] && [ -x "$PREFIX/bin/tysel" ] \
+  && "$PREFIX/bin/tysel" release validate-trust "$PREFIX/trust.json" >/dev/null 2>&1; then
+  verifier="$PREFIX/bin/tysel"
+fi
+
+"$verifier" release validate-trust "$trust_path" >/dev/null \
+  || fail "release trust policy did not validate"
+if [ -f "$PREFIX/trust.json" ]; then
+  "$verifier" release verify-metadata \
+    "$trust_path" "$trust_signature_path" --trust "$PREFIX/trust.json" >/dev/null \
+    || fail "refreshed trust policy was not signed by an installed trusted key"
+  if ! cmp -s "$PREFIX/trust.json" "$trust_path"; then
+    "$verifier" release validate-trust-transition \
+      "$PREFIX/trust.json" "$trust_path" >/dev/null \
+      || fail "release trust policy would move backward or change key identity"
+  fi
+else
+  "$verifier" release verify-metadata \
+    "$trust_path" "$trust_signature_path" --trust "$trust_path" >/dev/null \
+    || fail "release trust policy signature did not validate"
+fi
+"$verifier" release verify-metadata \
+  "$manifest_path" "$manifest_signature_path" --trust "$trust_path" >/dev/null \
+  || fail "release manifest signature did not validate"
+"$verifier" release verify-artifact \
+  "$archive_path" --trust "$trust_path" --target "$TARGET" >/dev/null \
+  || fail "release archive signature did not validate"
+if [ "$CHANNEL_RESOLVED" -eq 1 ]; then
+  "$verifier" release verify-metadata \
+    "$channel_pointer_path" "$channel_pointer_signature_path" --trust "$trust_path" >/dev/null \
+    || fail "release channel pointer signature did not validate"
+fi
+
+"$stage_root/bin/tysel" release verify-installation "$manifest_path" "$stage_root" \
+  --target "$TARGET" --version "$VERSION" >/dev/null \
+  || fail "release manifest, hashes, or binary identities did not verify"
+if [ "$CHANNEL_RESOLVED" -eq 1 ]; then
+  if [ -n "$OLD_STATE" ]; then
+    "$stage_root/bin/tysel" release verify-channel-selection \
+      "$channel_pointer_path" "$manifest_path" "$manifest_signature_path" \
+      --channel "$CHANNEL" --version "$VERSION" --installed-state "$OLD_STATE" >/dev/null \
+      || fail "release channel pointer did not select this immutable release"
+  else
+    "$stage_root/bin/tysel" release verify-channel-selection \
+      "$channel_pointer_path" "$manifest_path" "$manifest_signature_path" \
+      --channel "$CHANNEL" --version "$VERSION" >/dev/null \
+      || fail "release channel pointer did not select this immutable release"
+  fi
+fi
+manifest_channel=$(sed -n \
+  's/.*"channel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_path" \
+  | head -n 1)
+case "$manifest_channel" in
+  stable|canary) ;;
+  *) fail "release manifest has an unsupported channel" ;;
 esac
+if [ -z "${VERSION_REQUESTED:-}" ] || [ "$CHANNEL_EXPLICIT" -eq 1 ]; then
+  [ "$manifest_channel" = "$CHANNEL" ] \
+    || fail "release manifest is for $manifest_channel, expected $CHANNEL"
+fi
+CHANNEL=$manifest_channel
+cp "$manifest_path" "$stage_root/release-manifest.json"
+
 if [ "$previous_version" = "$VERSION" ] && [ -n "$OLD_STATE" ]; then
   previous_version=$(sed -n 's/.*"previousVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$OLD_STATE" | head -n 1)
+fi
+
+version_dir="$PREFIX/versions/v$VERSION"
+if [ -L "$version_dir" ]; then
+  fail "managed version path is a symbolic link: $version_dir"
+elif [ -e "$version_dir" ]; then
+  if "$stage_root/bin/tysel" release verify-installation "$manifest_path" "$version_dir" \
+    --target "$TARGET" --version "$VERSION" >/dev/null 2>&1 \
+    && cmp -s "$manifest_path" "$version_dir/release-manifest.json"; then
+    :
+  else
+    [ -d "$version_dir" ] || fail "managed version path is not a directory: $version_dir"
+    VERSION_BACKUP="$WORK_DIR/existing-version"
+    mv "$version_dir" "$VERSION_BACKUP"
+    mv "$stage_root" "$version_dir"
+    VERSION_REPLACED=1
+  fi
+else
+  mv "$stage_root" "$version_dir"
 fi
 
 replace_link() {
@@ -314,64 +504,121 @@ if [ -n "$previous_version" ] && [ "$previous_version" != "$VERSION" ]; then
 else
   previous_json=null
 fi
-printf '{"schemaVersion":1,"activeVersion":"%s","previousVersion":%s,"channel":"stable","target":"%s","installMethod":"installer","manifestSha256":"%s"}\n' \
-  "$VERSION" "$previous_json" "$TARGET" "$manifest_sha" > "$state_tmp"
+printf '{"schemaVersion":1,"activeVersion":"%s","previousVersion":%s,"channel":"%s","target":"%s","installMethod":"installer","manifestSha256":"%s"}\n' \
+  "$VERSION" "$previous_json" "$CHANNEL" "$TARGET" "$manifest_sha" > "$state_tmp"
 mv -f "$state_tmp" "$PREFIX/state.json"
 
-PATH="$PREFIX/bin:$PATH" "$PREFIX/bin/tysel" doctor --install --json >/dev/null \
-  || fail "post-install doctor rejected the activated toolchain"
+doctor_output="$WORK_DIR/post-install-doctor"
+if ! PATH="$PREFIX/bin:$PATH" "$PREFIX/bin/tysel" doctor --install --json \
+  > "$doctor_output" 2>&1; then
+  cat "$doctor_output" >&2
+  fail "post-install doctor rejected the activated toolchain"
+fi
+
+# The activated toolchain is now verified and committed. Shell startup-file
+# configuration is a separate best-effort transaction and must not resurrect a
+# damaged version tree if it cannot be updated.
+ACTIVATED=0
+VERSION_REPLACED=0
+
+update_profile_path() {
+  target_profile=$1
+  mkdir -p "$(dirname "$target_profile")" || return 1
+  PROFILE_PATH=$target_profile
+  PROFILE_BACKUP="$WORK_DIR/profile-backup"
+  PROFILE_EXISTED=0
+  if [ -e "$target_profile" ]; then
+    cp -p "$target_profile" "$PROFILE_BACKUP" || {
+      PROFILE_PATH=
+      PROFILE_BACKUP=
+      return 1
+    }
+    PROFILE_EXISTED=1
+  fi
+  touch "$target_profile" || return 1
+  quoted_bin=$(printf '%s' "$PREFIX/bin" | sed "s/'/'\\\\''/g") || return 1
+  path_line="export PATH='${quoted_bin}':\$PATH"
+  profile_content="$WORK_DIR/profile-content"
+  if grep -Fq '# >>> tysel managed PATH >>>' "$target_profile"; then
+    TYSEL_PATH_LINE="$path_line" awk '
+      $0 == "# >>> tysel managed PATH >>>" {
+        if (managed) exit 2
+        print
+        print ENVIRON["TYSEL_PATH_LINE"]
+        managed=1
+        skip=1
+        next
+      }
+      $0 == "# <<< tysel managed PATH <<<" && skip {
+        print
+        skip=0
+        closed=1
+        next
+      }
+      !skip { print }
+      END { if (managed && !closed) exit 3 }
+    ' "$target_profile" > "$profile_content" || return 1
+  else
+    {
+      cat "$target_profile"
+      printf '\n# >>> tysel managed PATH >>>\n'
+      printf '%s\n' "$path_line"
+      printf '# <<< tysel managed PATH <<<\n'
+    } > "$profile_content" || return 1
+  fi
+  PROFILE_TEMP="$target_profile.tysel.$$"
+  cp -p "$target_profile" "$PROFILE_TEMP" || return 1
+  cat "$profile_content" > "$PROFILE_TEMP" || return 1
+  mv -f "$PROFILE_TEMP" "$target_profile" || return 1
+  PROFILE_TEMP=
+}
 
 path_action="not modified"
 if [ "$MODIFY_PATH" -eq 1 ]; then
   case "${SHELL:-}" in
-    */zsh) profile=${ZDOTDIR:-${HOME:-}}/.zshrc ;;
-    */bash) profile=${HOME:-}/.bashrc ;;
-    */sh) profile=${HOME:-}/.profile ;;
+    */zsh) [ -n "${ZDOTDIR:-${HOME:-}}" ] && profile=${ZDOTDIR:-$HOME}/.zshrc || profile= ;;
+    */bash)
+      if [ -z "${HOME:-}" ]; then
+        profile=
+      elif [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then
+        if [ -e "$HOME/.bash_profile" ] || [ -L "$HOME/.bash_profile" ]; then
+          profile=$HOME/.bash_profile
+        elif [ -e "$HOME/.bash_login" ] || [ -L "$HOME/.bash_login" ]; then
+          profile=$HOME/.bash_login
+        else
+          profile=$HOME/.profile
+        fi
+      else
+        profile=$HOME/.bashrc
+      fi
+      ;;
+    */sh) [ -n "${HOME:-}" ] && profile=$HOME/.profile || profile= ;;
     *) profile= ;;
   esac
   if [ -n "$profile" ]; then
-    mkdir -p "$(dirname "$profile")"
-    touch "$profile"
-    escaped_prefix=$(printf '%s' "$PREFIX" | sed 's/[\\"]/\\&/g')
-    if grep -Fq '# >>> tysel managed PATH >>>' "$profile"; then
-      path_tmp="$profile.tysel.$$"
-      awk -v prefix="$escaped_prefix" '
-        $0 == "# >>> tysel managed PATH >>>" {
-          if (managed) exit 2
-          print
-          print "export PATH=\"" prefix "/bin:$PATH\""
-          managed=1
-          skip=1
-          next
-        }
-        $0 == "# <<< tysel managed PATH <<<" && skip {
-          print
-          skip=0
-          closed=1
-          next
-        }
-        !skip { print }
-        END { if (managed && !closed) exit 3 }
-      ' "$profile" > "$path_tmp" || {
-        rm -f "$path_tmp"
-        fail "managed PATH block in $profile is malformed"
-      }
-      mv -f "$path_tmp" "$profile"
-      path_action="updated $profile"
+    if [ -L "$profile" ]; then
+      path_action="not modified ($profile is a symbolic link; add $PREFIX/bin manually)"
     else
-      {
-        printf '\n# >>> tysel managed PATH >>>\n'
-        printf 'export PATH="%s/bin:$PATH"\n' "$escaped_prefix"
-        printf '# <<< tysel managed PATH <<<\n'
-      } >> "$profile"
-      path_action="updated $profile"
+      if update_profile_path "$profile"; then
+        path_action="updated $profile"
+        PROFILE_PATH=
+        PROFILE_BACKUP=
+        PROFILE_EXISTED=0
+      else
+        if restore_profile; then
+          path_action="not modified (could not safely update $profile; add $PREFIX/bin manually)"
+          warn "could not safely update $profile; the installed toolchain was kept"
+        else
+          fail "could not update or restore shell profile $profile"
+        fi
+      fi
     fi
   else
     path_action="not modified (unsupported shell; add $PREFIX/bin manually)"
   fi
 fi
 
-ACTIVATED=0
+PROFILE_PATH=
 say "Installed Tysel $VERSION ($TARGET) in $version_dir"
 say "PATH: $path_action"
 say "Next: $PREFIX/bin/tysel init hello-tysel"

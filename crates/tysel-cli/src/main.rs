@@ -245,11 +245,11 @@ enum Commands {
         #[arg(long)]
         check: bool,
         /// Select an immutable release version.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "channel")]
         version: Option<String>,
-        /// Select the release channel.
-        #[arg(long, default_value = "stable")]
-        channel: String,
+        /// Select and persist the stable or canary release channel.
+        #[arg(long)]
+        channel: Option<String>,
         /// Confirm mutation without an interactive prompt.
         #[arg(long)]
         yes: bool,

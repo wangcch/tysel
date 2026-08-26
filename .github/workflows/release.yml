@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -42,6 +46,8 @@ jobs:
           cargo fmt --all -- --check
           bash -n install.sh .github/scripts/*.sh
           bash .github/scripts/check-version-sync.sh
+          bash .github/scripts/test-release-channel.sh
+          bash .github/scripts/test-published-trust.sh
           bash .github/scripts/test-types-package.sh
           cargo run --locked -p tysel-build --bin tysel-supply-chain -- --check
           cargo audit --deny warnings
@@ -357,6 +363,7 @@ jobs:
             printf '%s\n' "$TYSEL_RELEASE_PREVIOUS_KEY_HEX" > "$previous_key_path"
           fi
           version="$(bash .github/scripts/check-version-sync.sh)"
+          channel="$(bash .github/scripts/release-channel.sh "$version")"
           target/release/tysel-release-signer \
             target/release-output/tysel-component-starters.tar.gz \
             --metadata --key "$key_path"
@@ -441,7 +448,7 @@ jobs:
           target/release/tysel-release-signer \
             target/release-output/trust.json --metadata --key "$trust_signing_key"
           prior_trust="${RUNNER_TEMP}/published-trust.json"
-          trust_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/trust.json"
+          trust_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/trust/trust.json"
           trust_status="$(curl -sS -L -o "$prior_trust" -w '%{http_code}' "$trust_url")"
           if [[ "$trust_status" == 200 ]]; then
             target/release/tysel-trust-policy verify-transition \
@@ -460,6 +467,7 @@ jobs:
           manifest_sha256="$(sha256sum target/release-output/release-manifest.json | awk '{print $1}')"
           manifest_size="$(wc -c < target/release-output/release-manifest.json | tr -d '[:space:]')"
           jq -n \
+            --arg channel "$channel" \
             --arg version "$version" \
             --arg publishedAt "$published_at" \
             --arg manifestUrl "${base_url}/release-manifest.json" \
@@ -467,7 +475,7 @@ jobs:
             --arg manifestSha256 "$manifest_sha256" \
             --arg signatureUrl "${base_url}/release-manifest.json.sig.json" \
             --arg keyId "$(jq -er '.key_id' target/release-output/release-manifest.json.sig.json)" \
-            '{schemaVersion: 1, channel: "stable", version: $version,
+            '{schemaVersion: 1, channel: $channel, version: $version,
               publishedAt: $publishedAt, manifestUrl: $manifestUrl,
               manifestByteSize: $manifestByteSize, manifestSha256: $manifestSha256,
               manifestSignature: {algorithm: "ed25519", url: $signatureUrl, keyId: $keyId},
@@ -477,7 +485,7 @@ jobs:
             target/release-output/channel-pointer.json
           target/release/tysel-release-signer \
             target/release-output/channel-pointer.json --metadata --key "$key_path"
-          printf '%s\n' "$version" > target/release-output/stable-version
+          printf '%s\n' "$version" > "target/release-output/${channel}-version"
           install -m 644 install.sh target/release-output/install.sh
           sha256sum target/release-output/install.sh \
             | awk '{print $1}' > target/release-output/install.sh.sha256
@@ -506,6 +514,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(bash .github/scripts/check-version-sync.sh)"
+          channel="$(bash .github/scripts/release-channel.sh "$version")"
           bash .github/scripts/verify-release-assets.sh target/publish "$version"
           if gh release view "$GITHUB_REF_NAME" --json isDraft > target/release-state.json 2>/dev/null; then
             jq -e '.isDraft == true' target/release-state.json > /dev/null || {
@@ -513,7 +522,9 @@ jobs:
               exit 1
             }
           else
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes
+            release_flags=(--draft --verify-tag --generate-notes)
+            [[ "$channel" == stable ]] || release_flags+=(--prerelease)
+            gh release create "$GITHUB_REF_NAME" "${release_flags[@]}"
           fi
           gh release upload "$GITHUB_REF_NAME" target/publish/* --clobber
           find target/publish -maxdepth 1 -type f -exec basename {} \; | sort > target/local-assets
@@ -521,9 +532,24 @@ jobs:
             > target/remote-assets
           diff -u target/local-assets target/remote-assets
 
-  publish-npm:
+  publication-preflight:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: stage-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Reject a release-channel regression before registry publication
+        run: |
+          set -euo pipefail
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          bash .github/scripts/check-published-channel.sh \
+            "$version" "https://github.com/${GITHUB_REPOSITORY}/releases"
+
+  publish-npm:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publication-preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -542,12 +568,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          set -euo pipefail
           version="$(bash .github/scripts/check-version-sync.sh)"
           bash .github/scripts/publish-npm-packages.sh target/npm-packages "$version"
 
   publish-rust-sdk:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: stage-release
+    needs: publication-preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -564,10 +591,11 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
+          set -euo pipefail
           version="$(bash .github/scripts/check-version-sync.sh)"
           bash .github/scripts/publish-rust-sdk.sh target/rust-sdk-package "$version"
 
-  promote-stable:
+  promote-release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [stage-release, publish-npm, publish-rust-sdk]
     runs-on: ubuntu-latest
@@ -575,14 +603,35 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Publish the verified draft as the stable release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signed-release
+          path: target/publish
+      - name: Publish the verified draft and advance its release channel
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="$(bash .github/scripts/check-version-sync.sh)"
-          for package in '@tysel/types' '@tysel/test'; do
-            [[ "$(npm view "${package}@${version}" version)" == "$version" ]]
+          channel="$(bash .github/scripts/release-channel.sh "$version")"
+          dist_tag="$(bash .github/scripts/npm-dist-tag.sh "$version")"
+          bash .github/scripts/check-published-channel.sh \
+            "$version" "https://github.com/${GITHUB_REPOSITORY}/releases"
+          for attempt in {1..12}; do
+            npm_ready=true
+            for package in '@tysel/types' '@tysel/test'; do
+              if [[ "$(npm view "${package}@${version}" version 2>/dev/null || true)" != "$version" ]] \
+                || [[ "$(npm view "${package}@${dist_tag}" version 2>/dev/null || true)" != "$version" ]]; then
+                npm_ready=false
+                break
+              fi
+            done
+            [[ "$npm_ready" == true ]] && break
+            [[ "$attempt" -lt 12 ]] || {
+              echo "npm packages or dist-tag did not become visible" >&2
+              exit 1
+            }
+            sleep 10
           done
           crate_url="https://crates.io/api/v1/crates/tysel-component-sdk/${version}"
           for attempt in {1..12}; do
@@ -598,8 +647,48 @@ jobs:
           done
           gh release view "$GITHUB_REF_NAME" --json isDraft \
             --jq '.isDraft' | grep -Fx true > /dev/null
-          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
-          install_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh"
+
+          if gh release view trust >/dev/null 2>&1; then
+            gh release upload trust \
+              target/publish/trust.json target/publish/trust.json.sig.json --clobber
+          else
+            gh release create trust \
+              target/publish/trust.json target/publish/trust.json.sig.json \
+              --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Tysel release trust" \
+              --notes "Authenticated moving trust-policy endpoint for all release channels."
+          fi
+          trust_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/trust"
+          bash .github/scripts/wait-for-published-trust.sh \
+            "$trust_base" \
+            target/publish/trust.json target/publish/trust.json.sig.json \
+            "${RUNNER_TEMP}/published-trust.json" \
+            "${RUNNER_TEMP}/published-trust.json.sig.json"
+
+          if [[ "$channel" == stable ]]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+            channel_tag="$GITHUB_REF_NAME"
+          else
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
+            channel_assets=(
+              target/publish/channel-pointer.json
+              target/publish/channel-pointer.json.sig.json
+              target/publish/canary-version
+              target/publish/install.sh
+              target/publish/install.sh.sha256
+            )
+            if gh release view canary >/dev/null 2>&1; then
+              gh release upload canary "${channel_assets[@]}" --clobber
+            else
+              gh release create canary "${channel_assets[@]}" \
+                --prerelease --latest=false --target "$GITHUB_SHA" \
+                --title "Tysel canary" \
+                --notes "Moving pointer to the latest authenticated Tysel canary release."
+            fi
+            channel_tag=canary
+          fi
+
+          install_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${channel_tag}/install.sh"
           checksum_url="${install_url}.sha256"
           curl -fsSL --retry 3 "$install_url" > target/install.sh
           expected="$(curl -fsSL --retry 3 "$checksum_url" | tr -d '[:space:]')"

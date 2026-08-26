@@ -267,6 +267,7 @@ fn collect_managed_state(checks: &mut Vec<Check>, root: &Path, target: Target) {
     let manifest = match ReleaseManifest::from_json(&manifest_bytes) {
         Ok(manifest)
             if manifest.version == state.active_version
+                && manifest.channel == state.channel
                 && hex_sha256(&manifest_bytes) == state.manifest_sha256 =>
         {
             manifest
@@ -561,8 +562,9 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
 
     let base = env::var("TYSEL_DOWNLOAD_BASE")
         .unwrap_or_else(|_| "https://github.com/wangcch/tysel/releases".into());
-    let pointer_url =
-        format!("{}/latest/download/channel-pointer.json", base.trim_end_matches('/'));
+    let channel = installed_channel().unwrap_or(Channel::Stable);
+    let channel_name = channel_name(channel);
+    let pointer_url = channel_pointer_url(&base, channel);
     let client = match reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(10))
@@ -582,12 +584,36 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
             return;
         }
     };
+    let installed_trust = env::current_exe()
+        .ok()
+        .and_then(|path| fs::canonicalize(path).ok())
+        .and_then(|path| managed_root(&path))
+        .map(|root| root.join("trust.json"));
+    let refreshed_trust = match installed_trust
+        .as_deref()
+        .filter(|path| path.is_file())
+        .context("managed trust.json is unavailable")
+        .and_then(|trust| authenticate_network_trust(&client, &base, trust))
+    {
+        Ok(trust) => trust,
+        Err(error) => {
+            checks.push(fail(
+                "network.channel",
+                format!("release trust stream could not be authenticated: {error}"),
+                "run tysel upgrade while the installed trust policy is valid, or reinstall from the official HTTPS bootstrap",
+            ));
+            checks.push(skip("network.manifest", "trust authentication failed"));
+            checks.push(skip("network.asset", "trust authentication failed"));
+            return;
+        }
+    };
+
     let pointer_bytes = match get_bounded(&client, &pointer_url, 1024 * 1024) {
         Ok(bytes) => bytes,
         Err(error) => {
             checks.push(fail(
                 "network.channel",
-                format!("stable channel is unreachable: {error}"),
+                format!("{channel_name} channel is unreachable: {error}"),
                 "check DNS, TLS, proxy settings, and TYSEL_DOWNLOAD_BASE",
             ));
             checks.push(skip("network.manifest", "channel check failed"));
@@ -596,11 +622,11 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
         }
     };
     let pointer = match ChannelPointer::from_json(&pointer_bytes) {
-        Ok(pointer) if is_stable_channel(pointer.channel) => pointer,
+        Ok(pointer) if pointer.channel == channel => pointer,
         _ => {
             checks.push(fail(
                 "network.channel",
-                "stable channel metadata is invalid or unsupported",
+                format!("{channel_name} channel metadata is invalid or unsupported"),
                 "use a supported immutable release or retry after metadata publication",
             ));
             checks.push(skip("network.manifest", "channel check failed"));
@@ -609,23 +635,23 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
         }
     };
 
-    let trust = env::current_exe()
-        .ok()
-        .and_then(|path| fs::canonicalize(path).ok())
-        .and_then(|path| managed_root(&path))
-        .map(|root| root.join("trust.json"));
     let signature_bytes = get_bounded(&client, &format!("{pointer_url}.sig.json"), 1024 * 1024);
-    let authenticated = trust.as_deref().filter(|path| path.is_file()).and_then(|trust| {
-        let signature_bytes = signature_bytes.ok()?;
-        verify_metadata_bytes(&pointer_bytes, &signature_bytes, trust).ok()
+    let authenticated = signature_bytes.ok().and_then(|signature_bytes| {
+        verify_metadata_bytes_with_trust_bytes(&pointer_bytes, &signature_bytes, &refreshed_trust)
+            .ok()
     });
     if authenticated.is_some() {
-        checks.push(pass("network.channel", format!("stable channel selects {}", pointer.version)));
+        checks.push(pass(
+            "network.channel",
+            format!("{channel_name} channel selects {}", pointer.version),
+        ));
     } else {
         checks.push(fail(
             "network.channel",
-            "stable channel could not be authenticated with the installed trust policy",
-            "reinstall from the official HTTPS bootstrap or restore trust.json",
+            format!(
+                "{channel_name} channel could not be authenticated with the refreshed trust policy"
+            ),
+            "retry the authenticated release endpoint; do not install from this channel meanwhile",
         ));
         checks.push(skip("network.manifest", "channel authentication failed"));
         checks.push(skip("network.asset", "channel authentication failed"));
@@ -652,7 +678,7 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
     let manifest = match ReleaseManifest::from_json(&manifest_bytes) {
         Ok(manifest)
             if manifest.version == pointer.version
-                && manifest.channel == Channel::Stable
+                && manifest.channel == channel
                 && manifest.channel == pointer.channel =>
         {
             manifest
@@ -667,10 +693,17 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
             return;
         }
     };
-    let trust = trust.expect("authenticated channel has trust path");
     let manifest_signature = get_bounded(&client, &pointer.manifest_signature.url, 1024 * 1024);
     if manifest_signature
-        .and_then(|signature| verify_metadata_bytes(&manifest_bytes, &signature, &trust))
+        .and_then(|signature| {
+            let document: serde_json::Value = serde_json::from_slice(&signature)?;
+            anyhow::ensure!(
+                document.get("key_id").and_then(serde_json::Value::as_str)
+                    == Some(pointer.manifest_signature.key_id.as_str()),
+                "channel selected an unexpected manifest signing key"
+            );
+            verify_metadata_bytes_with_trust_bytes(&manifest_bytes, &signature, &refreshed_trust)
+        })
         .is_err()
     {
         checks.push(fail(
@@ -686,7 +719,7 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
     let Some(asset) = manifest.assets.iter().find(|asset| asset.target == target) else {
         checks.push(fail(
             "network.asset",
-            "stable release has no archive for this platform",
+            format!("{channel_name} release has no archive for this platform"),
             "use a supported platform or immutable release",
         ));
         return;
@@ -704,8 +737,26 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
     });
 }
 
-fn is_stable_channel(channel: Channel) -> bool {
-    channel == Channel::Stable
+fn installed_channel() -> Option<Channel> {
+    let executable = env::current_exe().ok().and_then(|path| fs::canonicalize(path).ok())?;
+    let root = managed_root(&executable)?;
+    let state = InstallState::from_json(&fs::read(root.join("state.json")).ok()?).ok()?;
+    Some(state.channel)
+}
+
+fn channel_name(channel: Channel) -> &'static str {
+    match channel {
+        Channel::Stable => "stable",
+        Channel::Canary => "canary",
+    }
+}
+
+fn channel_pointer_url(base: &str, channel: Channel) -> String {
+    let base = base.trim_end_matches('/');
+    match channel {
+        Channel::Stable => format!("{base}/latest/download/channel-pointer.json"),
+        Channel::Canary => format!("{base}/download/canary/channel-pointer.json"),
+    }
 }
 
 fn get_bounded(client: &reqwest::blocking::Client, url: &str, limit: usize) -> Result<Vec<u8>> {
@@ -717,6 +768,53 @@ fn get_bounded(client: &reqwest::blocking::Client, url: &str, limit: usize) -> R
     response.by_ref().take(limit as u64 + 1).read_to_end(&mut bytes)?;
     anyhow::ensure!(bytes.len() <= limit, "response exceeds {limit} bytes");
     Ok(bytes)
+}
+
+fn authenticate_network_trust(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    installed_trust: &Path,
+) -> Result<Vec<u8>> {
+    let trust_url = format!("{}/download/trust/trust.json", base.trim_end_matches('/'));
+    let refreshed = get_bounded(client, &trust_url, 1024 * 1024)
+        .context("download global release trust policy")?;
+    let signature = get_bounded(client, &format!("{trust_url}.sig.json"), 1024 * 1024)
+        .context("download global release trust signature")?;
+    verify_metadata_bytes(&refreshed, &signature, installed_trust)
+        .context("authenticate refreshed trust with installed trust")?;
+    verify_metadata_bytes_with_trust_bytes(&refreshed, &signature, &refreshed)
+        .context("validate refreshed trust and its active signing key")?;
+
+    let installed = fs::read(installed_trust).context("read installed release trust policy")?;
+    if installed != refreshed {
+        let current: tysel_build::TrustPolicy =
+            serde_json::from_slice(&installed).context("parse installed release trust policy")?;
+        let successor: tysel_build::TrustPolicy =
+            serde_json::from_slice(&refreshed).context("parse refreshed release trust policy")?;
+        tysel_build::validate_trust_policy_transition(&current, &successor)
+            .context("reject unsafe release trust transition")?;
+    }
+    Ok(refreshed)
+}
+
+fn verify_metadata_bytes_with_trust_bytes(
+    document: &[u8],
+    signature: &[u8],
+    trust: &[u8],
+) -> Result<()> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let root = env::temp_dir().join(format!("tysel-doctor-trust-{}-{}", std::process::id(), nonce));
+    fs::create_dir(&root)?;
+    let trust_path = root.join("trust.json");
+    let result = (|| {
+        fs::write(&trust_path, trust)?;
+        verify_metadata_bytes(document, signature, &trust_path)
+    })();
+    let _ = fs::remove_dir_all(root);
+    result
 }
 
 fn verify_metadata_bytes(document: &[u8], signature: &[u8], trust: &Path) -> Result<()> {
@@ -914,10 +1012,10 @@ mod tests {
     }
 
     #[test]
-    fn network_diagnostics_fail_closed_on_non_stable_channels() {
-        assert!(is_stable_channel(Channel::Stable));
-        assert!(!is_stable_channel(Channel::Beta));
-        assert!(!is_stable_channel(Channel::Nightly));
+    fn network_diagnostics_use_separate_channel_endpoints() {
+        let base = "https://github.com/wangcch/tysel/releases";
+        assert!(channel_pointer_url(base, Channel::Stable).contains("/latest/download/"));
+        assert!(channel_pointer_url(base, Channel::Canary).contains("/download/canary/"));
     }
 
     #[cfg(unix)]

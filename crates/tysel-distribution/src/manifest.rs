@@ -14,8 +14,7 @@ const EXPECTED_BINARIES: [&str; 3] = ["tysel", "tysel-service", "tysel-worker"];
 #[serde(rename_all = "kebab-case")]
 pub enum Channel {
     Stable,
-    Beta,
-    Nightly,
+    Canary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -142,6 +141,8 @@ pub enum ManifestError {
     Platform(Target),
     #[error("duplicate required feature")]
     DuplicateFeature,
+    #[error("{document} channel {channel:?} does not match semantic version {version}")]
+    ChannelVersion { document: &'static str, channel: Channel, version: String },
 }
 
 impl ReleaseManifest {
@@ -153,7 +154,8 @@ impl ReleaseManifest {
 
     pub fn validate(&self) -> Result<(), ManifestError> {
         check_schema("release manifest", self.schema_version, RELEASE_MANIFEST_SCHEMA_VERSION)?;
-        parse_version("version", &self.version)?;
+        let version = parse_version("version", &self.version)?;
+        check_channel_version("release manifest", self.channel, &version)?;
         parse_version("minimumUpdaterVersion", &self.minimum_updater_version)?;
         check_commit(&self.source_commit)?;
         check_timestamp(&self.published_at)?;
@@ -182,7 +184,8 @@ impl ChannelPointer {
 
     pub fn validate(&self) -> Result<(), ManifestError> {
         check_schema("channel pointer", self.schema_version, CHANNEL_POINTER_SCHEMA_VERSION)?;
-        parse_version("version", &self.version)?;
+        let version = parse_version("version", &self.version)?;
+        check_channel_version("channel pointer", self.channel, &version)?;
         check_timestamp(&self.published_at)?;
         check_https(&self.manifest_url, "manifestUrl")?;
         if self.manifest_byte_size == 0 {
@@ -191,6 +194,23 @@ impl ChannelPointer {
         check_sha256(&self.manifest_sha256, "manifestSha256")?;
         self.manifest_signature.validate()?;
         check_features(&self.required_features)
+    }
+}
+
+fn check_channel_version(
+    document: &'static str,
+    channel: Channel,
+    version: &Version,
+) -> Result<(), ManifestError> {
+    let matches = version.build.is_empty()
+        && match channel {
+            Channel::Stable => version.pre.is_empty(),
+            Channel::Canary => !version.pre.is_empty(),
+        };
+    if matches {
+        Ok(())
+    } else {
+        Err(ManifestError::ChannelVersion { document, channel, version: version.to_string() })
     }
 }
 
@@ -445,6 +465,23 @@ mod tests {
         let expected = manifest();
         let json = serde_json::to_vec(&expected).unwrap();
         assert_eq!(ReleaseManifest::from_json(&json).unwrap(), expected);
+    }
+
+    #[test]
+    fn semantic_version_intrinsically_selects_the_release_channel() {
+        let mut release = manifest();
+        release.version = "1.2.3-canary.4".into();
+        release.compatibility.types_version = release.version.clone();
+        for build in &mut release.assets[0].build_info {
+            build.version = release.version.clone();
+            build.release_id = Some(release.version.clone());
+        }
+        assert!(matches!(release.validate(), Err(ManifestError::ChannelVersion { .. })));
+        release.channel = Channel::Canary;
+        release.validate().unwrap();
+
+        release.version = "1.2.3".into();
+        assert!(matches!(release.validate(), Err(ManifestError::ChannelVersion { .. })));
     }
 
     #[test]

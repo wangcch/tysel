@@ -13,10 +13,7 @@ source_commit="$4"
 lockfile="$5"
 fuzz_toolchain="$6"
 
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || {
-  echo "release version must be canonical semver without a v prefix" >&2
-  exit 2
-}
+bash "$(dirname "$0")/release-channel.sh" "$version" > /dev/null
 [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid source commit" >&2; exit 2; }
 [[ "$fuzz_toolchain" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
   echo "invalid fuzz toolchain" >&2

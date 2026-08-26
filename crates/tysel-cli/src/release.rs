@@ -6,7 +6,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use tysel_distribution::{BuildInfo, ReleaseManifest, Target};
+use semver::Version;
+use tysel_distribution::{
+    BuildInfo, Channel, ChannelPointer, InstallState, ReleaseManifest, Target,
+};
 
 use crate::integrity::hash_file;
 use crate::platform;
@@ -83,9 +86,25 @@ pub enum ReleaseCommand {
         #[arg(long)]
         version: String,
     },
+    /// Validate that authenticated channel metadata selects an immutable manifest.
+    #[command(hide = true)]
+    VerifyChannelSelection {
+        pointer: PathBuf,
+        manifest: PathBuf,
+        manifest_signature: PathBuf,
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        installed_state: Option<PathBuf>,
+    },
     /// Validate a release trust policy without performing network access.
     #[command(hide = true)]
     ValidateTrust { trust: PathBuf },
+    /// Validate a forward-only transition between two release trust policies.
+    #[command(hide = true)]
+    ValidateTrustTransition { current: PathBuf, successor: PathBuf },
     /// Authenticate release metadata or a platform-neutral asset with a trust policy.
     VerifyMetadata {
         document: PathBuf,
@@ -170,6 +189,25 @@ pub fn run(command: ReleaseCommand) -> Result<()> {
             println!("Target           {target}");
             println!("Version          {version}");
         }
+        ReleaseCommand::VerifyChannelSelection {
+            pointer,
+            manifest,
+            manifest_signature,
+            channel,
+            version,
+            installed_state,
+        } => {
+            verify_channel_selection(
+                &pointer,
+                &manifest,
+                &manifest_signature,
+                &channel,
+                &version,
+                installed_state.as_deref(),
+            )?;
+            println!("Verified         authenticated {channel} channel selection");
+            println!("Version          {version}");
+        }
         ReleaseCommand::ValidateTrust { trust } => {
             let bytes = fs::read(&trust).with_context(|| format!("read {}", trust.display()))?;
             anyhow::ensure!(bytes.len() <= 1024 * 1024, "release trust policy is oversized");
@@ -177,6 +215,22 @@ pub fn run(command: ReleaseCommand) -> Result<()> {
                 serde_json::from_slice(&bytes).context("parse release trust policy")?;
             tysel_build::validate_trust_policy(&policy)?;
             println!("Verified         {}", trust.display());
+        }
+        ReleaseCommand::ValidateTrustTransition { current, successor } => {
+            let current_bytes =
+                fs::read(&current).with_context(|| format!("read {}", current.display()))?;
+            let successor_bytes =
+                fs::read(&successor).with_context(|| format!("read {}", successor.display()))?;
+            anyhow::ensure!(
+                current_bytes.len() <= 1024 * 1024 && successor_bytes.len() <= 1024 * 1024,
+                "release trust policy is oversized"
+            );
+            let current: tysel_build::TrustPolicy = serde_json::from_slice(&current_bytes)
+                .context("parse current release trust policy")?;
+            let successor: tysel_build::TrustPolicy = serde_json::from_slice(&successor_bytes)
+                .context("parse successor release trust policy")?;
+            tysel_build::validate_trust_policy_transition(&current, &successor)?;
+            println!("Verified         forward-only trust transition");
         }
         ReleaseCommand::VerifyMetadata { document, signature, trust } => {
             tysel_build::verify_release_metadata_signature(
@@ -238,6 +292,74 @@ pub(crate) fn verify_installation(
     let mut expected = asset.build_info.clone();
     expected.sort_by(|left, right| left.binary.cmp(&right.binary));
     anyhow::ensure!(actual == expected, "extracted binaries do not match release identities");
+    Ok(())
+}
+
+fn verify_channel_selection(
+    pointer_path: &Path,
+    manifest_path: &Path,
+    manifest_signature_path: &Path,
+    expected_channel: &str,
+    expected_version: &str,
+    installed_state_path: Option<&Path>,
+) -> Result<()> {
+    anyhow::ensure!(
+        fs::metadata(pointer_path)?.len() <= 1024 * 1024,
+        "channel pointer is oversized"
+    );
+    anyhow::ensure!(
+        fs::metadata(manifest_path)?.len() <= 4 * 1024 * 1024,
+        "release manifest is oversized"
+    );
+    anyhow::ensure!(
+        fs::metadata(manifest_signature_path)?.len() <= 1024 * 1024,
+        "release manifest signature is oversized"
+    );
+    let expected_channel = match expected_channel {
+        "stable" => Channel::Stable,
+        "canary" => Channel::Canary,
+        value => anyhow::bail!("unsupported release channel {value}"),
+    };
+    let pointer_bytes = fs::read(pointer_path)?;
+    let pointer = ChannelPointer::from_json(&pointer_bytes).context("validate channel pointer")?;
+    anyhow::ensure!(pointer.channel == expected_channel, "channel pointer channel mismatch");
+    anyhow::ensure!(pointer.version == expected_version, "channel pointer version mismatch");
+
+    let manifest_bytes = fs::read(manifest_path)?;
+    anyhow::ensure!(
+        manifest_bytes.len() as u64 == pointer.manifest_byte_size,
+        "channel manifest size mismatch"
+    );
+    anyhow::ensure!(
+        hash_file(manifest_path)? == pointer.manifest_sha256,
+        "channel manifest SHA-256 mismatch"
+    );
+    let manifest =
+        ReleaseManifest::from_json(&manifest_bytes).context("validate release manifest")?;
+    anyhow::ensure!(manifest.channel == pointer.channel, "channel manifest channel mismatch");
+    anyhow::ensure!(manifest.version == pointer.version, "channel manifest version mismatch");
+
+    let signature: serde_json::Value = serde_json::from_slice(&fs::read(manifest_signature_path)?)
+        .context("parse release manifest signature")?;
+    let signature_key = signature
+        .get("key_id")
+        .and_then(serde_json::Value::as_str)
+        .context("release manifest signature has no key_id")?;
+    anyhow::ensure!(
+        signature_key == pointer.manifest_signature.key_id,
+        "channel selected an unexpected manifest signing key"
+    );
+
+    if let Some(installed_state_path) = installed_state_path {
+        let installed = InstallState::from_json(&fs::read(installed_state_path)?)?;
+        let current = installed.active_semver()?;
+        let selected =
+            Version::parse(&pointer.version).context("parse selected channel version")?;
+        anyhow::ensure!(
+            selected >= current || pointer.channel != installed.channel,
+            "channel selection would downgrade {current} to {selected}; use tysel upgrade --version {selected} --force"
+        );
+    }
     Ok(())
 }
 

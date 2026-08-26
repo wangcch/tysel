@@ -9,10 +9,8 @@ fi
 release_output="$1"
 version="$2"
 [[ -d "$release_output" ]] || { echo "release output directory is missing" >&2; exit 1; }
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-  echo "stable release version must be a final semantic version" >&2
-  exit 2
-}
+channel="$(bash "$(dirname "$0")/release-channel.sh" "$version")"
+version_pointer="${channel}-version"
 
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
@@ -44,7 +42,7 @@ printf '%s\n' \
   install.sh.sha256 \
   release-manifest.json \
   release-manifest.json.sig.json \
-  stable-version \
+  "$version_pointer" \
   trust.json \
   trust.json.sig.json \
   tysel-component-starters.tar.gz \
@@ -58,8 +56,8 @@ if ! diff -u "$expected" "$actual"; then
   exit 1
 fi
 
-[[ "$(tr -d '[:space:]' < "$release_output/stable-version")" == "$version" ]] || {
-  echo "stable-version does not match the release version" >&2
+[[ "$(tr -d '[:space:]' < "$release_output/$version_pointer")" == "$version" ]] || {
+  echo "$version_pointer does not match the release version" >&2
   exit 1
 }
 install_sha256="$(sha256sum "$release_output/install.sh" | awk '{print $1}')"
@@ -99,12 +97,12 @@ for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
     '.target == $target and .artifact_sha256 == $sha256' "${archive}.sig.json" > /dev/null
 done
 
-jq -e --arg version "$version" '
-  .schemaVersion == 1 and .channel == "stable" and .version == $version
+jq -e --arg version "$version" --arg channel "$channel" '
+  .schemaVersion == 1 and .channel == $channel and .version == $version
   and ([.assets[].target] | sort) == ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]' \
   "$release_output/release-manifest.json" > /dev/null
-jq -e --arg version "$version" '
-  .schemaVersion == 1 and .channel == "stable" and .version == $version' \
+jq -e --arg version "$version" --arg channel "$channel" '
+  .schemaVersion == 1 and .channel == $channel and .version == $version' \
   "$release_output/channel-pointer.json" > /dev/null
 jq -e '
   .policy_version == 1

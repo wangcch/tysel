@@ -13,10 +13,7 @@ published_at="$4"
 base_url="${5%/}"
 output="$6"
 
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || {
-  echo "release version must be canonical semver without a v prefix" >&2
-  exit 2
-}
+channel="$(bash "$(dirname "$0")/release-channel.sh" "$version")"
 [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid source commit" >&2; exit 2; }
 [[ "$published_at" == *T*Z ]] || { echo "published-at must be UTC RFC 3339" >&2; exit 2; }
 [[ "$base_url" == https://* ]] || { echo "base URL must use HTTPS" >&2; exit 2; }
@@ -70,12 +67,13 @@ jq -s \
   --arg version "$version" \
   --arg sourceCommit "$source_commit" \
   --arg publishedAt "$published_at" \
+  --arg channel "$channel" \
   '{
     schemaVersion: 1,
     version: $version,
     sourceCommit: $sourceCommit,
     publishedAt: $publishedAt,
-    channel: "stable",
+    channel: $channel,
     minimumUpdaterVersion: "0.0.1",
     compatibility: {
       minimumTapVersion: 1,

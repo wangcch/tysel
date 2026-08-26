@@ -49,6 +49,8 @@ pub enum LayoutError {
     UnsupportedTarget,
     #[error("invalid manifest SHA-256")]
     ManifestSha256,
+    #[error("install channel does not match active semantic version")]
+    ChannelVersion,
 }
 
 impl ManagedLayout {
@@ -129,6 +131,14 @@ impl InstallState {
         }
         let active = Version::parse(&self.active_version)
             .map_err(|_| LayoutError::Version("activeVersion"))?;
+        let channel_matches = active.build.is_empty()
+            && match self.channel {
+                Channel::Stable => active.pre.is_empty(),
+                Channel::Canary => !active.pre.is_empty(),
+            };
+        if !channel_matches {
+            return Err(LayoutError::ChannelVersion);
+        }
         if let Some(previous) = &self.previous_version {
             let previous =
                 Version::parse(previous).map_err(|_| LayoutError::Version("previousVersion"))?;
@@ -203,8 +213,18 @@ mod tests {
         let encoded = serde_json::to_vec(&state).unwrap();
         assert_eq!(InstallState::from_json(&encoded).unwrap(), state);
 
-        let mut invalid = state;
+        let mut invalid = state.clone();
         invalid.previous_version = Some("1.2.3".into());
         assert_eq!(invalid.validate().unwrap_err(), LayoutError::SameVersion);
+
+        let canary = InstallState {
+            active_version: "1.3.0-rc.1".into(),
+            previous_version: None,
+            channel: Channel::Canary,
+            ..state
+        };
+        canary.validate().unwrap();
+        let mismatched = InstallState { channel: Channel::Stable, ..canary };
+        assert_eq!(mismatched.validate().unwrap_err(), LayoutError::ChannelVersion);
     }
 }

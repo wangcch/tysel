@@ -12,10 +12,7 @@ release_target="$3"
 source_date_epoch="$4"
 
 [[ "$ordinal" =~ ^[12]$ ]] || { echo "ordinal must be 1 or 2" >&2; exit 2; }
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || {
-  echo "release version must be canonical semver without a v prefix" >&2
-  exit 2
-}
+bash "$(dirname "$0")/release-channel.sh" "$version" > /dev/null
 [[ "$release_target" =~ ^[a-z0-9-]+$ ]] || { echo "invalid release target" >&2; exit 2; }
 [[ "$source_date_epoch" =~ ^[0-9]+$ ]] || { echo "invalid SOURCE_DATE_EPOCH" >&2; exit 2; }
 
@@ -48,7 +45,7 @@ export TYSEL_RELEASE_ID="$version"
 archive="tysel-${version}-${release_target}.tar.gz"
 root="target/archive-${ordinal}/tysel-${version}-${release_target}"
 acceptance="${root}/share/acceptance"
-release_app="target/release-${ordinal}/hello-service"
+release_app="${PWD}/target/release-${ordinal}/hello-service"
 build_info="target/release-build-info-${ordinal}"
 asset_metadata="target/release-asset-${ordinal}.json"
 archive_list="${PWD}/target/release-archive-${ordinal}.list"

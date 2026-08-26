@@ -58,10 +58,7 @@ if [[ -n "${GITHUB_REF_NAME:-}" && "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
     echo "release tag ${GITHUB_REF_NAME} does not match workspace version v${version}" >&2
     exit 1
   fi
-  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "stable release tags must use a final semantic version, got ${version}" >&2
-    exit 1
-  fi
+  bash "$(dirname "$0")/release-channel.sh" "$version" > /dev/null
 fi
 
 printf '%s\n' "$version"

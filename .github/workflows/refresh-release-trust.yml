@@ -1,0 +1,106 @@
+name: refresh release trust
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+      - name: Build isolated trust tools
+        run: >-
+          cargo build --locked --release
+          -p tysel-release-signing --bin tysel-release-signer
+          -p tysel-build --bin tysel-trust-policy
+      - name: Refresh the authenticated trust policy when due
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TYSEL_RELEASE_KEY_HEX: ${{ secrets.TYSEL_RELEASE_KEY_HEX }}
+        run: |
+          set -euo pipefail
+          [[ "$TYSEL_RELEASE_KEY_HEX" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "TYSEL_RELEASE_KEY_HEX must contain one canonical 32-byte Ed25519 seed" >&2
+            exit 1
+          }
+
+          key_path="${RUNNER_TEMP}/tysel-release.key"
+          current="${RUNNER_TEMP}/current-trust.json"
+          current_signature="${RUNNER_TEMP}/current-trust.json.sig.json"
+          successor="${RUNNER_TEMP}/trust.json"
+          published="${RUNNER_TEMP}/published-trust.json"
+          published_signature="${RUNNER_TEMP}/published-trust.json.sig.json"
+          trap 'rm -f "$key_path" "$current" "$current_signature" "$successor" "${successor}.sig.json" "$published" "$published_signature"' EXIT
+          install -m 600 /dev/null "$key_path"
+          printf '%s\n' "$TYSEL_RELEASE_KEY_HEX" > "$key_path"
+
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/trust"
+          curl -fsSL --retry 3 --connect-timeout 10 --max-time 30 \
+            "${base}/trust.json" -o "$current"
+          curl -fsSL --retry 3 --connect-timeout 10 --max-time 30 \
+            "${base}/trust.json.sig.json" -o "$current_signature"
+          now="$(date -u +%s)"
+          target/release/tysel-trust-policy verify \
+            "$current" "$current_signature" "$now"
+
+          key_info="$(target/release/tysel-release-signer --key-info --key "$key_path")"
+          key_id="$(jq -er '.key_id' <<<"$key_info")"
+          jq -e --arg keyId "$key_id" --argjson now "$now" \
+            '([.keys[] | select(.status == "active")] | length == 1)
+              and any(.keys[]; .key_id == $keyId and .status == "active"
+                and .valid_from_unix <= $now and .valid_until_unix == null)' \
+            "$current" > /dev/null || {
+              echo "configured release key is not the unique active key in published trust" >&2
+              exit 1
+            }
+
+          expires="$(jq -er '.expires_at_unix | select(type == "number" and floor == .)' "$current")"
+          signer="$(jq -er '.key_id' "$current_signature")"
+          signer_valid_until="$(jq -r --arg signer "$signer" \
+            '.keys[] | select(.key_id == $signer) | .valid_until_unix // empty' "$current")"
+          renew=false
+          (( expires - now <= 2592000 )) && renew=true
+          if [[ -n "$signer_valid_until" ]] && (( signer_valid_until - now <= 1209600 )); then
+            renew=true
+          fi
+          if [[ "$renew" != true ]]; then
+            echo "trust policy is healthy; renewal is not due"
+            exit 0
+          fi
+
+          successor_expires="$((now + 7776000))"
+          jq --argjson issued "$now" --argjson expires "$successor_expires" \
+            '.issued_at_unix = $issued | .expires_at_unix = $expires' \
+            "$current" > "$successor"
+          target/release/tysel-release-signer \
+            "$successor" --metadata --key "$key_path"
+          target/release/tysel-trust-policy verify-transition \
+            "$current" "$successor" "${successor}.sig.json" "$now"
+
+          gh release upload trust "$successor" "${successor}.sig.json" --clobber
+          bash .github/scripts/wait-for-published-trust.sh \
+            "$base" "$successor" "${successor}.sig.json" \
+            "$published" "$published_signature"
+          target/release/tysel-trust-policy verify-transition \
+            "$current" "$published" "$published_signature" "$now"
+          echo "published trust policy renewed through ${successor_expires}"

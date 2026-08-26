@@ -61,7 +61,7 @@ pub fn run(options: Options) -> Result<()> {
             Some(app_output.clone()),
             None,
             None,
-            false,
+            true,
         )?;
         validate_linux_executable(&app_output)?
     };
