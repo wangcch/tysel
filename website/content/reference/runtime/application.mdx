@@ -1,6 +1,6 @@
 ---
 title: "Application module"
-description: "An application default-exports a TyselApp object. It must expose at least one HTTP, task, or durable entrypoint; the selected command or protocol requires the corresponding handler."
+description: "An application default-exports a TyselApp object. It must declare at least one HTTP, task-registry, or durable-registry entrypoint group; the selected command or protocol still requires a concrete handler in that group."
 ---
 
 An application default-exports a `TyselApp` object. It must declare at least one
