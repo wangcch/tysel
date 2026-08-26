@@ -21,7 +21,13 @@ the complete contract for a command, manifest field, or runtime API.
 | Outcome | Start with | Required boundary |
 | --- | --- | --- |
 | Build a Fetch-style JSON API | [First service](/docs/getting-started#write-a-fetch-handler) | `service` profile; no capability for a local response. |
-| Use SQLite or Postgres | [Example gallery](/docs/guides/examples#storage) | Trusted service plus the relevant database configuration. |
+| Configure HTTP, h2c, WebSocket, and outbound hosts | [Service networking](/docs/guides/service-networking) | Inbound listener and outbound allowlist are separate boundaries. |
+| Size workers and reject overload predictably | [Concurrency and backpressure](/docs/guides/concurrency-backpressure) | `503 OVERLOADED`; WebSockets retain admission permits. |
+| Register UTC schedules and Queue consumers | [Cron and Queue](/docs/guides/cron-queue) | JSON bounds, deadlines, idempotency, and bounded catch-up. |
+| Route an LLM call without exposing credentials | [LLM gateway](/docs/guides/llm-gateway) | One alias, host-owned secret, timeout, and audit bounds. |
+| Transform files beneath pinned roots | [Filesystem](/docs/guides/filesystem) | Separate UTF-8 read/write roots; traversal and symlinks denied. |
+| Persist local application state | [SQLite](/docs/guides/sqlite) | One runtime-owned connection and a stable deployment volume. |
+| Connect to a remote relational database | [PostgreSQL](/docs/guides/postgresql) | One named grant, host-injected URL, least-privilege database role. |
 | Expose a function as an MCP tool | [MCP example](/docs/guides/examples#agents) | Registered MCP task; isolated example keeps secret values in the host. |
 | Run generated or third-party JavaScript | [Isolated plugin example](/docs/guides/examples#isolation-and-wasm) | Linux is the production isolation security target. |
 | Suspend for retry, time, or human approval | [Durable execution](/docs/concepts/durable-execution) | Durable store and replay-safe boundaries. |
@@ -32,7 +38,10 @@ the complete contract for a command, manifest field, or runtime API.
 | Outcome | Guide | Important limit |
 | --- | --- | --- |
 | Build one executable | [Build one executable](/docs/getting-started#build-one-executable) | The target must match the build host. |
-| Generate a non-root container context | [Production deployment](/docs/operations/production#deployment) | A Linux executable is required. |
+| Generate and verify a non-root container | [Container image](/docs/guides/container-image) | A matching Linux x64/arm64 executable is required. |
+| Export structured logs, traces, and metrics | [Observability](/docs/guides/observability) | OTLP environment variables are the active runtime control. |
+| Correlate and safely map a production failure | [Debugging](/docs/guides/debugging) | Packaged HTTP errors are not currently source-mapped. |
+| Verify and sign an application artifact set | [Reproducible release](/docs/guides/reproducible-release) | Evidence binds one build; it does not promise cross-host byte identity. |
 | Diagnose, upgrade, or roll back the toolchain | [Installation lifecycle](/docs/install#diagnose) | Managed operations apply to all three developer tools together. |
 | Review production readiness | [Production operations](/docs/operations/production) | Release evidence, platform scope, recovery, and monitoring are part of the gate. |
 

@@ -10,7 +10,7 @@ must all permit the call.
 | --- | --- | --- |
 | `tysel.secrets` | `ref(name)` | Declared `permissions.secrets` name. |
 | `tysel.sqlite` | `exec(sql, params?)`, `query(sql, params?)` | Trusted profile. |
-| `tysel.postgres` | `exec(name, sql, params?)`, `query(name, sql, params?)` | Named `permissions.postgres` grant and connection URL. |
+| `tysel.postgres` | `exec(sql, params?)`, `query(sql, params?)` | Named `permissions.postgres` grant and connection URL. |
 | `tysel.fs` | `read(path)`, `write(path, contents)` | Matching `fs_read` or `fs_write` root. |
 | `tysel.llm` | `generate(options)` | Provider configuration and declared provider secret. |
 | `tysel.acceptWebSocket()` | Accept current inbound upgrade | HTTP/1.1 WebSocket enabled and trusted profile. |
@@ -68,6 +68,8 @@ const remote = await tysel.postgres.query(
 
 A read-only Postgres grant rejects writes. SQL text, parameter count, rows, and
 result bytes are bounded; see [Limits and defaults](../limits-and-defaults.md).
+Use the [SQLite](../../guides/sqlite.md) or
+[PostgreSQL](../../guides/postgresql.md) guide for an end-to-end deployment path.
 
 ## Filesystem
 
@@ -78,6 +80,8 @@ await tysel.fs.write("./data/output/result.json", source);
 
 Operations use UTF-8 strings and regular files beneath pinned roots. Paths do
 not escape a declared root through traversal or symlink substitution.
+Use the [filesystem guide](../../guides/filesystem.md) to prepare roots and
+verify allowed and denied paths.
 
 ## LLM generation
 

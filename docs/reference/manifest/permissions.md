@@ -47,11 +47,17 @@ Connection URLs do not belong in the manifest. For `main`, set
 `TYSEL_POSTGRES_MAIN`; hyphens in a grant name map to underscores in the
 environment variable.
 
+Follow the [PostgreSQL guide](../../guides/postgresql.md) for parameter types,
+read-only verification, pooling, TLS, and deployment checks.
+
 ## Filesystem
 
 Roots resolve from the project root and are pinned before access. Reads and
 writes are limited to UTF-8 regular files below the corresponding roots;
 declaring `fs_read` does not imply write permission.
+
+Follow the [filesystem guide](../../guides/filesystem.md) for root preparation,
+path confinement, profile differences, denial checks, and a runnable transform.
 
 See [Host capabilities](../runtime/capabilities.md) for method signatures,
 [Environment variables](../environment.md) for host configuration, and the

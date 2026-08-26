@@ -32,8 +32,8 @@ tysel upgrade [OPTIONS]
 | Option | Default | Behavior |
 | --- | --- | --- |
 | `--check` | Off | Report whether an update is available without installing it. |
-| <code>{"--version <version>"}</code> | Latest channel version | Select an exact version. |
-| <code>{"--channel <channel>"}</code> | `stable` | Select the update channel. |
+| <code>{"--version <version>"}</code> | Current channel version | Select an exact immutable version and adopt its manifest channel. |
+| <code>{"--channel <stable\\\|canary>"}</code> | Installed channel | Select and persist a moving update channel. |
 | `--yes` | Off | Confirm without prompting. |
 | `--force` | Off | Reinstall even when normal guards would skip it. |
 | `--rollback` | Off | Restore the managed previous installation. |
@@ -42,6 +42,8 @@ tysel upgrade [OPTIONS]
 ```sh
 tysel doctor --install
 tysel upgrade --check --json
+tysel upgrade --channel canary --yes
+tysel upgrade --channel stable --yes
 tysel upgrade --version 0.1.0 --yes
 tysel upgrade --rollback
 ```

@@ -70,12 +70,9 @@ filesystem requests under capabilities. HTTP, secrets, databases, LLM,
 WebSocket, and durable handlers appear under `Denied`; `tysel build` likewise
 omits them from its capability summary.
 
-## Unimplemented WIT files
-
-The repository contains early `0.0.1` WIT sketches for HTTP, SQLite, LLM,
-secrets, MCP, and core task capabilities. They are architecture inputs, not
-available Component imports. Only `tysel:component/task@0.4.0` and the two
-filesystem imports above are current application contracts.
+HTTP, SQLite, LLM, secrets, MCP, and durable Component capabilities are not
+available. Only `tysel:component/task@0.4.0` and the two filesystem imports
+above are current application contracts.
 
 See [Manifest permissions](../manifest/permissions.md), the
 [Security model](../../security/README.md), and [Runtime and WASI](runtime.md).

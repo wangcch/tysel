@@ -1,0 +1,23 @@
+schema_version = 1
+
+[app]
+name = "filesystem-transform"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+
+[permissions]
+fs_read = ["./input"]
+fs_write = ["./output"]
+
+[limits]
+memory_mb = 64
+request_timeout_ms = 10000
+max_in_flight = 32
+max_request_mb = 1
+max_response_mb = 1
+
+[tasks.verify]
+steps = [["check"]]

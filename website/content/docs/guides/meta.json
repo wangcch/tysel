@@ -2,6 +2,19 @@
   "title": "Guides",
   "pages": [
     "index",
-    "examples"
+    "examples",
+    "service-networking",
+    "concurrency-backpressure",
+    "cron-queue",
+    "llm-gateway",
+    "filesystem",
+    "sqlite",
+    "postgresql",
+    "container-image",
+    "observability",
+    "debugging",
+    "reproducible-release",
+    "wasm-component-rust",
+    "wasm-component-go"
   ]
 }

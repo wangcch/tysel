@@ -106,3 +106,23 @@ adapter. See [Host capabilities](capabilities.md#llm-generation).
 
 `DurableHost` is retained as a deprecated alias of `DurableContext`. New code
 should import `DurableContext` directly from `@tysel/types`.
+
+## Complete export inventory
+
+This inventory names every declaration exported by `@tysel/types`. The linked
+contract page carries the behavioral detail; the inventory is also compared
+with the package source in documentation CI so a new public declaration cannot
+remain undiscoverable.
+
+| Area | Exported declarations | Contract |
+| --- | --- | --- |
+| JSON | `JsonPrimitive`, `JsonValue`, `JsonObject`, `MaybePromise` | [JSON values](#json-values) |
+| Execution | `ExecutionProfile`, `TrustMode`, `CapabilityRequirement`, `RequestContext` | [Execution and trust](#execution-and-trust) |
+| Application | `FetchHandler`, `CronTask`, `QueueTask`, `McpInputSchema`, `McpTask`, `AppTask`, `TyselApp` | [Application module](application.md) |
+| Durable handler | `DurableHandler`, `DurableDuration`, `DurableRetryPolicy`, `DurableContext`, `DurableHost` | [Durable API](durable.md) |
+| Durable control | `DurableSuspendedResult`, `DurableCompletedResult`, `DurableStartResult`, `DurableControlClient` | [Durable control](durable.md#control-api) |
+| SQL and files | `SqlParameter`, `SqlRow`, `SqlClient`, `FileSystemClient` | [Host capabilities](capabilities.md) |
+| Secrets | `SecretReference`, `SecretClient` | [Secrets](capabilities.md#secrets) |
+| LLM | `LlmGenerateOptions`, `LlmUsage`, `LlmResponse`, `LlmClient` | [LLM generation](capabilities.md#llm-generation) |
+| Accepted WebSocket | `AcceptedWebSocketEvent`, `AcceptedWebSocketEventType`, `AcceptedWebSocketListener`, `AcceptedWebSocket` | [WebSockets](capabilities.md#websockets) |
+| Runtime host | `TyselRuntime`, `Tysel` | [Runtime overview](index.md) |

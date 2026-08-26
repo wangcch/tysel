@@ -142,9 +142,8 @@ tysel upgrade --channel stable
 
 An explicit channel switch may cross back to a numerically lower stable line;
 the confirmation prompt still applies. Later upgrades without `--channel`
-continue following the selected channel. The release pipeline itself only moves
-each published channel forward by SemVer precedence; an out-of-order tag fails
-before npm dist-tags or GitHub channel pointers are changed.
+continue following the selected channel. Published channels move forward by
+SemVer precedence.
 
 If the native version is already current but the authenticated trust policy has
 changed, `upgrade` asks before applying a `trust-refresh`. JSON output reports
@@ -175,10 +174,9 @@ currently installed policy; a successful upgrade rotates `trust.json` in the
 same rollback transaction. This global trust stream prevents switching from
 canary back to stable from looking like a trust-policy rollback. Systems that
 stay offline beyond the installed policy's validity window must reinstall from
-the official HTTPS bootstrap. The global policy is renewed independently of
-native releases by a daily release workflow before its 90-day validity window
-closes. Missing policy assets, invalid metadata, expired trust, and signing-key
-mismatches fail that workflow instead of being repaired implicitly.
+the official HTTPS bootstrap. Missing policy assets, invalid metadata, expired
+trust, and signing-key mismatches fail closed instead of being repaired
+implicitly.
 
 ## Security boundary
 

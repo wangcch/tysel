@@ -5,6 +5,7 @@
   "scripts": {
     "sync:brand": "node scripts/sync-brand.mjs",
     "import:docs": "node scripts/import-docs.mjs",
+    "check:docs-contracts": "node scripts/check-docs-contracts.mjs",
     "predev": "node scripts/sync-brand.mjs && node scripts/import-docs.mjs",
     "prebuild": "node scripts/sync-brand.mjs && node scripts/import-docs.mjs",
     "dev": "next dev --port 4000",

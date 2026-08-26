@@ -1,0 +1,170 @@
+---
+title: "Observability"
+description: "This guide enables structured JSON logs and OTLP/HTTP traces and metrics, verifies each signal at a collector, and preserves Tysel's redaction and low-cardinality boundaries."
+---
+
+This guide enables structured JSON logs and OTLP/HTTP traces and metrics,
+verifies each signal at a collector, and preserves Tysel's redaction and
+low-cardinality boundaries.
+
+## Enable structured logs
+
+JSON logging is controlled by the packaged manifest:
+
+```toml
+[observability]
+logs = "json"
+```
+
+Each HTTP request writes one JSON object to stderr with `ts`, `app`, `method`,
+`path`, `status`, `ms`, and `rid`. Audited capability calls use `capability`,
+`operation`, `result`, and the same process-local `rid`, allowing a request and
+its capability activity to be correlated.
+
+The logger omits query strings, request and response headers, bodies, SQL,
+filesystem paths, outbound URLs, and secret values. Capability, operation, and
+result labels use fixed allowlists; unexpected values become `redacted`.
+Restrict log access anyway: route names and timing remain operational data.
+
+Any `logs` value other than case-insensitive `json` disables these JSON lines.
+This does not disable OTLP.
+
+## Enable OTLP export
+
+The current operational controls are standard environment variables, not the
+manifest `observability.traces` and `observability.metrics` fields. To enable
+both signals through an OTLP/HTTP collector:
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+tysel run
+```
+
+To enable only one signal, set only its endpoint:
+
+```sh
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+```
+
+```sh
+export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
+```
+
+Tysel uses OTLP over HTTP with protobuf payloads. An endpoint must start with
+`http://` or `https://`, be at most 2 KiB, and contain no userinfo, query, or
+fragment. Put authentication in the standard OTLP headers environment used by
+your collector integration, never in the endpoint URL or manifest.
+
+Set `OTEL_SDK_DISABLED=true` to disable both traces and metrics even if stale
+endpoint variables remain. An unset or blank endpoint does not enable its
+signal. Signal-specific and shared endpoint resolution after validation is
+handled by the OpenTelemetry exporter; validate the exact paths against your
+collector.
+
+## Know the emitted contract
+
+Tysel publishes these instruments:
+
+| Signal | Name | Attributes |
+| --- | --- | --- |
+| Counter | `tysel.http.server.requests` | service, method, numeric status, status class |
+| Histogram (ms) | `tysel.http.server.duration` | same HTTP attributes |
+| Counter | `tysel.capability.calls` | service, capability, operation, result |
+| Histogram (ms) | `tysel.capability.duration` | same capability attributes |
+| Server span | `http.server.request` | HTTP attributes and, when available, `tysel.request.id` |
+| Internal span | `tysel.capability` | capability attributes and, when available, `tysel.request.id` |
+
+The resource contains `service.name` and the Tysel runtime
+`service.version`. Metrics deliberately omit request IDs to prevent
+high-cardinality series. Spans and JSON logs may carry the process-local ID;
+it is not a globally unique trace or business identifier.
+
+## Verify before rollout
+
+Tysel has no runtime dependency on OpenTelemetry Collector. Choose the path
+that matches your environment:
+
+- if an OTLP/HTTP backend already exists, point the Tysel endpoint variables
+  at it and use that platform to inspect the signals;
+- for optional local verification, use the repository's `otelcol-contrib`
+  configuration below;
+- when telemetry is not required, leave the endpoint variables unset and no
+  Collector is needed.
+
+The local configuration listens only on `127.0.0.1:4318` and uses the
+Collector's detailed debug exporter. From the repository root, validate and
+start a compatible `otelcol-contrib` binary:
+
+```sh
+otelcol-contrib validate --config examples/filesystem-transform/otel-collector.yaml
+otelcol-contrib --config examples/filesystem-transform/otel-collector.yaml
+```
+
+In another terminal, run the complete filesystem example. Its `/transform`
+route performs one filesystem read and one write, so it produces both HTTP and
+capability telemetry:
+
+```sh
+cd examples/filesystem-transform
+mkdir -p input output
+printf '%s\n' '{"items":["alpha","beta"]}' > input/jobs.json
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
+tysel run
+```
+
+Call the route from a third terminal:
+
+```sh
+curl --fail http://127.0.0.1:3000/transform
+```
+
+The collector debug output should contain `http.server.request`,
+`tysel.capability`, `tysel.http.server.requests`,
+`tysel.http.server.duration`, `tysel.capability.calls`, and
+`tysel.capability.duration`. Traces are batched and metrics are exported
+periodically, so they do not necessarily appear immediately after `curl`.
+Allow the configured export interval, then stop Tysel normally to flush both
+providers before treating a signal as missing.
+
+Confirm all of the following:
+
+1. the service name matches `[app].name`;
+2. request and capability signals arrive;
+3. status, method, capability, operation, and result use bounded labels;
+4. no token, SQL text, body, query string, filesystem path, or outbound URL is present;
+5. stopping Tysel normally flushes providers before the process exits.
+
+Then disconnect the collector and verify your deployment policy. Export
+failure must be visible in collector or host monitoring; do not depend on
+telemetry alone for readiness.
+
+The debug exporter is a local verification tool, not a production telemetry
+backend. In production, pin and approve the collector version and image through
+the same supply-chain policy used for other infrastructure.
+
+## Build useful alerts
+
+Alert on sustained 5xx rate, latency relative to the configured request
+timeout, unexpected `denied` or `error` capability results, process restarts,
+memory pressure, and collector export absence. Monitor database saturation,
+backup age, and durable due-work age with their owning systems; Tysel does not
+currently export a due-wakeup-age metric.
+
+Do not derive metric labels from `path`, `rid`, user IDs, URLs, SQL, exception
+messages, or other unbounded input. Use traces and restricted logs for bounded
+investigation.
+
+## Troubleshoot export
+
+| Symptom | Check |
+| --- | --- |
+| JSON logs exist but no OTLP | An endpoint is explicitly set and `OTEL_SDK_DISABLED` is not `true`. |
+| Traces arrive but metrics do not | A shared or metrics-specific endpoint is configured and collector metrics ingestion is enabled. |
+| Startup reports invalid OTLP configuration | Remove URL credentials, query, fragment, unsupported scheme, or an overlong endpoint. |
+| Collector returns unauthorized | Move credentials to OTLP headers and verify the service manager injected them without logging them. |
+| Too many metric series | Remove downstream relabeling from paths or IDs; use only the emitted fixed attributes. |
+
+See [Environment variables](/reference/environment#opentelemetry),
+[Observability manifest fields](/reference/manifest/durable-observability#observability),
+and [Production monitoring](/docs/operations/production#monitoring-and-alerts).

@@ -1,0 +1,16 @@
+schema_version = 1
+
+[app]
+name = "task-worker"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+
+[limits]
+memory_mb = 64
+request_timeout_ms = 10000
+
+[tasks.verify]
+steps = [["check"]]

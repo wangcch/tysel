@@ -1,0 +1,13 @@
+{
+  "name": "websocket-service",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@tysel/types": "workspace:*",
+    "typescript": "7.0.2"
+  }
+}

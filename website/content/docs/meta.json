@@ -15,8 +15,6 @@
     "---Operate---",
     "security",
     "operations",
-    "performance",
-    "---Internals---",
-    "architecture"
+    "performance"
   ]
 }

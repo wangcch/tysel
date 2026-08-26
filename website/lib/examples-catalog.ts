@@ -9,7 +9,7 @@ export type Example = {
   purpose: string;
   status: ExampleStatus;
   profile: string;
-  /** Named grants or explicit "none". */
+  /** Effective application capabilities, including profile defaults. */
   grants: string;
   /** Primary verification command from the README. */
   run: string;
@@ -73,7 +73,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Minimal Fetch handler and one-executable build.",
         status: "runnable",
         profile: "service",
-        grants: "none",
+        grants: "SQLite (default)",
         run: "tysel run",
         sourceHref: tree("examples/hello-service"),
         docsHref: "/docs/getting-started",
@@ -85,11 +85,23 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Web-API-first npm router. Compatibility is scanned, not assumed.",
         status: "runnable",
         profile: "service",
-        grants: "none",
+        grants: "SQLite (default)",
         run: "npm install && tysel run",
         sourceHref: tree("examples/hono-api"),
         docsHref: "/docs/compatibility",
         contractHref: "/reference/javascript",
+      },
+      {
+        id: "websocket-service",
+        name: "WebSocket service",
+        purpose: "HTTP/1.1 upgrade and bounded text echo.",
+        status: "runnable",
+        profile: "service",
+        grants: "inbound WebSocket · SQLite (default)",
+        run: "tysel run",
+        sourceHref: tree("examples/websocket-service"),
+        docsHref: "/docs/guides/service-networking",
+        contractHref: "/reference/javascript/websocket",
       },
       {
         id: "sqlite-worker",
@@ -100,6 +112,7 @@ export const exampleSections: ExampleSection[] = [
         grants: "SQLite",
         run: "tysel run",
         sourceHref: tree("examples/sqlite-worker"),
+        docsHref: "/docs/guides/sqlite",
         contractHref: "/reference/runtime/capabilities#sql",
       },
       {
@@ -108,10 +121,42 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Named database grant. The URL stays in the host environment.",
         status: "runnable",
         profile: "service",
-        grants: "main:read-write",
+        grants: "main:read-write · SQLite (default)",
         run: "tysel run",
         sourceHref: tree("examples/postgres-service"),
+        docsHref: "/docs/guides/postgresql",
         contractHref: "/reference/runtime/capabilities#sql",
+      },
+      {
+        id: "filesystem-transform",
+        name: "Filesystem transform",
+        purpose: "Read and write UTF-8 files beneath separate pinned roots.",
+        status: "runnable",
+        profile: "service",
+        grants: "fs read · fs write · SQLite (default)",
+        run: "tysel run",
+        sourceHref: tree("examples/filesystem-transform"),
+        docsHref: "/docs/guides/filesystem",
+        contractHref: "/reference/runtime/capabilities#filesystem",
+      },
+    ],
+  },
+  {
+    id: "tasks",
+    title: "Cron and Queue",
+    intent: "Scheduled and produced JSON work on the bounded task path.",
+    examples: [
+      {
+        id: "task-worker",
+        name: "Task worker",
+        purpose: "UTC Cron registration and one named Queue consumer.",
+        status: "runnable",
+        profile: "service",
+        grants: "SQLite (default)",
+        run: "tysel queue jobs --input '{\"id\":\"job_123\",\"action\":\"reindex\"}'",
+        sourceHref: tree("examples/task-worker"),
+        docsHref: "/docs/guides/cron-queue",
+        contractHref: "/reference/runtime/application#cron-tasks",
       },
     ],
   },
@@ -121,6 +166,18 @@ export const exampleSections: ExampleSection[] = [
     intent: "Work that must survive restarts, or run as an isolated MCP tool.",
     examples: [
       featuredExample,
+      {
+        id: "llm-service",
+        name: "LLM service",
+        purpose: "Host-configured provider alias with credential isolation and usage metadata.",
+        status: "runnable",
+        profile: "service",
+        grants: "provider secret · SQLite (default)",
+        run: "tysel run",
+        sourceHref: tree("examples/llm-service"),
+        docsHref: "/docs/guides/llm-gateway",
+        contractHref: "/reference/runtime/capabilities#llm-generation",
+      },
       {
         id: "mcp-tool",
         name: "MCP tool",
@@ -188,21 +245,6 @@ export const recipes: Array<{
   purpose: string;
   href: string;
 }> = [
-  {
-    name: "WebSocket",
-    purpose: "Inbound upgrade or allowlisted outbound client.",
-    href: "/reference/runtime/capabilities#websockets",
-  },
-  {
-    name: "Filesystem",
-    purpose: "UTF-8 read/write under manifest-pinned roots only.",
-    href: "/reference/runtime/capabilities#filesystem",
-  },
-  {
-    name: "Cron and queue",
-    purpose: "Typed scheduled and queued handlers.",
-    href: "/reference/runtime/application#cron-tasks",
-  },
   {
     name: "Handler tests",
     purpose: "Invoke Fetch handlers in a fresh isolate.",

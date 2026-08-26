@@ -82,7 +82,7 @@ meaning “unlimited.”
 | `limits.cpu_ms_per_turn` | Milliseconds | `50` | CPU budget for one JavaScript turn. Components use fuel and epoch interruption instead. |
 | `limits.request_timeout_ms` | Milliseconds | `30000` | Invocation deadline and bound for configured LLM calls. Components are clamped to 60 seconds. |
 | `limits.max_in_flight` | Requests | `1000` | Admitted HTTP requests, held until response completion or WebSocket close. |
-| `limits.max_response_mb` | MiB | `16` | Declared response target. Currently inspected but not propagated into the packaged HTTP server. |
+| `limits.max_response_mb` | MiB | `16` | Maximum cumulative HTTP response-body size. |
 | `limits.max_request_mb` | MiB | `16` | Inbound request-body limit; oversized requests receive HTTP 413. |
 
 See [Application limits](/reference/manifest/limits) for integer bounds, overload behavior,

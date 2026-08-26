@@ -25,24 +25,20 @@ is unavailable; only documented admission metrics can fail the gate.
 
 ## `tysel release`
 
-Sign artifacts and verify release or reproducibility evidence.
+Sign and verify application release evidence.
 
 | Subcommand | Required arguments | Important options |
 | --- | --- | --- |
 | `sign` | `<ARTIFACT> --key <key>` | Sign an evidence artifact. |
 | `verify` | `<ARTIFACT> --trust <key>` | Verify an evidence signature. |
 | `key-info` | `--key <key>` | Print public key information. |
-| `reproduce` | `<FIRST> <SECOND> --source-commit <sha> --target <triple> --toolchain <id> --command <cmd>... --output <file>` | `--lockfile` defaults to `Cargo.lock`. |
-| `verify-reproducibility` | `<ARTIFACT> --evidence <file> --target <triple>` | `--lockfile` defaults to `Cargo.lock`. |
-| `sign-artifact` | `<ARTIFACT> --target <triple> --key <key>` | Bind an artifact to target metadata. |
-| `verify-artifact` | `<ARTIFACT> --trust <key> --target <triple>` | Verify artifact and target binding. |
-| `verify-metadata` | `<DOCUMENT> <SIGNATURE> --trust <policy>` | Authenticate signed metadata or a platform-neutral release asset. |
 
-`verify-metadata` checks the document digest, Ed25519 signature, signing-key
-status, and policy validity. It does not modify the document or trust policy.
+`sign` and `verify` take an application executable, validate its complete
+release sidecar set, and create or check `<artifact>.evidence.sig.json`.
 
 Private signing material must not be stored in the repository or passed
 through logs. Use subcommand `--help` for the exact installed evidence format.
 
-See [Performance and evidence](../../performance/README.md) for measurement
-methodology and admission policy.
+See [Reproducible application releases](../../guides/reproducible-release.md)
+for the complete artifact flow and [Performance and evidence](../../performance/README.md)
+for measurement methodology and admission policy.

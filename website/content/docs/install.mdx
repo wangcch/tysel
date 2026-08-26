@@ -51,6 +51,16 @@ Select an immutable published version:
 curl -fsSL https://tysel.dev/install.sh | sh -s -- --version VERSION
 ```
 
+Install from the moving canary channel. Final `MAJOR.MINOR.PATCH` versions belong
+to `stable`; versions with a SemVer prerelease suffix belong to `canary`:
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh -s -- --channel canary
+```
+
+An exact `--version` reads its channel from the authenticated immutable manifest.
+When both options are supplied, the requested channel must match that manifest.
+
 Preview target, paths, and URLs without changing the machine:
 
 ```sh
@@ -81,9 +91,12 @@ The default layout is:
 ```
 
 The single `bin` link activates all three executables together. Downloads,
-checksums, archive members, the release manifest, file hashes, permissions, and
-binary identities are checked before activation. A failed install restores the
-previous link and state.
+checksums, signatures, the selected channel pointer, archive members, the
+release manifest, file hashes, permissions, and binary identities are checked
+before activation. A healthy managed installation uses its installed verifier
+before executing the downloaded toolchain. Reinstalling a damaged managed
+version replaces it with the verified staging tree. A failed install restores
+the previous link, state, trust policy, version tree, and shell profile content.
 
 ## Diagnose
 
@@ -97,8 +110,9 @@ tysel doctor --project path/to/project
 tysel doctor --json
 ```
 
-Network checks are opt-in. They authenticate the stable pointer and immutable
-manifest with the installed trust policy, then check the target asset:
+Network checks are opt-in. They authenticate the installed stable or canary
+channel pointer and immutable manifest with the installed trust policy, then
+check the target asset:
 
 ```sh
 tysel doctor --network
@@ -122,6 +136,18 @@ tysel upgrade
 tysel upgrade --yes --json
 ```
 
+Switch the persisted moving channel explicitly:
+
+```sh
+tysel upgrade --channel canary
+tysel upgrade --channel stable
+```
+
+An explicit channel switch may cross back to a numerically lower stable line;
+the confirmation prompt still applies. Later upgrades without `--channel`
+continue following the selected channel. Published channels move forward by
+SemVer precedence.
+
 If the native version is already current but the authenticated trust policy has
 changed, `upgrade` asks before applying a `trust-refresh`. JSON output reports
 that mutation with `action: "trust-refresh"` and `changed: true`; `--check`
@@ -143,21 +169,29 @@ tysel upgrade --rollback
 
 Upgrade works only for managed installations. It authenticates release metadata
 and the complete archive, stages on the same filesystem, switches the one `bin`
-link atomically, and runs a post-switch installation doctor. Failure restores
-the prior release. Before resolving release metadata, upgrade authenticates the
-latest signed trust policy with the currently installed policy; a successful
-upgrade rotates `trust.json` in the same rollback transaction. Systems that stay
-offline beyond the installed policy's validity window must reinstall from the
-official HTTPS bootstrap.
+link atomically, repairs a damaged cached target version from the verified
+staging tree, and runs a post-switch installation doctor. Failure restores the
+prior release and any replaced version tree. Before resolving release metadata,
+upgrade authenticates the channel-independent signed trust policy with the
+currently installed policy; a successful upgrade rotates `trust.json` in the
+same rollback transaction. This global trust stream prevents switching from
+canary back to stable from looking like a trust-policy rollback. Systems that
+stay offline beyond the installed policy's validity window must reinstall from
+the official HTTPS bootstrap. Missing policy assets, invalid metadata, expired
+trust, and signing-key mismatches fail closed instead of being repaired
+implicitly.
 
 ## Security boundary
 
-The bootstrap model uses HTTPS plus the release SHA-256 before executing
-the downloaded CLI. The checksum detects corruption but does not independently
-protect against compromise of the HTTPS distribution origin. The installer then
-stores a validated Ed25519 trust policy; `tysel upgrade` requires signed trust,
-channel, manifest, and archive metadata. Stable channels resolve only final
-`MAJOR.MINOR.PATCH` releases, and every native release is paired with matching
+The bootstrap model uses HTTPS plus the release SHA-256 before executing the
+downloaded CLI, then verifies the global trust-policy, manifest, and archive
+signatures before activation. The bundled bootstrap trust root still comes from
+the HTTPS distribution origin, so these checks do not independently protect
+against compromise of that origin. Existing managed installations additionally
+require every trust-policy replacement to be authenticated by the installed
+policy and to advance monotonically. `tysel upgrade` requires signed trust,
+channel, manifest, and archive metadata. Stable resolves only final
+`MAJOR.MINOR.PATCH` releases; canary resolves only prereleases. Every native release is paired with matching
 `@tysel/types`, `@tysel/test`, and `tysel-component-sdk` packages.
 
 Windows native archives are not currently supported. Use WSL on Windows.

@@ -8,6 +8,10 @@ on:
       - ".github/workflows/website.yml"
       - "brand/**"
       - "docs/**"
+      - "crates/tysel-cli/src/**"
+      - "crates/tysel-manifest/schema/**"
+      - "packages/tysel-types/src/**"
+      - "runtime-js/web-api/compatibility.json"
       - "website/**"
   pull_request:
     paths:
@@ -15,6 +19,10 @@ on:
       - ".github/workflows/website.yml"
       - "brand/**"
       - "docs/**"
+      - "crates/tysel-cli/src/**"
+      - "crates/tysel-manifest/schema/**"
+      - "packages/tysel-types/src/**"
+      - "runtime-js/web-api/compatibility.json"
       - "website/**"
   workflow_dispatch:
 
@@ -42,9 +50,20 @@ jobs:
       - name: Install website dependencies
         run: pnpm install --frozen-lockfile
         working-directory: website
+      - name: Check documentation against public contracts
+        run: pnpm check:docs-contracts
+        working-directory: website
       - name: Build static website
         run: pnpm build
         working-directory: website
+      - name: Verify generated documentation is committed
+        run: |
+          changes="$(git status --short --untracked-files=all -- website/content)"
+          if [ -n "$changes" ]; then
+            echo "Generated documentation is not synchronized:"
+            echo "$changes"
+            exit 1
+          fi
       - name: Verify static export
         run: |
           test -s website/out/index.html

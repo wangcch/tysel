@@ -26,6 +26,17 @@ nav:
   - Guides:
       - Choose a guide: guides/index.md
       - Example gallery: guides/examples.md
+      - Service networking: guides/service-networking.md
+      - Concurrency and backpressure: guides/concurrency-backpressure.md
+      - Cron and Queue: guides/cron-queue.md
+      - LLM gateway: guides/llm-gateway.md
+      - Filesystem: guides/filesystem.md
+      - SQLite: guides/sqlite.md
+      - PostgreSQL: guides/postgresql.md
+      - Container image: guides/container-image.md
+      - Observability: guides/observability.md
+      - Debugging: guides/debugging.md
+      - Reproducible release: guides/reproducible-release.md
       - Rust Wasm Component: guides/wasm-component-rust.md
       - Go Wasm Component: guides/wasm-component-go.md
   - Learn:

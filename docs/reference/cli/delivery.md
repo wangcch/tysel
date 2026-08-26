@@ -43,7 +43,7 @@ tysel image [ENTRY] [OPTIONS]
 | --- | --- | --- |
 | `--binary <path>` | Build the app | Package an existing Tysel executable. |
 | `--stub <path>` | Bundled stub | Select the runtime stub used when building. |
-| `--tag <name>` | — | Build a tagged image after generating the context. |
+| `--tag <name>` | `<app.name>:latest` | Build a tagged image after generating the context. |
 | `--output-dir <path>` | `dist/image` | Destination for generated context files. |
 | `--base-image <image>` | `gcr.io/distroless/cc-debian13:nonroot` | Runtime base image. |
 | `--context-only` | Off | Generate files without invoking Docker. |
@@ -59,5 +59,9 @@ Review generated files before publishing. The command's default image runs as
 a non-root user, but registry authentication, image signing, and deployment
 policy remain operator responsibilities.
 
-See [Production operations](../../operations/production.md) and
+On a non-Linux host, `--binary` is required and must name a 64-bit
+little-endian Linux x86-64 or arm64 ELF. Container listeners must use
+`0.0.0.0` or `[::]` and a non-zero port. See the end-to-end
+[Container image guide](../../guides/container-image.md),
+[Production operations](../../operations/production.md), and
 [Benchmarks and release evidence](evidence.md).

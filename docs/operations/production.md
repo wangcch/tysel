@@ -23,7 +23,9 @@ apply your deployment system's artifact signing policy, and reject the build if
 verification or any required sidecar is missing. Stage the executable on a
 non-production port and exercise an application-owned readiness route before
 promotion. Building or checking out the Tysel source repository is not part of
-application release admission.
+application release admission. Follow
+[Reproducible application releases](../guides/reproducible-release.md) for the
+sidecar, verification, signing, and application-reproducibility boundaries.
 
 ## Deployment
 
@@ -42,7 +44,7 @@ Before starting a service:
 - expose only the configured `[server].listen` address, normally behind a TLS
   terminating reverse proxy;
 - inject declared secrets and `TYSEL_POSTGRES_<NAME>` values through the service
-  manager, never through the manifest, command line, TAP, or release artifact;
+  manager, never through the manifest, command line, or release artifact;
 - when embedding the durable runtime with `PostgresStore`, inject
   `TYSEL_DURABLE_POSTGRES_URL` and use certificate-validated TLS in production;
 - configure an OTLP endpoint only when a collector is reachable, and put
@@ -62,6 +64,9 @@ Stop by sending the service manager's normal termination signal and allow the
 configured grace period. Clean shutdown flushes OTLP providers and stops the
 service-owned task plane. If the process does not exit before the deadline,
 capture logs and process state before forcing termination.
+
+For container packaging, including non-Linux build hosts and the generated
+non-root contract, follow [Build a container image](../guides/container-image.md).
 
 ## Configuration and secrets
 
@@ -84,8 +89,9 @@ can be enabled independently.
 Postgres is the production durable backend. Set `TYSEL_DURABLE_POSTGRES_URL` on
 the host; the packaged service and `tysel run` start `DurablePoller` when the
 application exports `durable` handlers or the store already has programs. The
-URL is never read from a manifest or TAP. Health checks should confirm the
-service printed `tysel durable on` and that due wakeups complete after restart.
+URL is never read from a manifest or packaged artifact. Health checks should
+confirm the service printed `tysel durable on` and that due wakeups complete
+after restart.
 
 Use the database platform's encrypted backups and point-in-time recovery. A
 backup must include all Tysel durable tables, metadata, programs, events,
@@ -121,11 +127,10 @@ copy of a live database is not a production recovery plan.
 
 ## Upgrade and rollback
 
-The current writer emits TAP v4 and reads TAP v1 through v4. TAP v4 adds the
-worker-pool and HTTP admission settings. Mixed deployment
-is allowed only when every artifact's machine-readable compatibility report
-accepts the version being served and the Capability ABI imports remain within
-the deployment-approved WIT contract. Unknown versions and fields fail closed.
+Mixed deployment is allowed only when every artifact's machine-readable
+compatibility report accepts the runtime being served and Capability ABI
+imports remain within the deployment-approved contract. Unknown versions and
+fields fail closed.
 
 Upgrade in this order:
 
@@ -150,10 +155,9 @@ by editing `tysel_durable_metadata`.
 
 ## Capacity and resource sizing
 
-Release CI rejects a hello-service artifact over 20 MiB, idle Linux PSS over
-32 MiB, or median cold start over 15 ms. These are admission baselines, not
-production capacity promises. Size from load tests using the real bundle,
-capabilities, request bodies, task mix, and telemetry exporter.
+Repository benchmark gates are not production capacity promises. Size from
+load tests using the real release, bundle, capabilities, request bodies, task
+mix, target environment, and telemetry exporter.
 
 Manifest defaults are 128 MiB isolate memory, 50 ms CPU per turn, 30 seconds
 per request, 1,000 in-flight requests, and 16 MiB request and response limits.
@@ -193,6 +197,9 @@ Metrics deliberately omit request IDs; use the process-local correlation ID on
 spans and JSON logs for bounded investigation. Alert rules must use the fixed
 low-cardinality labels and must not derive labels from user input.
 
+The [Observability guide](../guides/observability.md) lists the exact signal,
+attribute, endpoint, verification, and redaction contract.
+
 ## Incident response
 
 For every incident, preserve the artifact and Evidence Index digests, target,
@@ -223,3 +230,5 @@ into the incident record.
 After recovery, run the release acceptance path and a durable restart/replay
 test before closing the incident. Convert any parser or protocol crash into a
 non-sensitive regression corpus input and retain the relevant release evidence.
+Use [Debug service failures](../guides/debugging.md) to distinguish runtime
+envelopes, source-map scope, and application-owned error mapping.

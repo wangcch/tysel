@@ -90,4 +90,5 @@ capabilities remain denied even when the manifest requests them. See
 intersection and local `tysel run` behavior.
 
 See [Permissions](manifest/permissions.md), [Host capabilities](runtime/capabilities.md),
-and [Production operations](../operations/production.md).
+[Observability guide](../guides/observability.md), and
+[Production operations](../operations/production.md).

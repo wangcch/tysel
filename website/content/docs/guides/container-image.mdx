@@ -1,0 +1,139 @@
+---
+title: "Container image"
+description: "This guide turns a Tysel service into a minimal Linux container context, verifies the generated contract, and separates application packaging from registry, signing, and deployment policy."
+---
+
+This guide turns a Tysel service into a minimal Linux container context,
+verifies the generated contract, and separates application packaging from
+registry, signing, and deployment policy.
+
+## Prepare the service
+
+Container services must listen on an unspecified address and a non-zero port.
+Loopback listeners work locally but are rejected by `tysel image` because they
+would not accept traffic across the container network:
+
+```toml
+[server]
+listen = "0.0.0.0:3000"
+```
+
+Validate authority and build inputs before creating the context:
+
+```sh
+tysel config validate
+tysel inspect
+tysel task verify
+```
+
+## Generate and inspect the context
+
+On Linux, Tysel can build the application and generate the context in one
+step. Start with `--context-only` so inspection does not invoke Docker:
+
+```sh
+tysel image --context-only --output-dir dist/image
+```
+
+The command produces:
+
+```text
+dist/image/
+├── Dockerfile
+├── tysel-app
+├── tysel-app.sha256
+├── tysel-app.compat.json
+├── tysel-app.sbom.cdx.json
+├── tysel-app.licenses.json
+└── tysel-app.evidence.json
+```
+
+The default Dockerfile uses
+`gcr.io/distroless/cc-debian13:nonroot`, copies the executable as
+`/app/tysel-app`, runs as numeric user and group `65532:65532`, exposes the
+manifest port, and sets the executable as the entry point. Review both files;
+without `--force`, the command refuses to replace `Dockerfile` or `tysel-app`.
+Release sidecars are written atomically by the application build and follow
+their own validation and replacement behavior.
+
+When Tysel builds the application itself, it uses release mode and writes the
+release sidecars beside `tysel-app`. The generated Dockerfile copies only the
+executable. Preserve the sidecars in the external artifact store rather than
+assuming they are present inside the image.
+
+The five sidecars are present only when `tysel image` builds the application.
+With `--binary`, the context contains `Dockerfile` and the copied `tysel-app`;
+retain the source binary's previously generated sidecars separately.
+
+## Build from macOS or another non-Linux host
+
+Application cross-compilation is not implemented. A non-Linux host must pass
+an existing Linux ELF executable produced on the deployment architecture:
+
+```sh
+tysel image \
+  --binary artifacts/linux-x64/orders \
+  --context-only \
+  --output-dir dist/image
+```
+
+`--binary` validates a 64-bit little-endian Linux ELF for x86-64 or arm64 and
+derives Docker's `linux/amd64` or `linux/arm64` platform. Dynamically linked
+executables must use an `ld-linux` interpreter compatible with the glibc
+distroless base. Passing a macOS Mach-O file, a Windows executable, a 32-bit
+ELF, or an unsupported architecture fails before Docker runs.
+
+Supplying `--binary` copies the artifact; it does not regenerate application
+release sidecars. Build the executable with `tysel build --release` on Linux
+and transfer the complete immutable artifact set to the image job.
+
+## Build and smoke-test the image
+
+Without `--context-only`, Tysel invokes Docker with the detected platform:
+
+```sh
+tysel image --tag registry.example/orders:2026-08-26
+docker run --rm -p 3000:3000 registry.example/orders:2026-08-26
+```
+
+From another terminal, call an application-owned readiness route:
+
+```sh
+curl --fail http://127.0.0.1:3000/healthz
+```
+
+If `--tag` is omitted, the local tag is `<app.name>:latest`. Prefer an
+immutable version or digest in deployment records. Tysel does not add a health
+route, registry login, push, image signature, vulnerability policy, or
+orchestrator manifest.
+
+## Customize the base deliberately
+
+Use `--base-image` only after confirming libc, certificate, timezone, and
+native-library requirements:
+
+```sh
+tysel image \
+  --base-image registry.example/runtime/glibc@sha256:REPLACE_ME \
+  --tag registry.example/orders:2026-08-26
+```
+
+Pin production bases by digest and retain the selected digest in release
+evidence. A custom base does not relax Tysel's Linux ELF validation or the
+generated non-root user. If the application uses relative filesystem or
+SQLite paths, mount writable storage beneath the stable `/app` working
+directory and match operating-system permissions to the manifest grants.
+
+## Failure interpretation
+
+| Failure | Cause | Recovery |
+| --- | --- | --- |
+| Service must listen on `0.0.0.0` or `[::]` | Manifest uses loopback or a hostname | Change `[server].listen`, then validate again. |
+| Linux executable required | Image command is running off Linux without `--binary` | Build on matching Linux x64/arm64 and pass the resulting ELF. |
+| Generated files already exist | Context would be overwritten | Review the directory, then choose a new output path or pass `--force`. |
+| Docker cannot start | Docker is absent or unavailable | Use `--context-only` and build the reviewed context in CI. |
+| Container starts but is unreachable | Port mapping, proxy, or listener mismatch | Compare command output, Docker `EXPOSE`, published port, and manifest listener. |
+
+See [Build and image commands](/reference/cli/delivery),
+[Production operations](/docs/operations/production), and
+[Reproducible application releases](/docs/guides/reproducible-release).

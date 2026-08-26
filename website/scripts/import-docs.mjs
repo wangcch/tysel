@@ -8,7 +8,7 @@ const docsOut = path.join(websiteRoot, "content/docs");
 const referenceOut = path.join(websiteRoot, "content/reference");
 
 const publicDocs = {
-  files: new Set(["index.md", "install.md", "getting-started.md", "architecture/README.md"]),
+  files: new Set(["index.md", "install.md", "getting-started.md"]),
   directories: new Set([
     "guides",
     "concepts",
@@ -27,6 +27,17 @@ const titles = {
   "getting-started.md": "Getting started",
   "guides/index.md": "Guides",
   "guides/examples.md": "Example gallery",
+  "guides/service-networking.md": "Service networking",
+  "guides/concurrency-backpressure.md": "Concurrency and backpressure",
+  "guides/cron-queue.md": "Cron and Queue",
+  "guides/llm-gateway.md": "LLM gateway",
+  "guides/filesystem.md": "Filesystem",
+  "guides/sqlite.md": "SQLite",
+  "guides/postgresql.md": "PostgreSQL",
+  "guides/container-image.md": "Container image",
+  "guides/observability.md": "Observability",
+  "guides/debugging.md": "Debugging",
+  "guides/reproducible-release.md": "Reproducible release",
   "concepts/how-tysel-works.md": "How Tysel works",
   "concepts/projects-and-configuration.md": "Projects and configuration",
   "concepts/execution-profiles.md": "Execution profiles",
@@ -37,7 +48,6 @@ const titles = {
   "security/README.md": "Security model",
   "operations/production.md": "Production operations",
   "performance/README.md": "Performance and evidence",
-  "architecture/README.md": "Architecture",
 };
 
 function walk(dir) {
@@ -366,11 +376,28 @@ const docsMetas = {
       "security",
       "operations",
       "performance",
-      "---Internals---",
-      "architecture",
     ],
   },
-  "guides/meta.json": { title: "Guides", pages: ["index", "examples"] },
+  "guides/meta.json": {
+    title: "Guides",
+    pages: [
+      "index",
+      "examples",
+      "service-networking",
+      "concurrency-backpressure",
+      "cron-queue",
+      "llm-gateway",
+      "filesystem",
+      "sqlite",
+      "postgresql",
+      "container-image",
+      "observability",
+      "debugging",
+      "reproducible-release",
+      "wasm-component-rust",
+      "wasm-component-go",
+    ],
+  },
   "concepts/meta.json": {
     title: "Learn",
     pages: [
@@ -379,10 +406,6 @@ const docsMetas = {
       "execution-profiles",
       "durable-execution",
     ],
-  },
-  "architecture/meta.json": {
-    title: "Architecture",
-    pages: ["index"],
   },
   "operations/meta.json": { title: "Operate", pages: ["production"] },
 };

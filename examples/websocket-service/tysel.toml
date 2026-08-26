@@ -1,0 +1,22 @@
+schema_version = 1
+
+[app]
+name = "websocket-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+http1 = true
+http2 = false
+websocket = true
+
+[limits]
+memory_mb = 64
+request_timeout_ms = 30000
+max_in_flight = 32
+max_request_mb = 1
+max_response_mb = 1
+
+[tasks.verify]
+steps = [["check"]]

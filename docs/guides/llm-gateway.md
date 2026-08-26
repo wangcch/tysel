@@ -1,0 +1,111 @@
+# Configure the LLM gateway
+
+This guide routes one application-facing model alias to an OpenAI-compatible
+Responses endpoint while keeping provider credentials in the host.
+
+## Declare the credential name
+
+```toml
+[app]
+name = "llm-service"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+secrets = ["OPENAI_API_KEY"]
+
+[limits]
+request_timeout_ms = 30000
+```
+
+The manifest contains only the secret name. Tysel resolves the value inside the
+host and does not expose plaintext credentials to JavaScript.
+
+## Configure one provider route
+
+```sh
+export OPENAI_API_KEY='replace-in-your-secret-manager'
+export TYSEL_LLM_ENDPOINT='https://api.openai.com/v1/responses'
+export TYSEL_LLM_MODEL='provider-model-name'
+export TYSEL_LLM_ALIAS='default'
+export TYSEL_LLM_SECRET='OPENAI_API_KEY'
+```
+
+`TYSEL_LLM_ENDPOINT` enables the gateway. When it is set,
+`TYSEL_LLM_MODEL` is required. The endpoint must use HTTP or HTTPS and points to
+an OpenAI-compatible Responses API. `TYSEL_LLM_ALIAS` defaults to `default` and
+is the only model string accepted from the application. The current packaged
+configuration exposes one provider route.
+
+`TYSEL_LLM_SECRET` defaults to `OPENAI_API_KEY`. Its value must name both a
+declared `permissions.secrets` entry and a host-supplied environment variable.
+Do not put the credential in `tysel.toml`, endpoint URLs, source code, or logs.
+
+## Generate a response
+
+```ts
+const result = await tysel.llm.generate({
+  model: "default",
+  system: "Return one concise sentence.",
+  input: "Summarize the deployment status.",
+  maxOutputTokens: 128,
+  temperature: 0.2,
+});
+
+console.log(result.output);
+console.log(result.usage.input_tokens, result.usage.output_tokens);
+console.log(result.provider_request_id);
+```
+
+Run the complete [LLM service example](https://github.com/wangcch/tysel/tree/main/examples/llm-service):
+
+```sh
+cd examples/llm-service
+tysel check
+tysel run
+```
+
+From another terminal:
+
+```sh
+curl -sS http://127.0.0.1:3000/generate \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Explain bounded capabilities in one sentence."}'
+```
+
+The response includes provider output, token usage, and an optional provider
+request identifier. Application `Input` and `Output` generics improve static
+typing; they do not validate provider JSON at runtime.
+
+## Understand the bounds
+
+- `temperature` must be finite and between `0` and `2`;
+- `maxOutputTokens`, when present, must be positive;
+- serialized gateway input and output are each limited to 1 MiB;
+- model, provider, and provider request identifiers are limited to 128 bytes;
+- the gateway admits 16 concurrent provider calls by default;
+- the effective timeout is `limits.request_timeout_ms`, clamped to 1 ms through
+  the 10-minute gateway maximum;
+- an unknown alias is rejected instead of being sent upstream.
+
+The runtime audit event records request ID, alias, provider name, input/output
+byte counts, elapsed time, and outcome. It does not record the credential or
+prompt content. Provider error text retained by the host is bounded to 4 KiB;
+do not return raw provider failures to untrusted clients.
+
+## Diagnose failures
+
+| Failure | Check |
+| --- | --- |
+| Gateway disabled | `TYSEL_LLM_ENDPOINT` is unset or empty. |
+| Configuration failure at startup | Endpoint is invalid or `TYSEL_LLM_MODEL` is missing. |
+| Model denied | Application `model` does not equal `TYSEL_LLM_ALIAS`. |
+| Credential unavailable | Secret name is not declared, not supplied, or differs from `TYSEL_LLM_SECRET`. |
+| Timeout | Admission or provider work exceeded the application request timeout. |
+| Provider failure | Endpoint, protocol compatibility, authentication, or upstream response failed. |
+| Input/output too large | Reduce or chunk the request; keep results below the fixed bounds. |
+
+For durable agents, place provider calls inside `ctx.effect` so a completed call
+is not repeated during replay. See the [durable agent example](https://github.com/wangcch/tysel/tree/main/examples/durable-agent),
+[LLM API](../reference/runtime/capabilities.md#llm-generation), and
+[environment variables](../reference/environment.md#llm-provider).

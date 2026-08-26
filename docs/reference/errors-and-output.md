@@ -72,10 +72,12 @@ An oversized inbound body returns HTTP `413` with the same shape and code
 An internal serialization fallback can return only
 `{"error":{"code":"INTERNAL_ERROR"}}`.
 
-Runtime messages can contain symbolicated application stack information in
-development. Treat them as operator diagnostics: map errors to an
-application-owned response before exposing sensitive internals to public
-clients.
+`tysel dev` uses the generated source map to symbolicate application stack
+information. Although the map is embedded during packaging, the packaged HTTP
+dispatcher does not currently apply it, so production messages can contain
+bundle locations. Treat all runtime messages as operator diagnostics: map
+errors to an application-owned response before exposing sensitive internals to
+public clients.
 
 ## Application errors
 
@@ -96,5 +98,6 @@ most 4 KiB. Treat its text as human-readable rather than a stable error code.
 See [Component ABI](component/abi.md) and
 [Component runtime limits](component/runtime.md#resource-bounds).
 
-See [Application module](runtime/application.md), [Application limits](manifest/limits.md),
+See [Debug service failures](../guides/debugging.md),
+[Application module](runtime/application.md), [Application limits](manifest/limits.md),
 and [Production operations](../operations/production.md).

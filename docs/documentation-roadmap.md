@@ -273,9 +273,13 @@ and a complete source path.
   non-product contracts; only the task ABI and filesystem `0.4.0` imports are
   currently implemented.
 
-### Remaining reader-facing gaps
+### Reader-facing gap snapshot — 2026-08-24
 
-| Priority | Implemented product surface | Current documentation | Missing durable artifact |
+This table records the state at the time of the audit. The dated P0 and P1
+updates below supersede completed rows; it is retained as decision history,
+not as the current backlog.
+
+| Priority | Implemented product surface | Documentation at audit time | Required durable artifact at audit time |
 | --- | --- | --- | --- |
 | P0 | HTTP/1.1, cleartext HTTP/2, inbound and outbound WebSocket, outbound `fetch` | Compatibility/reference fragments only | Service networking guide with protocol setup, allowlists, streaming, errors, and verification. |
 | P0 | Cron and Queue handlers | Public types and CLI reference; no complete repository examples | One Cron example and one Queue producer/handler guide with deadlines, JSON bounds, and failure behavior. |
@@ -306,3 +310,66 @@ the two values instead of presenting the label as the runtime dependency.
 This order closes adoption blockers before documenting internal machinery. It
 also gives every major homepage claim at least one task guide, one exact
 reference, and one runnable verification path.
+
+## P0 adoption-path update — 2026-08-26
+
+The first P0 adoption tranche is implemented:
+
+- service networking now has one task guide and a runnable inbound WebSocket
+  example covering HTTP/1.1, h2c, TLS termination, outbound allowlists, redirect
+  checks, and denial verification;
+- concurrency and backpressure now has a sizing and overload guide covering
+  per-isolate workers, `503 OVERLOADED`, response lifetime, WebSocket permits,
+  retry behavior, and measurement order;
+- Cron and Queue now have one combined runnable worker plus a guide covering UTC
+  syntax, CLI production, message identity, deadlines, backpressure, catch-up,
+  and the boundary with durable execution;
+- the LLM gateway now has a standalone service and guide covering provider
+  environment, alias routing, opaque secrets, validation, concurrency, timeout,
+  usage, audit fields, and failure diagnosis;
+- website CI now compares the documented inventory with the Clap command enum,
+  manifest JSON Schema, and `@tysel/types` exports, then rejects uncommitted
+  generated MDX changes;
+- the website importer excludes architecture implementation notes and ADRs;
+  both remain maintainer-only records in the repository and MkDocs workspace.
+
+The second P0 adoption tranche is also implemented:
+
+- filesystem now has a runnable transform and task guide covering root
+  preparation, relative and absolute resolution, independent read/write
+  authority, pinned directory descriptors, traversal/symlink denial, Unix
+  scope, file types, encoding, size, and deployment mounts;
+- SQLite now has a task guide covering path resolution, parameterization, the
+  process-wide connection, busy timeout, fixed bounds, durable event-log
+  separation, persistence verification, backup, and deployment selection;
+- PostgreSQL now has a task guide covering grant-to-environment mapping,
+  parameter and result types, read-only enforcement, safe SQLSTATE errors,
+  four-connection pooling, TLS, database roles, and production checks;
+- the example gallery and website catalog now treat Filesystem, SQLite, and
+  PostgreSQL as complete runnable paths rather than reference-only recipes.
+
+The reader-facing P0 adoption backlog is now complete. The next tranche should
+proceed to the P1 image, observability, debugging, and reproducible-release
+walkthroughs while continuing to extend contract-derived reference checks.
+
+## P1 operations-path update — 2026-08-26
+
+The first P1 operations tranche is implemented:
+
+- the container guide covers listener admission, generated non-root context,
+  Linux ELF validation, non-Linux `--binary` use, sidecar custody, base-image
+  pinning, smoke testing, and the registry/signing boundary;
+- the observability guide documents JSON and OTLP independence, active
+  environment controls, accepted endpoints, exact metrics/spans and bounded
+  attributes, redaction verification, alerts, and collector troubleshooting;
+- the debugging guide maps every HTTP runtime envelope, correlation ID format,
+  development-only source-map application, Component and CLI output
+  differences, packaged working-directory drift, and safe application errors;
+- the release guide inventories all application sidecars and verification
+  failure recovery, then states the boundary between application evidence and
+  maintainer-only toolchain reproduction without exposing that workflow.
+
+The remaining P1 work is deeper worked deployment integration only; each major
+implemented operations surface now has a discoverable task guide and exact
+reference cross-links. P2 internals and compiled-snippet coverage remain the
+next documentation tranche.
