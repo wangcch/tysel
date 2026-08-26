@@ -22,7 +22,9 @@ use tysel_engine_wasm::{
 };
 use tysel_package::Tap;
 
-use crate::http::{AppIsolate, HttpError, HttpLimits, serve_with_http_limits, spawn_app_isolate};
+use crate::http::{
+    AppIsolate, HttpError, HttpLimits, serve_with_http_limits, spawn_app_isolate_with_metadata,
+};
 use crate::{DurablePlane, DurablePlaneError};
 #[cfg(unix)]
 use crate::{ModuleTaskService, ModuleTaskServiceError};
@@ -225,7 +227,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     configure_llm_from_env(tap.manifest.request_timeout_ms)?;
     tysel_engine_qjs::configure_fetch_hosts(tap.manifest.fetch_hosts.clone());
     tysel_engine_qjs::configure_execution_profile(&tap.manifest.execution_profile);
-    let pool = spawn_app_isolate(
+    let (pool, metadata) = spawn_app_isolate_with_metadata(
         &tap.manifest.execution_profile,
         tap.manifest.workers,
         &bundle,
@@ -239,15 +241,29 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     let task_service = {
         let socket_path =
             std::env::temp_dir().join(format!("tysel-task-{}.sock", std::process::id()));
-        let service = ModuleTaskService::start(
-            &socket_path,
-            tap.manifest.application_id.clone(),
-            bundle.clone(),
-            config,
-            tap.manifest.execution_profile.clone(),
-            tap.manifest.secret_names.clone(),
-        )
-        .await?;
+        let service = match metadata.as_ref() {
+            Some(metadata) => {
+                ModuleTaskService::start_with_definitions(
+                    &socket_path,
+                    tap.manifest.application_id.clone(),
+                    bundle.clone(),
+                    config,
+                    metadata.task_definitions.clone(),
+                )
+                .await?
+            }
+            None => {
+                ModuleTaskService::start(
+                    &socket_path,
+                    tap.manifest.application_id.clone(),
+                    bundle.clone(),
+                    config,
+                    tap.manifest.execution_profile.clone(),
+                    tap.manifest.secret_names.clone(),
+                )
+                .await?
+            }
+        };
         if service.ingress().registry().is_empty() {
             service.shutdown().await?;
             None
@@ -262,6 +278,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         None,
         &bundle,
         config,
+        metadata.as_ref().map(|metadata| !metadata.durable_exports.is_empty()),
     )?;
     if durable.is_some() {
         println!("tysel durable on");
@@ -345,17 +362,22 @@ fn start_durable_plane(
     root: Option<&std::path::Path>,
     bundle: &str,
     config: IsolateConfig,
+    has_durable_exports: Option<bool>,
 ) -> Result<Option<std::sync::Arc<DurablePlane>>, StubError> {
     if execution_profile.eq_ignore_ascii_case("isolated") {
         return Ok(None);
     }
-    if !DurablePlane::requested(sqlite_path, root, bundle, config)? {
+    let has_durable_exports = match has_durable_exports {
+        Some(value) => value,
+        None => DurablePlane::has_durable_exports(bundle, config)?,
+    };
+    if !DurablePlane::requested_with_metadata(sqlite_path, root, has_durable_exports) {
         return Ok(None);
     }
     let Some(store) = DurablePlane::open_store(sqlite_path, root)? else {
         return Ok(None);
     };
-    if !DurablePlane::should_start(store.as_ref(), bundle, config)? {
+    if !DurablePlane::should_start_with_metadata(store.as_ref(), has_durable_exports)? {
         return Ok(None);
     }
     let owner = format!("tysel-service-{}", std::process::id());

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use rquickjs::{Context, Module, Runtime};
+use rquickjs::{Context, Ctx, Module, Runtime};
 use serde::{Deserialize, Serialize};
 use tysel_engine::{EngineError, InterruptReason, IsolateConfig, Value};
 use tysel_task::TaskTrigger;
@@ -24,6 +24,12 @@ pub struct ModuleTaskDefinition {
     pub name: String,
     #[serde(flatten)]
     pub kind: ModuleTaskKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleMetadata {
+    pub task_definitions: Vec<ModuleTaskDefinition>,
+    pub durable_exports: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -334,6 +340,17 @@ fn decode_durable_exports(json: &str) -> Result<Vec<String>, EngineError> {
         )));
     }
     Ok(names)
+}
+
+pub(crate) fn read_module_metadata(ctx: Ctx<'_>) -> Result<ModuleMetadata, EngineError> {
+    let tasks_json: String =
+        ctx.globals().get("__tysel_task_manifest_json").map_err(isolate::js_err)?;
+    let durable_json: String =
+        ctx.globals().get("__tysel_durable_exports_json").map_err(isolate::js_err)?;
+    Ok(ModuleMetadata {
+        task_definitions: decode_definitions(&tasks_json)?,
+        durable_exports: decode_durable_exports(&durable_json)?,
+    })
 }
 
 const BOOT_INSPECT: &str = include_str!("../../../runtime-js/bootstrap/task-inspect.js");

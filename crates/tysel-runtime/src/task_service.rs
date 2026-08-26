@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 use tysel_cap_mcp::{McpDispatch, McpServer};
 use tysel_engine::IsolateConfig;
-use tysel_engine_qjs::inspect_task_module;
+use tysel_engine_qjs::{ModuleTaskDefinition, inspect_task_module};
 use tysel_isolate::{IsolatedTaskPool, locate_worker};
 use tysel_task_rpc::TaskOutcome;
 
@@ -88,6 +88,49 @@ impl ModuleTaskService {
             .await??;
             (definitions, None)
         };
+        Self::start_prepared(
+            socket_path,
+            application_id,
+            source,
+            config,
+            definitions,
+            isolated_pool,
+            queue_capacity,
+        )
+        .await
+    }
+
+    /// Start from metadata produced by the service's combined module
+    /// inspection. The public `start` path remains available for callers that
+    /// do not already own inspected definitions.
+    pub async fn start_with_definitions(
+        socket_path: impl AsRef<Path>,
+        application_id: impl Into<String>,
+        source: impl Into<String>,
+        config: IsolateConfig,
+        definitions: Vec<ModuleTaskDefinition>,
+    ) -> Result<Self, ModuleTaskServiceError> {
+        Self::start_prepared(
+            socket_path.as_ref().to_owned(),
+            application_id,
+            source.into(),
+            config,
+            definitions,
+            None,
+            DEFAULT_QUEUE_CAPACITY,
+        )
+        .await
+    }
+
+    async fn start_prepared(
+        socket_path: PathBuf,
+        application_id: impl Into<String>,
+        source: String,
+        config: IsolateConfig,
+        definitions: Vec<ModuleTaskDefinition>,
+        isolated_pool: Option<Arc<IsolatedTaskPool>>,
+        queue_capacity: usize,
+    ) -> Result<Self, ModuleTaskServiceError> {
         let registry = TaskRegistry::from_definitions(&definitions)?;
         let broker = Arc::new(Mutex::new(TaskRpcBroker::new(queue_capacity)?));
         let seed = task_id_seed()?;

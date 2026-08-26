@@ -115,6 +115,17 @@ impl DurablePlane {
         Ok(Self::event_log_path(sqlite_capability_path, root).is_some_and(|path| path.exists()))
     }
 
+    pub fn requested_with_metadata(
+        sqlite_capability_path: &str,
+        root: Option<&Path>,
+        has_durable_exports: bool,
+    ) -> bool {
+        has_durable_exports
+            || std::env::var(POSTGRES_URL_ENV).ok().is_some_and(|url| !url.trim().is_empty())
+            || std::env::var(SQLITE_PATH_ENV).ok().is_some_and(|path| !path.trim().is_empty())
+            || Self::event_log_path(sqlite_capability_path, root).is_some_and(|path| path.exists())
+    }
+
     pub fn start(
         store: Arc<dyn DurableStore>,
         source: String,
@@ -162,6 +173,13 @@ impl DurablePlane {
         config: IsolateConfig,
     ) -> Result<bool, DurablePlaneError> {
         Ok(Self::has_durable_exports(source, config)? || store.program_count()? > 0)
+    }
+
+    pub fn should_start_with_metadata(
+        store: &dyn DurableStore,
+        has_durable_exports: bool,
+    ) -> Result<bool, DurablePlaneError> {
+        Ok(has_durable_exports || store.program_count()? > 0)
     }
 
     fn install_hooks(self: &Arc<Self>) -> Result<(), DurablePlaneError> {

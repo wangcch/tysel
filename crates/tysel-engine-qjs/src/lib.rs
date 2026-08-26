@@ -36,8 +36,8 @@ pub use secrets::{
     configure as configure_secrets, load_declared, parse_dotenv, resolve as resolve_secret,
 };
 pub use task_module::{
-    ModuleTaskDefinition, ModuleTaskKind, inspect_durable_exports, inspect_task_module,
-    invoke_task_module,
+    ModuleMetadata, ModuleTaskDefinition, ModuleTaskKind, inspect_durable_exports,
+    inspect_task_module, invoke_task_module,
 };
 pub use trust::configure as configure_policy;
 

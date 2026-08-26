@@ -22,7 +22,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
 use tysel_engine::{EngineError, HttpHead, HttpRequest, IsolateConfig};
-use tysel_engine_qjs::{IncomingHttp, IsolatePool, OutgoingHttpBody, STREAM_WINDOW};
+use tysel_engine_qjs::{
+    IncomingHttp, IsolatePool, ModuleMetadata, OutgoingHttpBody, STREAM_WINDOW,
+};
 use tysel_isolate::{IsolatedHttpPool, MAX_ISOLATED_HTTP_BODY, locate_worker};
 use tysel_package::{
     SourceMap, default_max_in_flight, default_max_request_bytes, default_max_response_bytes,
@@ -73,17 +75,26 @@ pub fn spawn_app_isolate(
     config: IsolateConfig,
     secret_names: Vec<String>,
 ) -> Result<AppIsolate, EngineError> {
+    spawn_app_isolate_with_metadata(execution_profile, workers, source, config, secret_names)
+        .map(|(isolate, _)| isolate)
+}
+
+pub fn spawn_app_isolate_with_metadata(
+    execution_profile: &str,
+    workers: u32,
+    source: &str,
+    config: IsolateConfig,
+    secret_names: Vec<String>,
+) -> Result<(AppIsolate, Option<ModuleMetadata>), EngineError> {
     if execution_profile.eq_ignore_ascii_case("isolated") {
         let worker = locate_worker().map_err(|err| EngineError::Isolate(err.to_string()))?;
         let pool = IsolatedHttpPool::spawn_from_config(worker, source, config, secret_names)
             .map_err(|err| EngineError::Isolate(err.to_string()))?;
-        Ok(AppIsolate::Isolated(Arc::new(pool)))
+        Ok((AppIsolate::Isolated(Arc::new(pool)), None))
     } else {
-        Ok(AppIsolate::Trusted(Arc::new(IsolatePool::spawn(
-            workers.max(1) as usize,
-            source,
-            config,
-        )?)))
+        let (pool, metadata) =
+            IsolatePool::spawn_with_metadata(workers.max(1) as usize, source, config)?;
+        Ok((AppIsolate::Trusted(Arc::new(pool)), Some(metadata)))
     }
 }
 

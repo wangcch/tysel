@@ -13,6 +13,7 @@ use crate::fetch;
 use crate::host;
 use crate::isolate::{self, IsolateCancel};
 use crate::queue;
+use crate::task_module::{ModuleMetadata, read_module_metadata};
 
 pub struct IncomingHttp {
     pub method: String,
@@ -90,6 +91,14 @@ struct WorkerSlot {
 
 impl IsolatePool {
     pub fn spawn(workers: usize, source: &str, config: IsolateConfig) -> Result<Self, EngineError> {
+        Self::spawn_with_metadata(workers, source, config).map(|(pool, _)| pool)
+    }
+
+    pub fn spawn_with_metadata(
+        workers: usize,
+        source: &str,
+        config: IsolateConfig,
+    ) -> Result<(Self, ModuleMetadata), EngineError> {
         let workers = workers.max(1);
         let mut senders = Vec::with_capacity(workers);
         let mut threads = Vec::with_capacity(workers);
@@ -108,12 +117,17 @@ impl IsolatePool {
             threads.push(thread);
         }
         drop(ready_tx);
+        let mut metadata = None;
         for _ in 0..workers {
-            ready_rx
+            let worker_metadata = ready_rx
                 .recv()
                 .map_err(|_| EngineError::Isolate("isolate worker failed to start".into()))??;
+            if metadata.is_none() {
+                metadata = Some(worker_metadata);
+            }
         }
-        Ok(Self { workers: senders, pending, next: Arc::new(AtomicUsize::new(0)), threads })
+        let pool = Self { workers: senders, pending, next: Arc::new(AtomicUsize::new(0)), threads };
+        Ok((pool, metadata.expect("at least one isolate worker")))
     }
 
     pub async fn dispatch(
@@ -216,7 +230,7 @@ fn worker_loop(
     source: String,
     config: IsolateConfig,
     mut jobs: mpsc::Receiver<Job>,
-    ready: std::sync::mpsc::Sender<Result<(), EngineError>>,
+    ready: std::sync::mpsc::Sender<Result<ModuleMetadata, EngineError>>,
 ) {
     let cancel = IsolateCancel::new();
     if let Err(err) = run_worker(id, &source, config, cancel, &mut jobs, &ready) {
@@ -233,7 +247,7 @@ fn run_worker(
     config: IsolateConfig,
     cancel: IsolateCancel,
     jobs: &mut mpsc::Receiver<Job>,
-    ready: &std::sync::mpsc::Sender<Result<(), EngineError>>,
+    ready: &std::sync::mpsc::Sender<Result<ModuleMetadata, EngineError>>,
 ) -> Result<(), EngineError> {
     let budgets = Arc::new(Mutex::new(Budgets {
         cpu: CpuBudget::new(Duration::from_secs(60)),
@@ -269,12 +283,15 @@ fn run_worker(
         &load_cpu,
         None,
     )?;
-    context.with(|ctx| {
+    let metadata = context.with(|ctx| {
         let _: Function = ctx.globals().get("__tysel_fetch").map_err(isolate::js_err)?;
-        Ok::<_, EngineError>(())
+        let metadata = read_module_metadata(ctx.clone())?;
+        let _ = ctx.globals().remove("__tysel_task_manifest_json");
+        let _ = ctx.globals().remove("__tysel_durable_exports_json");
+        Ok::<_, EngineError>(metadata)
     })?;
     teardown_scope(&context, &reactor, 0, Duration::from_secs(5))?;
-    let _ = ready.send(Ok(()));
+    let _ = ready.send(Ok(metadata));
 
     while let Some(job) = jobs.blocking_recv() {
         let Job { request, response_tx, _pending: pending } = job;
@@ -491,5 +508,38 @@ mod tests {
         let pool = test_pool(vec![first_tx, second_tx]);
 
         assert!(pool.reserve_worker().is_none());
+    }
+
+    #[test]
+    fn startup_returns_metadata_from_the_http_module_evaluation() {
+        let source = r#"
+export default {
+  tasks: {
+    events: { kind: "queue", name: "events", async handler() {} },
+  },
+  durable: {
+    workflow() {},
+  },
+  fetch() { return new Response("ok"); },
+};
+"#;
+        let (_pool, metadata) =
+            IsolatePool::spawn_with_metadata(1, source, IsolateConfig::default()).unwrap();
+        assert_eq!(metadata.task_definitions.len(), 1);
+        assert_eq!(metadata.task_definitions[0].name, "events");
+        assert_eq!(metadata.durable_exports, ["workflow"]);
+    }
+
+    #[test]
+    fn startup_preserves_default_function_durable_metadata() {
+        let source = r#"
+async function workflow() {}
+workflow.fetch = function() { return new Response("ok"); };
+export default workflow;
+"#;
+        let (_pool, metadata) =
+            IsolatePool::spawn_with_metadata(1, source, IsolateConfig::default()).unwrap();
+        assert!(metadata.task_definitions.is_empty());
+        assert_eq!(metadata.durable_exports, ["default"]);
     }
 }

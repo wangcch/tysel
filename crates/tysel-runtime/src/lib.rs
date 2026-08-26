@@ -24,7 +24,7 @@ pub use durable_poll::{
 pub use http::{
     AppIsolate, HttpError, HttpLimits, SharedPool, bind, bind_with, bind_with_request_limit,
     handle_stream, serve, serve_with_http_limits, serve_with_limits, serve_with_protocols,
-    serve_with_websocket, spawn_app_isolate,
+    serve_with_websocket, spawn_app_isolate, spawn_app_isolate_with_metadata,
 };
 pub use service::{
     ComponentRuntimePolicy, StubError, configure_llm_from_env, invoke_component_tap,

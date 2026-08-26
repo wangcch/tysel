@@ -26,7 +26,6 @@ tysel-engine.workspace = true
 tysel-engine-qjs.workspace = true
 tysel-engine-wasm.workspace = true
 tysel-package.workspace = true
-wat = "1"
 tysel-manifest.workspace = true
 tysel-observability.workspace = true
 tysel-scheduler = { path = "../tysel-scheduler" }
@@ -46,6 +45,7 @@ name = "tysel-service"
 path = "src/bin/tysel-service.rs"
 
 [dev-dependencies]
+wat = "1"
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
