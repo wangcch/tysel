@@ -110,6 +110,7 @@ jobs:
           mkdir -p target/npm-packages
           pnpm --dir packages/tysel-types pack --pack-destination "$PWD/target/npm-packages"
           pnpm --dir packages/tysel-test pack --pack-destination "$PWD/target/npm-packages"
+          pnpm --dir packages/tysel pack --pack-destination "$PWD/target/npm-packages"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: npm-packages
@@ -619,7 +620,7 @@ jobs:
             "$version" "https://github.com/${GITHUB_REPOSITORY}/releases"
           for attempt in {1..12}; do
             npm_ready=true
-            for package in '@tysel/types' '@tysel/test'; do
+            for package in '@tysel/types' '@tysel/test' 'tysel'; do
               if [[ "$(npm view "${package}@${version}" version 2>/dev/null || true)" != "$version" ]] \
                 || [[ "$(npm view "${package}@${dist_tag}" version 2>/dev/null || true)" != "$version" ]]; then
                 npm_ready=false

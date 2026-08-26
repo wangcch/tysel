@@ -1,16 +1,30 @@
 {
   "name": "tysel",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "license": "Apache-2.0",
   "description": "Tysel application SDK: defineApp, durable tasks, and capability imports.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangcch/tysel.git",
+    "directory": "packages/tysel"
+  },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@tysel/types": "workspace:*"

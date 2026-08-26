@@ -7,6 +7,7 @@ test("defineApp preserves the application definition", () => {
   const app = { fetch: () => new Response("ok") };
 
   assert.equal(defineApp(app), app);
+  assert.equal(defineApp()(app), app);
 });
 
 test("task constructors preserve configuration and handlers", async () => {
@@ -16,10 +17,11 @@ test("task constructors preserve configuration and handlers", async () => {
 
   const cronTask = cron("0 * * * *", cronHandler);
   const queueTask = queue("events", queueHandler);
-  const mcpTask = mcp(
-    { description: "echo", input: { value: "string" } },
-    mcpHandler,
-  );
+  const mcpTask = mcp({
+    description: "echo",
+    input: { value: "string" },
+    handler: mcpHandler,
+  });
 
   assert.deepEqual(cronTask, {
     kind: "cron",

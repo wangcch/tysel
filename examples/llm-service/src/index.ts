@@ -1,7 +1,7 @@
-import type {} from "@tysel/types";
+import type { TyselApp } from "@tysel/types";
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request, runtime) {
     const url = new URL(request.url);
     if (request.method !== "POST" || url.pathname !== "/generate") {
       return Response.json({ endpoint: "POST /generate" }, { status: 404 });
@@ -12,7 +12,7 @@ export default {
       return Response.json({ error: "prompt must be a non-empty string" }, { status: 400 });
     }
 
-    const result = await tysel.llm.generate({
+    const result = await runtime.llm.generate({
       model: "default",
       system: "Return one concise sentence.",
       input: body.prompt,
@@ -21,4 +21,4 @@ export default {
     });
     return Response.json(result);
   },
-};
+} satisfies TyselApp;

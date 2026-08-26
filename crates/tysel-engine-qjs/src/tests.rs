@@ -1465,7 +1465,7 @@ fn memory_limit_rejects_large_allocation() {
 
 const FETCH_HANDLER: &str = r#"
 export default {
-  async fetch(request) {
+  async fetch(request, runtime) {
     const path = new URL(request.url).pathname;
     if (path === "/stream") {
       return new Response(["alpha", "beta", "gamma"]);
@@ -1473,7 +1473,8 @@ export default {
     return Response.json({
       message: "Hello from Tysel",
       path,
-      isolate: tysel.isolateId,
+      isolate: runtime.isolateId,
+      injected: runtime === globalThis.tysel,
     });
   },
 };
@@ -1496,7 +1497,9 @@ async fn scalar_response_uses_buffered_fast_path() {
     let OutgoingHttpBody::Buffered(bytes) = body else {
         panic!("scalar response should bypass the streaming channel");
     };
-    assert!(String::from_utf8(bytes).expect("utf8").contains("Hello from Tysel"));
+    let text = String::from_utf8(bytes).expect("utf8");
+    assert!(text.contains("Hello from Tysel"));
+    assert!(text.contains(r#""injected":true"#));
 }
 
 #[tokio::test]

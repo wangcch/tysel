@@ -1,4 +1,4 @@
-import type { RequestContext } from "@tysel/types";
+import type { TyselApp } from "@tysel/types";
 
 interface Job {
   id: string;
@@ -6,14 +6,14 @@ interface Job {
 }
 
 export default {
-  async fetch(): Promise<Response> {
+  async fetch() {
     return Response.json({ queues: ["jobs"], cron: ["heartbeat"] });
   },
   tasks: {
     heartbeat: {
-      kind: "cron" as const,
+      kind: "cron",
       expression: "*/5 * * * *",
-      async handler(context: RequestContext) {
+      async handler(context) {
         console.log(JSON.stringify({
           event: "heartbeat",
           requestId: context.requestId,
@@ -22,11 +22,11 @@ export default {
       },
     },
     processJob: {
-      kind: "queue" as const,
+      kind: "queue",
       name: "jobs",
       async handler(
         message: Job,
-        context: RequestContext,
+        context,
       ) {
         return {
           accepted: true,
@@ -37,4 +37,4 @@ export default {
       },
     },
   },
-};
+} satisfies TyselApp;

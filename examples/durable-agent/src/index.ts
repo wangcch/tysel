@@ -1,4 +1,4 @@
-import type {} from "@tysel/types";
+import type { TyselApp } from "@tysel/types";
 
 interface AgentInput {
   runId: string;
@@ -131,7 +131,7 @@ const agent = async (ctx: DurableContext, input: AgentInput) => {
 };
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request, runtime) {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === "/runs") {
       const body = (await request.json()) as { customerId?: unknown; prompt?: unknown };
@@ -144,7 +144,7 @@ export default {
         ...(typeof body.prompt === "string" ? { prompt: body.prompt } : {}),
       };
       await ensureRuns();
-      const started = tysel.durable.start("agent", input);
+      const started = runtime.durable.start("agent", input);
       await tysel.sqlite.exec(
         `UPDATE durable_agent_runs SET task_id = ?, updated_at = ? WHERE run_id = ?`,
         [started.taskId, new Date().toISOString(), input.runId],
@@ -173,7 +173,7 @@ export default {
       if (typeof body.approved !== "boolean") {
         return Response.json({ error: "approved must be a boolean" }, { status: 400 });
       }
-      tysel.durable.sendSignal(run.task_id, "approval", { approved: body.approved });
+      runtime.durable.sendSignal(run.task_id, "approval", { approved: body.approved });
       return Response.json({ runId, status: "approval_queued" }, { status: 202 });
     }
 
@@ -185,4 +185,4 @@ export default {
     });
   },
   durable: { agent },
-};
+} satisfies TyselApp;

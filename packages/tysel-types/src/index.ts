@@ -20,8 +20,14 @@ export interface RequestContext {
   readonly deadlineMs: number;
 }
 
-/** Handles one HTTP request. The native runtime supplies only the request. */
+/** Handles one HTTP request without requiring an injected runtime. */
 export type FetchHandler = (request: Request) => MaybePromise<Response>;
+
+/** Handles one HTTP request with the runtime capability host. */
+export type RuntimeFetchHandler<Runtime = TyselRuntime> = (
+  request: Request,
+  runtime: Runtime,
+) => MaybePromise<Response>;
 
 export interface CronTask {
   readonly kind: "cron";
@@ -38,19 +44,54 @@ export interface QueueTask<Message = JsonValue> {
   ) => MaybePromise<unknown>;
 }
 
-export type McpInputSchema = Readonly<Record<string, string>>;
+export type McpInputType = "string" | "number" | "integer" | "boolean" | "object" | "array";
+export type McpInputSchema = Readonly<Record<string, McpInputType>>;
+
+type McpInputValue<Type extends McpInputType> = Type extends "string"
+  ? string
+  : Type extends "number" | "integer"
+    ? number
+    : Type extends "boolean"
+      ? boolean
+      : Type extends "object"
+        ? JsonObject
+        : JsonValue[];
+
+/** Infers the handler input accepted by one literal MCP schema. */
+export type InferMcpInput<Schema extends McpInputSchema> = {
+  -readonly [Key in keyof Schema]: McpInputValue<Schema[Key]>;
+};
+
+type McpTaskSchema<InputOrSchema extends object> = InputOrSchema extends McpInputSchema
+  ? InputOrSchema
+  : McpInputSchema;
+
+type McpTaskInput<InputOrSchema extends object> = InputOrSchema extends McpInputSchema
+  ? InferMcpInput<InputOrSchema>
+  : InputOrSchema;
 
 export interface McpTask<
-  Input extends object = JsonObject,
+  InputOrSchema extends object = JsonObject,
   Output = JsonValue,
 > {
   readonly kind: "mcp";
   readonly description: string;
-  readonly input: McpInputSchema;
+  readonly input: McpTaskSchema<InputOrSchema>;
   readonly handler: (
-    input: Input,
+    input: McpTaskInput<InputOrSchema>,
     context: RequestContext,
   ) => MaybePromise<Output>;
+}
+
+/** Registry-level MCP shape: validates the schema while leaving precise inference to `defineApp` or `mcp`. */
+interface RegisteredMcpTask {
+  readonly kind: "mcp";
+  readonly description: string;
+  readonly input: McpInputSchema;
+  readonly handler: (
+    input: never,
+    context: RequestContext,
+  ) => MaybePromise<unknown>;
 }
 
 export type AppTask = CronTask | QueueTask | McpTask;
@@ -60,11 +101,20 @@ export type DurableHandler<
   Output = JsonValue,
 > = (context: DurableContext, input: Input) => MaybePromise<Output>;
 
-export interface TyselApp {
-  readonly fetch?: FetchHandler;
-  readonly tasks?: Readonly<Record<string, CronTask | QueueTask<never> | McpTask<never, unknown>>>;
-  readonly durable?: Readonly<Record<string, DurableHandler<never, unknown>>>;
+interface TyselAppMembers<Runtime> {
+  readonly fetch: RuntimeFetchHandler<Runtime>;
+  readonly tasks: Readonly<Record<string, CronTask | QueueTask<never> | RegisteredMcpTask>>;
+  readonly durable: Readonly<Record<string, DurableHandler<never, unknown>>>;
 }
+
+type RequireAtLeastOne<T> = {
+  [Key in keyof T]-?: Required<Pick<T, Key>> & Partial<Omit<T, Key>>;
+}[keyof T];
+
+/** An application declares at least one HTTP, task-registry, or durable-registry entrypoint group. */
+export type TyselApp<Runtime = TyselRuntime> = RequireAtLeastOne<
+  TyselAppMembers<Runtime>
+>;
 
 export type DurableDuration = number | string;
 
@@ -112,8 +162,8 @@ export interface FileSystemClient {
   write(path: string, data: string): Promise<void>;
 }
 
-export interface SecretClient {
-  ref(name: string): Promise<SecretReference>;
+export interface SecretClient<Name extends string = string> {
+  ref(name: Name): Promise<SecretReference>;
 }
 
 export interface LlmGenerateOptions<Input = JsonValue> {
@@ -215,6 +265,12 @@ export interface TyselRuntime {
   readonly llm: LlmClient;
   readonly durable: DurableControlClient;
 }
+
+/** Selects the runtime members exposed to an application handler. */
+export type TyselRuntimeWith<Capability extends keyof TyselRuntime> = Pick<
+  TyselRuntime,
+  "isolateId" | "sleep" | "echo" | Capability
+>;
 
 /** Conventional application-facing name for the public runtime host. */
 export type Tysel = TyselRuntime;

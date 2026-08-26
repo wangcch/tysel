@@ -11,7 +11,7 @@ version="$2"
 [[ -d "$package_directory" ]] || { echo "npm package directory is missing" >&2; exit 1; }
 dist_tag="$(bash "$(dirname "$0")/npm-dist-tag.sh" "$version")"
 if [[ "${TYSEL_NPM_DRY_RUN:-0}" != 1 ]]; then
-  for name in '@tysel/types' '@tysel/test'; do
+  for name in '@tysel/types' '@tysel/test' 'tysel'; do
     current_tagged="$(npm view "${name}@${dist_tag}" version 2>/dev/null || true)"
     if [[ -n "$current_tagged" ]]; then
       precedence="$(bash "$(dirname "$0")/semver-precedence.sh" "$version" "$current_tagged")"
@@ -23,8 +23,12 @@ if [[ "${TYSEL_NPM_DRY_RUN:-0}" != 1 ]]; then
   done
 fi
 
-for name in '@tysel/types' '@tysel/test'; do
-  archive_name="tysel-${name#@tysel/}-${version}.tgz"
+for name in '@tysel/types' '@tysel/test' 'tysel'; do
+  if [[ "$name" == tysel ]]; then
+    archive_name="tysel-${version}.tgz"
+  else
+    archive_name="tysel-${name#@tysel/}-${version}.tgz"
+  fi
   archive="$(find "$package_directory" -maxdepth 1 -type f \
     -name "$archive_name" -print -quit)"
   [[ -n "$archive" ]] || { echo "packed artifact is missing for ${name}@${version}" >&2; exit 1; }

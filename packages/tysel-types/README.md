@@ -21,15 +21,27 @@ Load the declarations from `tsconfig.json`:
 or from an application module:
 
 ```ts
-import type {} from "@tysel/types";
+import type { TyselApp } from "@tysel/types";
 
 export default {
-  async fetch(): Promise<Response> {
-    const rows = await tysel.sqlite.query("SELECT 1 AS value");
+  async fetch(_request, runtime) {
+    const rows = await runtime.sqlite.query("SELECT 1 AS value");
     return Response.json({ rows });
   },
-};
+} satisfies TyselApp;
 ```
+
+Using `satisfies TyselApp` validates the default export while preserving its
+precise inferred type. It also contextually types handler parameters, so
+applications do not need to repeat the `Request` and `Response` annotations.
+An application must declare at least one HTTP, task-registry, or durable-registry
+entrypoint group. MCP input descriptors are restricted to the protocol's
+documented `McpInputType` vocabulary, and `InferMcpInput` derives a handler
+parameter from a literal schema.
+
+For ordinary MCP handlers, use the public `defineApp()` boundary from the
+`tysel` package to infer that parameter automatically. `InferMcpInput` is
+intended for advanced type composition and compatibility code.
 
 The package declares `globalThis.tysel` and the Tysel WebSocket extension. It
 exports application, task, capability, and durable-execution types, including

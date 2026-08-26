@@ -1,4 +1,4 @@
-import type {} from "@tysel/types";
+import type { TyselApp } from "@tysel/types";
 
 type Probe = {
   capability: "fetch" | "filesystem";
@@ -22,14 +22,14 @@ async function probe(
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request, runtime) {
     switch (new URL(request.url).pathname) {
       case "/probe/fetch":
         return probe("fetch", () => fetch("https://api.example.com/"));
       case "/probe/filesystem":
-        return probe("filesystem", () => tysel.fs.read("data/example.txt"));
+        return probe("filesystem", () => runtime.fs.read("data/example.txt"));
       default:
         return Response.json({ isolated: true, plugin: "echo" });
     }
   },
-};
+} satisfies TyselApp;

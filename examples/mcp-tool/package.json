@@ -8,6 +8,7 @@
   },
   "devDependencies": {
     "@tysel/types": "workspace:*",
+    "tysel": "workspace:*",
     "typescript": "7.0.2"
   }
 }

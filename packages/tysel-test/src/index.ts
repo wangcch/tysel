@@ -9,6 +9,16 @@ export async function invokeFetch(
   return handler(request);
 }
 
+export async function invokeFetchWithRuntime<Runtime>(
+  handler: (request: Request, runtime: Runtime) => MaybePromise<Response>,
+  runtime: Runtime,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const request = input instanceof Request ? input : new Request(input, init);
+  return handler(request, runtime);
+}
+
 export type TestBody = () => unknown | Promise<unknown>;
 export type TestFunction = (name: string, body: TestBody) => void;
 

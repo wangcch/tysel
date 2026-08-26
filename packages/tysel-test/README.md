@@ -16,7 +16,8 @@ test("returns a greeting", async () => {
 `test(name, body)` registers synchronous or asynchronous tests. `assert`,
 `assert.equal`, and `assert.deepEqual` report failures through the native test
 runner. `invokeFetch` constructs a `Request` and invokes a Fetch handler without
-opening a network listener.
+opening a network listener. `invokeFetchWithRuntime` additionally injects an
+explicit capability host and accepts focused runtime mocks.
 
 Run the suite with:
 

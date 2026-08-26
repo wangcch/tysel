@@ -45,6 +45,7 @@ fi
 
 for license_copy in \
   crates/tysel-component-sdk/LICENSE \
+  packages/tysel/LICENSE \
   packages/tysel-test/LICENSE \
   packages/tysel-types/LICENSE; do
   if ! cmp -s LICENSE "$license_copy"; then
