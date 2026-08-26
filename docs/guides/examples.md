@@ -1,13 +1,26 @@
 # Example gallery
 
-Start a new application with the templates included in the installed CLI:
+Start a new application with one of the templates included in the installed
+CLI. The template creates the project before you validate or run it:
+
+| Template | Use it for |
+| --- | --- |
+| `http` | Fetch-style HTTP service; the recommended default. |
+| `worker` | Service with one named Queue handler. |
+| `mcp` | Isolated MCP stdio tool with validated input. |
+| `minimal` | Smallest Fetch handler for a custom application structure. |
 
 ```sh
-tysel init my-service --yes
+tysel init my-service --template http --yes
 cd my-service
 tysel task verify
 tysel dev
 ```
+
+Replace `http` with `worker`, `mcp`, or `minimal`. Run a Worker with
+`tysel run`; start the MCP stdio transport with `tysel mcp`. See the
+[`tysel init` reference](../reference/cli/project.md#tysel-init) for package,
+manifest-format, test, and existing-project options.
 
 The examples below are complete reference applications for capabilities beyond
 the starter templates. Download the source archive matching the installed

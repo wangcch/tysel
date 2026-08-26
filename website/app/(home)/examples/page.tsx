@@ -32,6 +32,41 @@ const examplesDownload = `version="$(tysel --version | awk '{print $2}')"
 curl -fsSL "https://github.com/wangcch/tysel/archive/refs/tags/v\${version}.tar.gz" | tar -xz
 cd "tysel-\${version}/examples/hello-service"`;
 
+const starterTemplates = [
+  {
+    name: "HTTP service",
+    description: "Fetch-style service on the Web API runtime.",
+    command: `tysel init my-service --template http --yes
+cd my-service
+tysel task verify
+tysel dev`,
+  },
+  {
+    name: "Queue worker",
+    description: "Service with one named Queue handler.",
+    command: `tysel init my-worker --template worker --yes
+cd my-worker
+tysel task verify
+tysel run`,
+  },
+  {
+    name: "MCP tool",
+    description: "Isolated MCP stdio tool with validated input.",
+    command: `tysel init my-tool --template mcp --yes
+cd my-tool
+tysel task verify
+tysel mcp`,
+  },
+  {
+    name: "Minimal service",
+    description: "Smallest Fetch handler for custom application structure.",
+    command: `tysel init my-app --template minimal --yes
+cd my-app
+tysel task verify
+tysel dev`,
+  },
+];
+
 function MetaLine({ example }: { example: Example }) {
   return (
     <p className="font-mono text-xs text-tysel-blue">
@@ -80,7 +115,7 @@ function ExampleRow({ example }: { example: Example }) {
       </div>
       <div className="overflow-hidden border border-fd-border bg-fd-muted/30">
         <div className="flex items-center justify-between border-b border-fd-border px-3 py-1.5 font-mono text-[11px] text-fd-muted-foreground">
-          <span>from the example directory</span>
+          <span>{example.runLabel ?? "after opening the example directory"}</span>
           <CopyButton value={example.run} />
         </div>
         <pre className="overflow-x-auto px-3 py-3 font-mono text-[12px] leading-5">
@@ -98,15 +133,53 @@ export default function ExamplesPage() {
         Examples
       </p>
       <h1 className="font-heading mt-3 max-w-3xl text-4xl font-medium tracking-tighter text-balance">
-        Pick a profile. Open a project. Run it.
+        Create a starter or open an exact example.
       </h1>
       <p className="mt-4 max-w-2xl text-sm leading-6 text-fd-muted-foreground">
-        Each entry is a complete example project or a version-matched Component
-        starter guide. Download the examples matching your installed release,
-        then run the displayed command from the selected directory.
+        Use a built-in template when starting a new project. Use the
+        version-matched repository examples when you need a complete capability
+        walkthrough such as WebSocket, Postgres, Durable execution, or Wasm.
       </p>
 
-      <section className="mt-10 max-w-3xl border border-fd-border">
+      <section className="mt-10">
+        <div className="flex items-end justify-between gap-6">
+          <div>
+            <h2 className="font-heading text-xl font-medium tracking-tight">
+              Start from a built-in template
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-fd-muted-foreground">
+              These commands create the project before validating and running it.
+              Choose the closest application shape, then add explicit capabilities.
+            </p>
+          </div>
+          <Link
+            href="/reference/cli/project#tysel-init"
+            className="hidden shrink-0 text-sm text-tysel-blue underline-offset-4 hover:underline sm:block"
+          >
+            Init reference
+          </Link>
+        </div>
+        <div className="mt-5 grid gap-px bg-fd-border md:grid-cols-2">
+          {starterTemplates.map((template) => (
+            <div key={template.name} className="bg-fd-background">
+              <div className="flex items-start justify-between gap-4 border-b border-fd-border px-4 py-3">
+                <div>
+                  <h3 className="text-sm font-medium">{template.name}</h3>
+                  <p className="mt-1 text-xs leading-5 text-fd-muted-foreground">
+                    {template.description}
+                  </p>
+                </div>
+                <CopyButton value={template.command} />
+              </div>
+              <pre className="overflow-x-auto px-4 py-4 font-mono text-[12px] leading-5">
+                <code>{template.command}</code>
+              </pre>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-14 max-w-3xl border border-fd-border">
         <div className="flex items-center justify-between border-b border-fd-border px-4 py-2 font-mono text-[11px] text-fd-muted-foreground">
           <span>download version-matched examples</span>
           <CopyButton value={examplesDownload} />
@@ -163,7 +236,7 @@ export default function ExamplesPage() {
           </div>
           <div className="mt-6 w-full max-w-md overflow-hidden border border-fd-border bg-fd-muted/30 sm:mt-0">
             <div className="flex items-center justify-between border-b border-fd-border px-3 py-1.5 font-mono text-[11px] text-fd-muted-foreground">
-              <span>from the example directory</span>
+              <span>{featuredExample.runLabel ?? "after opening the example directory"}</span>
               <CopyButton value={featuredExample.run} />
             </div>
             <pre className="overflow-x-auto px-3 py-3 font-mono text-[12px] leading-5">
