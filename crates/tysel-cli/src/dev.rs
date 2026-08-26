@@ -29,6 +29,7 @@ struct Watch {
 struct Loaded {
     isolate: AppIsolate,
     max_request_bytes: usize,
+    max_response_bytes: usize,
     max_in_flight: u32,
     addr: std::net::SocketAddr,
     websocket: bool,
@@ -239,6 +240,7 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                                             next.isolate,
                                             HttpLimits {
                                                 max_request_bytes: next.max_request_bytes,
+                                                max_response_bytes: next.max_response_bytes,
                                                 max_in_flight: next.max_in_flight,
                                             },
                                             next.websocket,
@@ -361,6 +363,7 @@ fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
     Ok(Loaded {
         isolate: pool,
         max_request_bytes: tap.manifest.max_request_bytes,
+        max_response_bytes: tap.manifest.max_response_bytes,
         max_in_flight: tap.manifest.max_in_flight,
         addr,
         websocket,

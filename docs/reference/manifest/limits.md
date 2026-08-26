@@ -9,7 +9,7 @@ are non-negative integers; omitted fields receive the values below.
 | `cpu_ms_per_turn` | `50` | ms | CPU budget for one JavaScript turn. |
 | `request_timeout_ms` | `30000` | ms | Invocation deadline; also bounds configured LLM calls. |
 | `max_in_flight` | `1000` | requests | Maximum admitted HTTP requests, held through response-body completion. |
-| `max_response_mb` | `16` | MiB | Declared response target; not yet propagated into the packaged HTTP server. |
+| `max_response_mb` | `16` | MiB | Maximum cumulative HTTP response-body size. |
 | `max_request_mb` | `16` | MiB | Inbound request-body limit. |
 
 ```toml
@@ -28,9 +28,9 @@ timeouts). Platform or runtime ceilings may still reject or constrain values.
 
 Schema acceptance and runtime enforcement are separate facts. In the current
 package format, `memory_mb`, `cpu_ms_per_turn`, `request_timeout_ms`,
-`max_in_flight`, and `max_request_mb` are propagated to the runtime.
-`max_response_mb` remains visible through configuration inspection but requires
-deployment-level enforcement until the package/runtime boundary carries it.
+`max_in_flight`, `max_request_mb`, and `max_response_mb` are propagated to the
+runtime. A buffered response that exceeds its limit fails before headers are
+sent; an oversized streaming response is aborted when it crosses the limit.
 
 When no admission permit is available, the HTTP server immediately returns
 `503` with error code `OVERLOADED` and `Retry-After: 1`; it does not create an

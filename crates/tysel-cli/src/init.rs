@@ -995,7 +995,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_manifests_omit_schema_only_response_limit() {
+    fn generated_manifests_omit_default_response_limit() {
         for format in [ManifestFormat::Toml, ManifestFormat::Json] {
             let rendered =
                 manifest("app", Path::new("src/index.ts"), format, Template::Http, true).unwrap();

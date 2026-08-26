@@ -39,6 +39,9 @@ pub fn crate_name() -> &'static str {
 pub const COLD_START_MS: f64 = 15.0;
 pub const IDLE_MEMORY_MB: f64 = 32.0;
 pub const ARTIFACT_MB: f64 = 20.0;
+pub const ISOLATE_IDLE_MEMORY_KB: f64 = 32.0 * 1024.0;
+pub const ISOLATE_REUSE_GROWTH_KB: f64 = 16.0 * 1024.0;
+pub const TASK_BACKPRESSURE_MEMORY_KB: f64 = 32.0 * 1024.0;
 pub const BENCHMARK_EVIDENCE_VERSION: u32 = 1;
 pub const COMPLETE_BENCHMARK_EVIDENCE_VERSION: u32 = 2;
 
@@ -408,6 +411,9 @@ fn expected_gate(metric: &str) -> Option<f64> {
         "idle_memory_mb" => Some(IDLE_MEMORY_MB),
         "artifact_mb" => Some(ARTIFACT_MB),
         "warm_create_ms" => Some(5.0),
+        "idle_memory_kb" => Some(ISOLATE_IDLE_MEMORY_KB),
+        "reuse_100_growth_kb" | "reuse_1000_growth_kb" => Some(ISOLATE_REUSE_GROWTH_KB),
+        "backpressure_memory_delta_kb" => Some(TASK_BACKPRESSURE_MEMORY_KB),
         "resume_ms" => Some(10.0),
         _ => None,
     }

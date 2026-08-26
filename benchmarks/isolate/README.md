@@ -5,4 +5,6 @@ p50/p95/p99 for cold worker creation, warm in-process isolate creation, warm
 dispatch, timeout reclamation, and crash replacement. Singleton memory and reuse
 measurements retain their raw value without synthetic tail percentiles.
 
-The release gate applies only to `warm_create_ms` (p50 ≤ 5ms).
+Release gates apply to `warm_create_ms` (p50 ≤ 5ms), `idle_memory_kb`
+(≤32MiB), and process-memory growth after 100 and 1,000 isolate reuses
+(≤16MiB). Linux PSS is authoritative; macOS RSS remains a local proxy.

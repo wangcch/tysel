@@ -22,7 +22,7 @@ use tysel_engine_wasm::{
 };
 use tysel_package::Tap;
 
-use crate::http::{AppIsolate, HttpError, serve_with_limits, spawn_app_isolate};
+use crate::http::{AppIsolate, HttpError, HttpLimits, serve_with_http_limits, spawn_app_isolate};
 use crate::{DurablePlane, DurablePlaneError};
 #[cfg(unix)]
 use crate::{ModuleTaskService, ModuleTaskServiceError};
@@ -268,10 +268,15 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     }
     println!("tysel listen {bound}");
     io::stdout().flush()?;
+    let http_limits = HttpLimits {
+        max_request_bytes: tap.manifest.max_request_bytes,
+        max_response_bytes: tap.manifest.max_response_bytes,
+        max_in_flight: tap.manifest.max_in_flight,
+    };
     #[cfg(unix)]
     if let Some(service) = task_service {
         tokio::select! {
-            result = serve_with_limits(listener, pool, tap.manifest.max_request_bytes, tap.manifest.max_in_flight, websocket, tap.manifest.http1, tap.manifest.http2) => {
+            result = serve_with_http_limits(listener, pool, http_limits, websocket, tap.manifest.http1, tap.manifest.http2) => {
                 let durable_shutdown = shutdown_durable(durable.as_ref()).await;
                 service.shutdown().await?;
                 durable_shutdown?;
@@ -293,7 +298,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         }
     } else {
         tokio::select! {
-            result = serve_with_limits(listener, pool, tap.manifest.max_request_bytes, tap.manifest.max_in_flight, websocket, tap.manifest.http1, tap.manifest.http2) => {
+            result = serve_with_http_limits(listener, pool, http_limits, websocket, tap.manifest.http1, tap.manifest.http2) => {
                 shutdown_durable(durable.as_ref()).await?;
                 result?;
             }
@@ -305,7 +310,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     }
     #[cfg(not(unix))]
     tokio::select! {
-        result = serve_with_limits(listener, pool, tap.manifest.max_request_bytes, tap.manifest.max_in_flight, websocket, tap.manifest.http1, tap.manifest.http2) => {
+        result = serve_with_http_limits(listener, pool, http_limits, websocket, tap.manifest.http1, tap.manifest.http2) => {
             shutdown_durable(durable.as_ref()).await?;
             result?;
         }

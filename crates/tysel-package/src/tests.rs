@@ -14,6 +14,7 @@ fn sample_manifest() -> PackageManifest {
         request_timeout_ms: 2_000,
         bundle_hash: String::new(),
         max_request_bytes: 16 * 1024 * 1024,
+        max_response_bytes: 16 * 1024 * 1024,
         websocket: false,
         workers: 1,
         max_in_flight: 1000,
@@ -237,6 +238,15 @@ fn manifests_without_max_in_flight_use_the_historical_default() {
 
     let decoded: PackageManifest = serde_json::from_value(manifest).unwrap();
     assert_eq!(decoded.max_in_flight, 1000);
+}
+
+#[test]
+fn manifests_without_max_response_bytes_use_the_historical_default() {
+    let mut manifest = serde_json::to_value(sample_manifest()).unwrap();
+    manifest.as_object_mut().unwrap().remove("max_response_bytes");
+
+    let decoded: PackageManifest = serde_json::from_value(manifest).unwrap();
+    assert_eq!(decoded.max_response_bytes, 16 * 1024 * 1024);
 }
 
 #[test]

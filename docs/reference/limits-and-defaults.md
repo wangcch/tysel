@@ -21,9 +21,10 @@ the exact ceiling.
 | Test timeout | 5,000 ms | `tysel test --timeout-ms` |
 
 See [Manifest limits](manifest/limits.md) for units and validation.
-The current runtime enforces `max_request_mb` and `max_in_flight`;
-`max_response_mb` is a declared target that is not yet propagated through the
-package format.
+The current runtime enforces `max_request_mb`, `max_response_mb`, and
+`max_in_flight`. Buffered responses that exceed the configured response limit
+fail before their headers are sent. Streaming responses are aborted as soon as
+their cumulative body size exceeds the limit.
 
 ## Network and profile bounds
 

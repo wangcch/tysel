@@ -150,6 +150,7 @@ fn package_manifest(manifest: &Manifest, runtime_version: &str) -> PackageManife
         request_timeout_ms: manifest.limits.request_timeout_ms,
         bundle_hash: String::new(),
         max_request_bytes: (manifest.limits.max_request_mb as usize).saturating_mul(1024 * 1024),
+        max_response_bytes: (manifest.limits.max_response_mb as usize).saturating_mul(1024 * 1024),
         websocket: manifest.server.websocket,
         workers: manifest.server.workers,
         max_in_flight: manifest.limits.max_in_flight,
@@ -444,6 +445,28 @@ max_in_flight = 17
             identity_source_map("src/index.ts", "export default {}\n").unwrap(),
         );
         assert_eq!(tap.manifest.max_in_flight, 17);
+    }
+
+    #[test]
+    fn tap_copies_max_response_bytes() {
+        let manifest = Manifest::parse(
+            r#"
+[app]
+name = "bounded-service"
+entry = "src/index.ts"
+
+[limits]
+max_response_mb = 7
+"#,
+        )
+        .unwrap();
+        let tap = tap_from_app(
+            &manifest,
+            "0.0.1",
+            b"export default {};".to_vec(),
+            identity_source_map("src/index.ts", "export default {}\n").unwrap(),
+        );
+        assert_eq!(tap.manifest.max_response_bytes, 7 * 1024 * 1024);
     }
 
     #[test]

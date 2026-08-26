@@ -5,8 +5,10 @@ use anyhow::{Context, Result, bail, ensure};
 use tysel_scheduler::Scheduler;
 use tysel_task::{Task, TaskId, TaskMeta, TaskState, TaskTrigger};
 
-use crate::current_process_memory_kb;
-use crate::report::{BenchScale, MetricReport, SuiteReport, metric, suite_report, timed_ms};
+use crate::report::{
+    BenchScale, MetricReport, SuiteReport, gated_metric, metric, suite_report, timed_ms,
+};
+use crate::{TASK_BACKPRESSURE_MEMORY_KB, current_process_memory_kb};
 
 static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 
@@ -107,7 +109,12 @@ pub fn task_backpressure_memory(capacity: usize) -> Result<MetricReport> {
     }
     let (after, _) = current_process_memory_kb()?;
     let delta_kb = after.saturating_sub(before);
-    let mut metric = metric("backpressure_memory_delta_kb", "KB", vec![delta_kb as f64]);
+    let mut metric = gated_metric(
+        "backpressure_memory_delta_kb",
+        "KB",
+        vec![delta_kb as f64],
+        TASK_BACKPRESSURE_MEMORY_KB,
+    );
     metric.extra = Some(serde_json::json!({
         "kind": kind,
         "capacity": capacity,

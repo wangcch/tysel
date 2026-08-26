@@ -230,11 +230,10 @@ search-oriented routes:
 - all pages validated by the existing MkDocs strict build in CI, avoiding a
   second overlapping documentation checker.
 
-The source audit also exposed contract gaps that the previous dense pages hid:
-`max_response_mb` is schema-visible but not yet propagated through the package
-format; manifest trace and metric endpoints are likewise not yet runtime
-controls. The reference labels those facts explicitly. `max_in_flight` has
-since been propagated and enforced at HTTP admission.
+The source audit also exposed contract gaps that the previous dense pages hid.
+`max_response_mb` and `max_in_flight` have since been propagated and enforced
+by the packaged HTTP runtime; manifest trace and metric endpoints are not yet
+runtime controls. The reference labels those facts explicitly.
 
 G3 is therefore partially complete: public lookup and source reconciliation are
 in place, but drift can still occur silently. The next reference work should be

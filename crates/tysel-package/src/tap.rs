@@ -50,6 +50,8 @@ pub struct PackageManifest {
     pub bundle_hash: String,
     #[serde(default = "default_max_request_bytes")]
     pub max_request_bytes: usize,
+    #[serde(default = "default_max_response_bytes")]
+    pub max_response_bytes: usize,
     #[serde(default)]
     pub websocket: bool,
     #[serde(default = "default_workers")]
@@ -77,6 +79,10 @@ pub struct PackageManifest {
 }
 
 pub fn default_max_request_bytes() -> usize {
+    16 * 1024 * 1024
+}
+
+pub fn default_max_response_bytes() -> usize {
     16 * 1024 * 1024
 }
 

@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -23,7 +24,9 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 use tysel_engine::{EngineError, HttpHead, HttpRequest, IsolateConfig};
 use tysel_engine_qjs::{IncomingHttp, IsolatePool, OutgoingHttpBody, STREAM_WINDOW};
 use tysel_isolate::{IsolatedHttpPool, MAX_ISOLATED_HTTP_BODY, locate_worker};
-use tysel_package::{SourceMap, default_max_in_flight, default_max_request_bytes};
+use tysel_package::{
+    SourceMap, default_max_in_flight, default_max_request_bytes, default_max_response_bytes,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
@@ -35,6 +38,8 @@ pub enum HttpError {
     Hyper(String),
     #[error("request body exceeds {0} bytes")]
     BodyTooLarge(usize),
+    #[error("response body exceeds {0} bytes")]
+    ResponseTooLarge(usize),
 }
 
 #[derive(Clone)]
@@ -129,6 +134,7 @@ pub struct SharedPool {
 struct PoolState {
     isolate: AppIsolate,
     max_request_bytes: usize,
+    max_response_bytes: usize,
     max_in_flight: u32,
     admission: Arc<Admission>,
     websocket: bool,
@@ -140,6 +146,7 @@ struct PoolState {
 #[derive(Clone, Copy)]
 pub struct HttpLimits {
     pub max_request_bytes: usize,
+    pub max_response_bytes: usize,
     pub max_in_flight: u32,
 }
 
@@ -243,12 +250,35 @@ impl SharedPool {
         http2: bool,
         source_map: Option<Arc<SourceMap>>,
     ) -> Self {
+        Self::with_http_limits(
+            pool,
+            HttpLimits {
+                max_request_bytes,
+                max_response_bytes: default_max_response_bytes(),
+                max_in_flight,
+            },
+            websocket,
+            http1,
+            http2,
+            source_map,
+        )
+    }
+
+    pub fn with_http_limits(
+        pool: impl Into<AppIsolate>,
+        limits: HttpLimits,
+        websocket: bool,
+        http1: bool,
+        http2: bool,
+        source_map: Option<Arc<SourceMap>>,
+    ) -> Self {
         Self {
             inner: Arc::new(RwLock::new(PoolState {
                 isolate: pool.into(),
-                max_request_bytes,
-                max_in_flight,
-                admission: Arc::new(Admission::new(max_in_flight)),
+                max_request_bytes: limits.max_request_bytes,
+                max_response_bytes: limits.max_response_bytes,
+                max_in_flight: limits.max_in_flight,
+                admission: Arc::new(Admission::new(limits.max_in_flight)),
                 websocket,
                 http1,
                 http2,
@@ -297,9 +327,10 @@ impl SharedPool {
         source_map: Option<Arc<SourceMap>>,
     ) {
         let max_in_flight = self.max_in_flight();
+        let max_response_bytes = self.max_response_bytes();
         self.replace_with_server_limits(
             pool,
-            HttpLimits { max_request_bytes, max_in_flight },
+            HttpLimits { max_request_bytes, max_response_bytes, max_in_flight },
             websocket,
             http1,
             http2,
@@ -325,6 +356,7 @@ impl SharedPool {
                 PoolState {
                     isolate: pool.into(),
                     max_request_bytes: limits.max_request_bytes,
+                    max_response_bytes: limits.max_response_bytes,
                     max_in_flight: limits.max_in_flight,
                     admission,
                     websocket,
@@ -344,11 +376,15 @@ impl SharedPool {
 
     fn current_with_admission(
         &self,
-    ) -> (AppIsolate, usize, bool, Option<Arc<SourceMap>>, Arc<Admission>) {
+    ) -> (AppIsolate, HttpLimits, bool, Option<Arc<SourceMap>>, Arc<Admission>) {
         let guard = self.inner.read().expect("pool lock");
         (
             guard.isolate.clone(),
-            guard.max_request_bytes,
+            HttpLimits {
+                max_request_bytes: guard.max_request_bytes,
+                max_response_bytes: guard.max_response_bytes,
+                max_in_flight: guard.max_in_flight,
+            },
             guard.websocket,
             guard.source_map.clone(),
             guard.admission.clone(),
@@ -357,6 +393,10 @@ impl SharedPool {
 
     pub fn max_in_flight(&self) -> u32 {
         self.inner.read().expect("pool lock").max_in_flight
+    }
+
+    pub fn max_response_bytes(&self) -> usize {
+        self.inner.read().expect("pool lock").max_response_bytes
     }
 
     #[cfg(test)]
@@ -420,18 +460,33 @@ pub async fn serve_with_limits(
     http1: bool,
     http2: bool,
 ) -> Result<(), HttpError> {
-    if !http1 && !http2 {
-        return Err(HttpError::Hyper("at least one HTTP protocol must be enabled".into()));
-    }
-    let pool = SharedPool::with_server_limits(
+    serve_with_http_limits(
+        listener,
         pool,
-        max_request_bytes,
-        max_in_flight,
+        HttpLimits {
+            max_request_bytes,
+            max_response_bytes: default_max_response_bytes(),
+            max_in_flight,
+        },
         websocket,
         http1,
         http2,
-        None,
-    );
+    )
+    .await
+}
+
+pub async fn serve_with_http_limits(
+    listener: TcpListener,
+    pool: impl Into<AppIsolate>,
+    limits: HttpLimits,
+    websocket: bool,
+    http1: bool,
+    http2: bool,
+) -> Result<(), HttpError> {
+    if !http1 && !http2 {
+        return Err(HttpError::Hyper("at least one HTTP protocol must be enabled".into()));
+    }
+    let pool = SharedPool::with_http_limits(pool, limits, websocket, http1, http2, None);
     loop {
         let (stream, _peer) = listener.accept().await?;
         handle_stream(stream, pool.clone());
@@ -453,14 +508,14 @@ pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
                 let path = request.uri().path().to_owned();
                 let started = Instant::now();
                 let request_id = tysel_observability::next_request_id();
-                let (isolate, max_request_bytes, websocket, source_map, admission) =
+                let (isolate, limits, websocket, source_map, admission) =
                     pool.current_with_admission();
                 let response = match admission.try_acquire() {
                     Some(permit) => {
                         dispatch(
                             isolate,
                             request,
-                            max_request_bytes,
+                            limits,
                             websocket,
                             request_id,
                             source_map.as_deref(),
@@ -532,7 +587,7 @@ pub async fn bind_with(
 async fn dispatch(
     pool: AppIsolate,
     request: Request<Incoming>,
-    max_request_bytes: usize,
+    limits: HttpLimits,
     websocket: bool,
     request_id: u64,
     source_map: Option<&SourceMap>,
@@ -540,14 +595,18 @@ async fn dispatch(
 ) -> Response<HttpBody> {
     let mut permit = Some(permit);
     let mut response =
-        match dispatch_inner(pool, request, max_request_bytes, websocket, request_id, &mut permit)
-            .await
-        {
+        match dispatch_inner(pool, request, limits, websocket, request_id, &mut permit).await {
             Ok(response) => response,
             Err(HttpError::BodyTooLarge(limit)) => json_error_response(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "BODY_TOO_LARGE",
                 &format!("request body exceeds {limit} bytes"),
+                request_id,
+            ),
+            Err(HttpError::ResponseTooLarge(limit)) => json_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RESPONSE_TOO_LARGE",
+                &format!("response body exceeds {limit} bytes"),
                 request_id,
             ),
             Err(err) => {
@@ -606,7 +665,7 @@ fn overloaded_response(request_id: u64) -> Response<HttpBody> {
 async fn dispatch_inner(
     pool: AppIsolate,
     request: Request<Incoming>,
-    max_request_bytes: usize,
+    limits: HttpLimits,
     websocket_enabled: bool,
     request_id: u64,
     permit: &mut Option<AdmissionPermit>,
@@ -616,9 +675,9 @@ async fn dispatch_inner(
         .get(hyper::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
-        && len > max_request_bytes as u64
+        && len > limits.max_request_bytes as u64
     {
-        return Err(HttpError::BodyTooLarge(max_request_bytes));
+        return Err(HttpError::BodyTooLarge(limits.max_request_bytes));
     }
     let upgrade = websocket_enabled
         && request.version() == hyper::Version::HTTP_11
@@ -660,7 +719,7 @@ async fn dispatch_inner(
             drop(tx);
         } else {
             tokio::spawn(async move {
-                pump_request_body(Limited::new(incoming, max_request_bytes), tx).await;
+                pump_request_body(Limited::new(incoming, limits.max_request_bytes), tx).await;
             });
         }
         None
@@ -679,7 +738,9 @@ async fn dispatch_inner(
         .await
     {
         Ok(pair) => pair,
-        Err(EngineError::BodyTooLarge) => return Err(HttpError::BodyTooLarge(max_request_bytes)),
+        Err(EngineError::BodyTooLarge) => {
+            return Err(HttpError::BodyTooLarge(limits.max_request_bytes));
+        }
         Err(err) => return Err(err.into()),
     };
 
@@ -712,8 +773,13 @@ async fn dispatch_inner(
         builder = builder.header(name, value);
     }
     let body = match body {
-        OutgoingHttpBody::Buffered(bytes) => HttpBody::once(bytes),
-        OutgoingHttpBody::Stream(chunks) => HttpBody::stream(chunks),
+        OutgoingHttpBody::Buffered(bytes) => {
+            if bytes.len() > limits.max_response_bytes {
+                return Err(HttpError::ResponseTooLarge(limits.max_response_bytes));
+            }
+            HttpBody::once(bytes)
+        }
+        OutgoingHttpBody::Stream(chunks) => HttpBody::stream(chunks, limits.max_response_bytes),
     };
     builder.body(body).map_err(|err| HttpError::Hyper(err.to_string()))
 }
@@ -808,7 +874,7 @@ async fn pump_request_body(mut body: Limited<Incoming>, tx: mpsc::Sender<Result<
 
 enum HttpBodyKind {
     Once(Option<Bytes>),
-    Stream(mpsc::Receiver<Vec<u8>>),
+    Stream { rx: mpsc::Receiver<Vec<u8>>, remaining: usize },
 }
 
 pub struct HttpBody {
@@ -825,8 +891,8 @@ impl HttpBody {
         Self { kind: HttpBodyKind::Once(None), permit: None }
     }
 
-    fn stream(rx: mpsc::Receiver<Vec<u8>>) -> Self {
-        Self { kind: HttpBodyKind::Stream(rx), permit: None }
+    fn stream(rx: mpsc::Receiver<Vec<u8>>, limit: usize) -> Self {
+        Self { kind: HttpBodyKind::Stream { rx, remaining: limit }, permit: None }
     }
 
     fn hold_permit(&mut self, permit: AdmissionPermit) {
@@ -836,7 +902,7 @@ impl HttpBody {
 
 impl Body for HttpBody {
     type Data = Bytes;
-    type Error = Infallible;
+    type Error = io::Error;
 
     fn poll_frame(
         self: Pin<&mut Self>,
@@ -851,8 +917,16 @@ impl Body for HttpBody {
                     Poll::Ready(None)
                 }
             },
-            HttpBodyKind::Stream(rx) => match rx.poll_recv(cx) {
-                Poll::Ready(Some(chunk)) => Poll::Ready(Some(Ok(Frame::data(Bytes::from(chunk))))),
+            HttpBodyKind::Stream { rx, remaining } => match rx.poll_recv(cx) {
+                Poll::Ready(Some(chunk)) if chunk.len() <= *remaining => {
+                    *remaining -= chunk.len();
+                    Poll::Ready(Some(Ok(Frame::data(Bytes::from(chunk)))))
+                }
+                Poll::Ready(Some(_)) => {
+                    rx.close();
+                    this.permit.take();
+                    Poll::Ready(Some(Err(io::Error::other("response body limit exceeded"))))
+                }
                 Poll::Ready(None) => {
                     this.permit.take();
                     Poll::Ready(None)
@@ -866,7 +940,7 @@ impl Body for HttpBody {
         match &self.kind {
             HttpBodyKind::Once(Some(bytes)) => SizeHint::with_exact(bytes.len() as u64),
             HttpBodyKind::Once(None) => SizeHint::with_exact(0),
-            HttpBodyKind::Stream(_) => SizeHint::default(),
+            HttpBodyKind::Stream { .. } => SizeHint::default(),
         }
     }
 }
@@ -880,7 +954,7 @@ mod body_tests {
         let admission = Arc::new(Admission::new(1));
         let permit = admission.try_acquire().unwrap();
         let (tx, rx) = mpsc::channel(1);
-        let mut body = HttpBody::stream(rx);
+        let mut body = HttpBody::stream(rx, usize::MAX);
         body.hold_permit(permit);
         tx.send(b"chunk".to_vec()).await.unwrap();
         drop(tx);
@@ -889,6 +963,21 @@ mod body_tests {
         assert!(body.frame().await.is_some());
         assert!(admission.try_acquire().is_none());
         assert!(body.frame().await.is_none());
+        assert_eq!(admission.available(), 1);
+    }
+
+    #[tokio::test]
+    async fn streaming_body_aborts_and_releases_admission_at_response_limit() {
+        let admission = Arc::new(Admission::new(1));
+        let permit = admission.try_acquire().unwrap();
+        let (tx, rx) = mpsc::channel(2);
+        let mut body = HttpBody::stream(rx, 4);
+        body.hold_permit(permit);
+        tx.send(b"abc".to_vec()).await.unwrap();
+        tx.send(b"de".to_vec()).await.unwrap();
+
+        assert!(body.frame().await.unwrap().is_ok());
+        assert!(body.frame().await.unwrap().is_err());
         assert_eq!(admission.available(), 1);
     }
 

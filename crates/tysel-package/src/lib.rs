@@ -12,7 +12,7 @@ pub use tap::{
     MAX_TAP_PAYLOAD_BYTES, MIN_SUPPORTED_TAP_VERSION, PackageError, PackageManifest, PackagedAot,
     PackagedComponent, TAP_COMPATIBILITY_REPORT_VERSION, TAP_VERSION, Tap, TapCompatibilityReport,
     TapCompatibilityStatus, bundle_hash, compatibility_report, default_max_in_flight,
-    default_max_request_bytes,
+    default_max_request_bytes, default_max_response_bytes,
 };
 
 pub fn crate_name() -> &'static str {

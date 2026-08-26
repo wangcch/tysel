@@ -251,6 +251,7 @@ fn component_manifest() -> PackageManifest {
         request_timeout_ms: 2_000,
         bundle_hash: String::new(),
         max_request_bytes: 1024 * 1024,
+        max_response_bytes: 16 * 1024 * 1024,
         websocket: false,
         workers: 1,
         max_in_flight: 1000,
@@ -495,7 +496,11 @@ export default {
     .unwrap();
     pool.replace_with_server_limits(
         Arc::new(second),
-        HttpLimits { max_request_bytes: 16 * 1024 * 1024, max_in_flight: 1 },
+        HttpLimits {
+            max_request_bytes: 16 * 1024 * 1024,
+            max_response_bytes: 16 * 1024 * 1024,
+            max_in_flight: 1,
+        },
         false,
         true,
         false,
@@ -569,6 +574,34 @@ async fn oversized_request_body_is_rejected() {
         .unwrap();
     let response = sender.send_request(request).await.unwrap();
     assert_eq!(response.status().as_u16(), 413);
+}
+
+#[tokio::test]
+async fn oversized_buffered_response_is_rejected_before_headers() {
+    let pool = IsolatePool::spawn(
+        1,
+        r#"export default { async fetch() { return new Response("too large"); } };"#,
+        config(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let pool = SharedPool::with_http_limits(
+        Arc::new(pool),
+        HttpLimits { max_request_bytes: 1024, max_response_bytes: 4, max_in_flight: 1 },
+        false,
+        true,
+        false,
+        None,
+    );
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        handle_stream(stream, pool);
+    });
+
+    let (status, body) = request(addr, "/").await;
+    assert_eq!(status, 500);
+    assert!(body.contains("RESPONSE_TOO_LARGE"));
 }
 
 #[tokio::test]

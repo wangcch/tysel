@@ -9,7 +9,7 @@ use tysel_engine_qjs::IsolatePool;
 use tysel_isolate::{IsolatedHttpPool, Supervisor, WorkerSpec};
 
 use crate::report::{BenchScale, SuiteReport, gated_metric, metric, suite_report, timed_ms};
-use crate::{ensure_worker, process_memory_kb};
+use crate::{ISOLATE_IDLE_MEMORY_KB, ISOLATE_REUSE_GROWTH_KB, ensure_worker, process_memory_kb};
 
 const HANDLER: &str = r#"
 export default {
@@ -68,13 +68,19 @@ pub fn run_isolate_with_worker(scale: BenchScale, worker: &std::path::Path) -> R
     let pid = idle_supervisor.worker_pid().context("idle worker pid")?;
     thread::sleep(Duration::from_millis(200));
     let (idle_kb, kind) = process_memory_kb(pid).context("idle isolate memory")?;
-    let mut idle = metric("idle_memory_kb", "KB", vec![idle_kb as f64]);
+    let mut idle =
+        gated_metric("idle_memory_kb", "KB", vec![idle_kb as f64], ISOLATE_IDLE_MEMORY_KB);
     idle.extra = Some(serde_json::json!({ "kind": kind }));
     metrics.push(idle);
 
     for &reuse in scale.isolate_reuse {
         let growth = reuse_growth(worker, reuse)?;
-        metrics.push(metric(format!("reuse_{reuse}_growth_kb"), "KB", vec![growth]));
+        metrics.push(gated_metric(
+            format!("reuse_{reuse}_growth_kb"),
+            "KB",
+            vec![growth],
+            ISOLATE_REUSE_GROWTH_KB,
+        ));
     }
 
     let timeout = timed_ms(scale.samples, || timeout_reclaim(worker))?;

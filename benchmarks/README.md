@@ -52,6 +52,7 @@ cargo run -p tysel-cli --release -- bench all \
 | `http/` | HTTP/1.1 keep-alive, HTTP/2, JSON sizes, streaming, WebSocket, SSE and protocol-specific concurrency |
 
 Cold start must be ≤15ms, idle memory ≤32MB, packaged binary ≤20MB, warm isolate
-creation ≤5ms, and Durable Task resume ≤10ms. Other values are observational
-until a reproducible baseline and threshold are documented. Linux PSS is the
-memory gate of record; macOS RSS is a proxy.
+creation ≤5ms, isolate reuse growth ≤16MiB, 10,000-task queue growth ≤32MiB, and
+Durable Task resume ≤10ms. Other values are observational until a reproducible
+baseline and threshold are documented. Linux PSS is the memory gate of record;
+macOS RSS is a proxy.
