@@ -320,6 +320,12 @@ fn init_writes_a_hello_service_skeleton() {
         serde_json::from_slice(&fs::read(dir.join("package.json")).unwrap()).unwrap();
     assert_eq!(package["devDependencies"]["@tysel/test"], env!("CARGO_PKG_VERSION"));
     assert_eq!(package["devDependencies"]["@tysel/types"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(package["scripts"]["check"], "tysel types --check && tysel check");
+    let source = fs::read_to_string(dir.join("src/index.ts")).unwrap();
+    assert!(source.contains("import type { TyselApp } from \"@tysel/types\""));
+    assert!(source.contains("import type { TyselEnv } from \"../tysel-env.js\""));
+    assert!(source.contains("} satisfies TyselApp<TyselEnv>;"));
+    assert!(dir.join("tysel-env.d.ts").is_file());
     let tsconfig: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("tsconfig.json")).unwrap()).unwrap();
     assert_eq!(
@@ -328,6 +334,11 @@ fn init_writes_a_hello_service_skeleton() {
     );
     assert!(dir.join(".gitignore").is_file());
     assert!(dir.join("tysel.toml").is_file());
+    let types = Command::new(cli_exe())
+        .args(["types", "--check", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(types.status.success(), "{}", String::from_utf8_lossy(&types.stderr));
     let check = Command::new(cli_exe())
         .args(["check", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
         .output()
@@ -361,6 +372,9 @@ fn init_can_create_a_package_free_json_project() {
     assert!(dir.join("tysel.json").is_file());
     assert!(!dir.join("tysel.toml").exists());
     assert!(!dir.join("package.json").exists());
+    let source = fs::read_to_string(dir.join("src/index.ts")).unwrap();
+    assert!(!source.contains("@tysel/types"));
+    assert!(source.contains("Promise<Response>"));
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("tysel.json")).unwrap()).unwrap();
     assert_eq!(manifest["schema_version"], 1);
@@ -384,6 +398,58 @@ fn init_can_create_a_package_free_json_project() {
         .unwrap();
     assert!(task.status.success(), "{}", String::from_utf8_lossy(&task.stderr));
     assert!(String::from_utf8_lossy(&task.stdout).contains("task verify completed"));
+}
+
+#[test]
+fn types_generates_and_checks_manifest_scoped_capabilities() {
+    let dir = temp_app("types-environment");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "export default { fetch() { return new Response('ok'); } };\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "types-environment"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+websocket = true
+
+[permissions]
+secrets = ["API_TOKEN"]
+postgres = ["main:read-only"]
+fs_read = ["./input"]
+"#,
+    )
+    .unwrap();
+
+    let generated =
+        Command::new(cli_exe()).args(["-C", dir.to_str().unwrap(), "types"]).output().unwrap();
+    assert!(generated.status.success(), "{}", String::from_utf8_lossy(&generated.stderr));
+    let declarations = fs::read_to_string(dir.join("tysel-env.d.ts")).unwrap();
+    assert!(declarations.contains("SecretClient<\"API_TOKEN\">"));
+    assert!(declarations.contains("Pick<SqlClient, \"query\">"));
+    assert!(declarations.contains("Pick<FileSystemClient, \"read\">"));
+    assert!(declarations.contains("\"acceptWebSocket\""));
+
+    let checked = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "types", "--check"])
+        .output()
+        .unwrap();
+    assert!(checked.status.success(), "{}", String::from_utf8_lossy(&checked.stderr));
+
+    fs::write(dir.join("tysel-env.d.ts"), "stale\n").unwrap();
+    let stale = Command::new(cli_exe())
+        .args(["-C", dir.to_str().unwrap(), "types", "--check"])
+        .output()
+        .unwrap();
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("out of date"));
 }
 
 #[test]

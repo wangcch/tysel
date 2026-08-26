@@ -27,6 +27,7 @@ mod project;
 mod release;
 mod task;
 mod test_runner;
+mod typegen;
 mod upgrade;
 
 #[derive(Parser)]
@@ -167,6 +168,17 @@ enum Commands {
     },
     /// Type-check, capability-scan, and validate the manifest.
     Check {
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
+    /// Generate a manifest-scoped TypeScript capability environment.
+    Types {
+        /// Create this declaration file relative to the project root.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Fail when the generated declaration is missing or out of date.
+        #[arg(long)]
+        check: bool,
         #[arg(long)]
         manifest: Option<PathBuf>,
     },
@@ -387,6 +399,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Commands::Check { manifest } => {
             let project = context(manifest.as_deref())?;
             check::run(&project.manifest_path)
+        }
+        Commands::Types { output, check, manifest } => {
+            let project = context(manifest.as_deref())?;
+            typegen::run(&project, output.as_deref(), check)
         }
         Commands::Dev { entry, manifest } => {
             let project = context(manifest.as_deref())?;

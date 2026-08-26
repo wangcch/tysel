@@ -28,65 +28,78 @@ const PACKAGE_JSON: &str = r#"{
   "type": "module",
   "scripts": {
     "dev": "tysel dev",
-    "check": "tysel check",
+    "check": "tysel types --check && tysel check",
     "test": "tysel test"
   },
   "devDependencies": {
     "@tysel/test": "__TYSEL_VERSION__",
     "@tysel/types": "__TYSEL_VERSION__",
+    "tysel": "__TYSEL_VERSION__",
     "typescript": "7.0.2"
   }
 }
 "#;
 
-const INDEX_TS: &str = r#"export default {
-  async fetch(request: Request): Promise<Response> {
+const INDEX_TS: &str = r#"import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "__TYSEL_ENV_IMPORT__";
+
+export default {
+  async fetch(request) {
     return Response.json({
       message: "Hello from Tysel",
       path: new URL(request.url).pathname,
     });
   },
-};
+} satisfies TyselApp<TyselEnv>;
 "#;
 
-const WORKER_TS: &str = r#"export default {
-  async fetch(): Promise<Response> {
+const WORKER_TS: &str = r#"import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "__TYSEL_ENV_IMPORT__";
+
+export default {
+  async fetch() {
     return Response.json({ status: "ready", worker: "jobs" });
   },
   tasks: {
     jobs: {
-      kind: "queue" as const,
+      kind: "queue",
       name: "jobs",
       async handler(input: unknown) {
         return { accepted: true, input };
       },
     },
   },
-};
+} satisfies TyselApp<TyselEnv>;
 "#;
 
-const MCP_TS: &str = r#"export default {
-  async fetch(): Promise<Response> {
+const MCP_TS: &str = r#"import type { TyselEnv } from "__TYSEL_ENV_IMPORT__";
+import { defineApp } from "tysel";
+
+export default defineApp<TyselEnv>()({
+  async fetch() {
     return Response.json({ status: "ready", transport: "mcp" });
   },
   tasks: {
     lookup: {
-      kind: "mcp" as const,
+      kind: "mcp",
       description: "Look up a value",
       input: { value: "string" },
-      async handler(input: { value: string }) {
+      async handler(input) {
         return { value: input.value };
       },
     },
   },
-};
+});
 "#;
 
-const MINIMAL_TS: &str = r#"export default {
-  async fetch(): Promise<Response> {
+const MINIMAL_TS: &str = r#"import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "__TYSEL_ENV_IMPORT__";
+
+export default {
+  async fetch() {
     return new Response("Hello from Tysel");
   },
-};
+} satisfies TyselApp<TyselEnv>;
 "#;
 
 const TEST_TS: &str = r#"import app from "../src/index.ts";
@@ -125,13 +138,26 @@ pub enum Template {
 }
 
 impl Template {
-    fn source(self) -> &'static str {
-        match self {
+    fn source(self, typed: bool, env_import: &str) -> String {
+        let source = match self {
             Self::Http => INDEX_TS,
             Self::Worker => WORKER_TS,
             Self::Mcp => MCP_TS,
             Self::Minimal => MINIMAL_TS,
+        };
+        if typed {
+            return source.replace("__TYSEL_ENV_IMPORT__", env_import);
         }
+        source
+            .replace("import type { TyselApp } from \"@tysel/types\";\n", "")
+            .replace("import type { TyselEnv } from \"__TYSEL_ENV_IMPORT__\";\n", "")
+            .replace("import { defineApp } from \"tysel\";\n", "")
+            .replace("export default defineApp<TyselEnv>()({", "export default {")
+            .replace("async handler(input) {", "async handler(input: { value: string }) {")
+            .replace("async fetch(request) {", "async fetch(request: Request): Promise<Response> {")
+            .replace("async fetch() {", "async fetch(): Promise<Response> {")
+            .replace("\n});\n", "\n};\n")
+            .replace("} satisfies TyselApp<TyselEnv>;\n", "};\n")
     }
 
     fn profile(self) -> &'static str {
@@ -333,11 +359,15 @@ fn run_options(options: Options, confirm: bool) -> Result<()> {
         }
         PackageJsonMode::Reuse | PackageJsonMode::None => false,
     };
+    let has_public_types =
+        create_package || package_declares_dependency(&package_path, "@tysel/types");
+    let has_mcp_sdk = create_package || package_declares_dependency(&package_path, "tysel");
+    let typed_entry = has_public_types && (options.template != Template::Mcp || has_mcp_sdk);
     let package_update = if options.add_scripts && package_exists {
         if fs::symlink_metadata(&package_path)?.file_type().is_symlink() {
             return Err(anyhow!("refusing to modify symlinked {}", package_path.display()));
         }
-        package_with_tysel_scripts(&package_path, options.include_tests)?
+        package_with_tysel_scripts(&package_path, options.include_tests, typed_entry)?
             .map(|(original, contents)| (package_path.clone(), original, contents))
     } else {
         None
@@ -353,6 +383,7 @@ fn run_options(options: Options, confirm: bool) -> Result<()> {
         }
     });
     let entry = normalize_entry(&entry)?;
+    let env_import = tysel_env_import(&entry);
     let entry_existed = root.join(&entry).is_file();
     let manifest_name = match options.manifest_format {
         ManifestFormat::Toml => "tysel.toml",
@@ -365,11 +396,20 @@ fn run_options(options: Options, confirm: bool) -> Result<()> {
         }
     }
 
+    let manifest_contents =
+        manifest(&name, &entry, options.manifest_format, options.template, options.include_tests)?;
+    let generated_env = if typed_entry {
+        let parsed = Manifest::parse_with_format(&manifest_contents, options.manifest_format)?;
+        Some(crate::typegen::render(&parsed)?)
+    } else {
+        None
+    };
+
     let mut files = Vec::new();
     if create_package {
         files.push((
             PathBuf::from("package.json"),
-            generated_package_json(&name, options.include_tests)?,
+            generated_package_json(&name, options.include_tests, options.template)?,
         ));
     }
     let tsconfig_path = if existing_js_project {
@@ -388,7 +428,12 @@ fn run_options(options: Options, confirm: bool) -> Result<()> {
         ));
     }
     if !entry_existed {
-        files.push((entry.clone(), options.template.source().to_owned()));
+        files.push((entry.clone(), options.template.source(typed_entry, &env_import)));
+    }
+    if let Some(contents) = generated_env
+        && !root.join("tysel-env.d.ts").exists()
+    {
+        files.push((PathBuf::from("tysel-env.d.ts"), contents));
     }
     let test_path = if existing_js_project {
         PathBuf::from("tests/tysel.test.ts")
@@ -398,10 +443,7 @@ fn run_options(options: Options, confirm: bool) -> Result<()> {
     if options.include_tests && !root.join(&test_path).exists() {
         files.push((test_path, test_source(&entry, options.template)));
     }
-    files.push((
-        PathBuf::from(manifest_name),
-        manifest(&name, &entry, options.manifest_format, options.template, options.include_tests)?,
-    ));
+    files.push((PathBuf::from(manifest_name), manifest_contents));
     if !root.join(".gitignore").exists() {
         files.push((PathBuf::from(".gitignore"), GITIGNORE.to_owned()));
     }
@@ -562,6 +604,15 @@ fn test_source(entry: &Path, template: Template) -> String {
     source.replace("../src/index.ts", &format!("../{entry}"))
 }
 
+fn tysel_env_import(entry: &Path) -> String {
+    let depth = entry.parent().map(|parent| parent.components().count()).unwrap_or(0);
+    if depth == 0 {
+        "./tysel-env.js".into()
+    } else {
+        format!("{}tysel-env.js", "../".repeat(depth))
+    }
+}
+
 fn application_name(root: &Path) -> Result<String> {
     let resolved = if root.exists() {
         fs::canonicalize(root).with_context(|| format!("resolve {}", root.display()))?
@@ -630,12 +681,12 @@ fn ensure_safe_destination(root: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn generated_package_json(name: &str, include_tests: bool) -> Result<String> {
+fn generated_package_json(name: &str, include_tests: bool, template: Template) -> Result<String> {
     let package_name = name.to_ascii_lowercase().replace('_', "-");
-    let template = PACKAGE_JSON
+    let package_template = PACKAGE_JSON
         .replace("__NAME__", &package_name)
         .replace("__TYSEL_VERSION__", env!("CARGO_PKG_VERSION"));
-    let mut package: serde_json::Value = serde_json::from_str(&template)?;
+    let mut package: serde_json::Value = serde_json::from_str(&package_template)?;
     if !include_tests {
         package["scripts"].as_object_mut().expect("template scripts").remove("test");
         package["devDependencies"]
@@ -643,9 +694,27 @@ fn generated_package_json(name: &str, include_tests: bool) -> Result<String> {
             .expect("template devDependencies")
             .remove("@tysel/test");
     }
+    if template != Template::Mcp {
+        package["devDependencies"]
+            .as_object_mut()
+            .expect("template devDependencies")
+            .remove("tysel");
+    }
     let mut rendered = serde_json::to_string_pretty(&package)?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+fn package_declares_dependency(path: &Path, name: &str) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    let Ok(package) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]
+        .iter()
+        .any(|section| package[*section].get(name).is_some())
 }
 
 fn generated_tsconfig(entry: &Path, isolated: bool, include_tests: bool) -> Result<String> {
@@ -670,6 +739,7 @@ fn generated_tsconfig(entry: &Path, isolated: bool, include_tests: bool) -> Resu
 fn package_with_tysel_scripts(
     path: &Path,
     include_tests: bool,
+    typed_entry: bool,
 ) -> Result<Option<(Vec<u8>, String)>> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     let mut package: serde_json::Value =
@@ -684,7 +754,10 @@ fn package_with_tysel_scripts(
         .ok_or_else(|| anyhow!("scripts in {} must be a JSON object", path.display()))?;
     let mut desired = vec![
         ("tysel:dev", "tysel dev"),
-        ("tysel:check", "tysel check"),
+        (
+            "tysel:check",
+            if typed_entry { "tysel types --check && tysel check" } else { "tysel check" },
+        ),
         ("tysel:build", "tysel build --release"),
     ];
     if include_tests {
@@ -911,10 +984,16 @@ mod tests {
     #[test]
     fn generated_project_pins_matching_public_type_packages() {
         let package: serde_json::Value =
-            serde_json::from_str(&generated_package_json("app", true).unwrap()).unwrap();
+            serde_json::from_str(&generated_package_json("app", true, Template::Http).unwrap())
+                .unwrap();
         let expected = env!("CARGO_PKG_VERSION");
         assert_eq!(package["devDependencies"]["@tysel/types"], expected);
         assert_eq!(package["devDependencies"]["@tysel/test"], expected);
+        assert!(package["devDependencies"].get("tysel").is_none());
+        let mcp_package: serde_json::Value =
+            serde_json::from_str(&generated_package_json("app", true, Template::Mcp).unwrap())
+                .unwrap();
+        assert_eq!(mcp_package["devDependencies"]["tysel"], expected);
         let tsconfig: serde_json::Value = serde_json::from_str(
             &generated_tsconfig(Path::new("src/index.ts"), false, true).unwrap(),
         )
@@ -923,12 +1002,50 @@ mod tests {
             tsconfig["compilerOptions"]["types"],
             serde_json::json!(["@tysel/types", "@tysel/test"])
         );
+        let source = Template::Http.source(true, "../tysel-env.js");
+        assert!(source.contains("import type { TyselApp } from \"@tysel/types\""));
+        assert!(source.contains("import type { TyselEnv } from \"../tysel-env.js\""));
+        assert!(source.contains("} satisfies TyselApp<TyselEnv>;"));
+        assert!(source.contains("async fetch(request)"));
+    }
+
+    #[test]
+    fn dependency_free_templates_keep_explicit_web_handler_types() {
+        let source = Template::Http.source(false, "../tysel-env.js");
+        assert!(!source.contains("@tysel/types"));
+        assert!(!source.contains("satisfies TyselApp"));
+        assert!(source.contains("async fetch(request: Request): Promise<Response>"));
+
+        let mcp = Template::Mcp.source(false, "../tysel-env.js");
+        assert!(!mcp.contains("from \"tysel\""));
+        assert!(mcp.contains("kind: \"mcp\""));
+        assert!(mcp.contains("async handler(input: { value: string })"));
+    }
+
+    #[test]
+    fn typed_mcp_template_uses_schema_driven_inference() {
+        let source = Template::Mcp.source(true, "../tysel-env.js");
+        assert!(source.contains("import { defineApp } from \"tysel\""));
+        assert!(source.contains("export default defineApp<TyselEnv>()({"));
+        assert!(source.contains("lookup: {"));
+        assert!(source.contains("kind: \"mcp\""));
+        assert!(source.contains("async handler(input)"));
+        assert!(!source.contains("InferMcpInput"));
+    }
+
+    #[test]
+    fn generated_environment_import_tracks_entry_depth() {
+        assert_eq!(tysel_env_import(Path::new("index.ts")), "./tysel-env.js");
+        assert_eq!(tysel_env_import(Path::new("src/index.ts")), "../tysel-env.js");
+        assert_eq!(tysel_env_import(Path::new("src/services/index.ts")), "../../tysel-env.js");
     }
 
     #[test]
     fn generated_package_name_is_valid_for_uppercase_or_underscored_directories() {
-        let package: serde_json::Value =
-            serde_json::from_str(&generated_package_json("My_App.v2", true).unwrap()).unwrap();
+        let package: serde_json::Value = serde_json::from_str(
+            &generated_package_json("My_App.v2", true, Template::Http).unwrap(),
+        )
+        .unwrap();
         assert_eq!(package["name"], "my-app.v2");
         assert!(is_application_name("My_App.v2"));
     }
@@ -991,7 +1108,7 @@ mod tests {
         assert_eq!(parsed.app.profile, "isolated");
         assert_eq!(parsed.server.listen, "127.0.0.1:0");
         assert!(!rendered.contains("max_response_mb"));
-        assert!(Template::Mcp.source().contains("kind: \"mcp\""));
+        assert!(Template::Mcp.source(true, "../tysel-env.js").contains("lookup: {"));
     }
 
     #[test]
@@ -1036,7 +1153,8 @@ mod tests {
     #[test]
     fn no_tests_removes_test_dependencies_and_task_steps() {
         let package: serde_json::Value =
-            serde_json::from_str(&generated_package_json("app", false).unwrap()).unwrap();
+            serde_json::from_str(&generated_package_json("app", false, Template::Http).unwrap())
+                .unwrap();
         assert!(package["scripts"].get("test").is_none());
         assert!(package["devDependencies"].get("@tysel/test").is_none());
         let rendered =
