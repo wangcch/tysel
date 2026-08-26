@@ -79,7 +79,7 @@ jobs:
       - run: >-
           cargo run --locked -p tysel-bench-compare --bin tysel-bench-compare --
           --quick
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: comparison-smoke-${{ matrix.arch }}
           path: |
@@ -135,7 +135,7 @@ jobs:
               "${directory}/window-analysis.json" >/dev/null
             jq -e '.totalErrors == 0' "${directory}/load.json" >/dev/null
           done
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() }}
         with:
           name: sustained-diagnosis-${{ matrix.arch }}
@@ -163,7 +163,7 @@ jobs:
           benchmarks/comparison/run-qjs-boundary-linux.sh
           --arch "${{ matrix.arch }}"
           --output-dir "target/benchmark-comparison/qjs-boundary-${{ matrix.arch }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() }}
         with:
           name: qjs-boundary-${{ matrix.arch }}-attempt${{ github.run_attempt }}
@@ -251,7 +251,7 @@ jobs:
           ${{ always() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
               steps.prepare_record.outcome == 'success' && steps.record_cycle_1.outcome != 'skipped' &&
               steps.prepare_record.outputs.cycle_1 == 'true' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: comparison-record-${{ matrix.arch }}-cycle1-attempt${{ github.run_attempt }}
           path: |
@@ -273,7 +273,7 @@ jobs:
           ${{ always() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
               steps.prepare_record.outcome == 'success' && steps.record_cycle_2.outcome != 'skipped' &&
               steps.prepare_record.outputs.cycle_2 == 'true' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: comparison-record-${{ matrix.arch }}-cycle2-attempt${{ github.run_attempt }}
           path: |
@@ -295,7 +295,7 @@ jobs:
           ${{ always() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
               steps.prepare_record.outcome == 'success' && steps.record_cycle_3.outcome != 'skipped' &&
               steps.prepare_record.outputs.cycle_3 == 'true' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: comparison-record-${{ matrix.arch }}-cycle3-attempt${{ github.run_attempt }}
           path: |
@@ -326,7 +326,7 @@ jobs:
             mv "${temporary}" "${output}"
           fi
           exit "${status}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: >-
           ${{ always() && (inputs.record_arch == 'all' || inputs.record_arch == matrix.arch) &&
               steps.prepare_record.outcome == 'success' }}
