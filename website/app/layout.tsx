@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter, Inter_Tight } from "next/font/google";
 import { RootProvider } from "fumadocs-ui/provider/next";
+import { ScrollToTop } from "@/components/scroll-to-top";
 import { SiteHeader } from "@/components/site-header";
 import { appName, siteUrl } from "@/lib/shared";
 import "./global.css";
@@ -67,6 +68,7 @@ export default function Layout({ children }: LayoutProps<"/">) {
           search={{ options: { type: "static", api: "/api/search" } }}
           theme={{ defaultTheme: "dark", enableSystem: true }}
         >
+          <ScrollToTop />
           <SiteHeader />
           {children}
         </RootProvider>
