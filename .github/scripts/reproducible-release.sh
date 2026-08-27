@@ -17,14 +17,13 @@ bash "$(dirname "$0")/release-channel.sh" "$version" > /dev/null
 [[ "$source_date_epoch" =~ ^[0-9]+$ ]] || { echo "invalid SOURCE_DATE_EPOCH" >&2; exit 2; }
 
 export SOURCE_DATE_EPOCH="$source_date_epoch"
-export CARGO_TARGET_DIR="${PWD}/target/repro-${ordinal}"
+export CARGO_TARGET_DIR="${PWD}/target/repro-build"
+saved_target_dir="${PWD}/target/repro-${ordinal}"
 # rustc applies the last matching remap, so the more specific target path must
 # follow the workspace path.
 path_remap="--remap-path-prefix=${PWD}=/src --remap-path-prefix=${CARGO_TARGET_DIR}=/build"
 case "$release_target" in
   linux-x64|linux-arm64)
-    # Fat LTO has produced nondeterministic ELF output when identical sources
-    # are built in the two independent target directories used below.
     export CARGO_PROFILE_RELEASE_LTO=thin
     export RUSTFLAGS="${path_remap} -C link-arg=-Wl,--build-id=none"
     ;;
@@ -61,6 +60,10 @@ sha256_file() {
   fi
 }
 
+# Build both ordinals from the same clean path so Cargo, rustc, build scripts,
+# and native toolchains receive identical directory inputs. Preserve each
+# completed target tree under its ordinal name for the downstream release jobs.
+rm -rf "$CARGO_TARGET_DIR" "$saved_target_dir"
 cargo build --locked --release -p tysel-cli -p tysel-runtime -p tysel-isolate
 rm -rf "target/archive-${ordinal}" "target/release-${ordinal}" "$build_info"
 rm -f "target/${archive%.gz}.${ordinal}.tar" "target/${archive%.gz}.${ordinal}.tar.gz"
@@ -143,3 +146,4 @@ mkdir -p "$archive_check"
 tar -xzf "target/${archive%.gz}.${ordinal}.tar.gz" -C "$archive_check"
 "${archive_check}/tysel-${version}-${release_target}/bin/tysel" doctor --install --json \
   | jq -e '.schemaVersion == 1 and .summary.failed == 0' > /dev/null
+mv "$CARGO_TARGET_DIR" "$saved_target_dir"
