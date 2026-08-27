@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "602bec5b7c5335f34b6c10c3490c07b00b8584a69fd0f207e93046993f20d829",
+  "cargo_lock_sha256": "d4e1d0aded81804e11c0b71033453c8913c94aa0b359e6a5f875a86279c2eced",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -313,11 +313,11 @@
     },
     {
       "name": "chacha20",
-      "version": "0.10.1",
+      "version": "0.10.2",
       "license": "MIT OR Apache-2.0",
-      "purl": "pkg:cargo/chacha20@0.10.1",
+      "purl": "pkg:cargo/chacha20@0.10.2",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "checksum": "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+      "checksum": "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
     },
     {
       "name": "clap",

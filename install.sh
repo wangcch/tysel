@@ -246,7 +246,12 @@ say "  archive: ${release_base}/${archive}"
 [ "$DRY_RUN" -eq 0 ] || exit 0
 
 if [ -e "$PREFIX" ]; then
-  owner=$(stat -f '%u' "$PREFIX" 2>/dev/null || stat -c '%u' "$PREFIX" 2>/dev/null || printf unknown)
+  owner=unknown
+  if owner_candidate=$(stat -c '%u' "$PREFIX" 2>/dev/null); then
+    owner=$owner_candidate
+  elif owner_candidate=$(stat -f '%u' "$PREFIX" 2>/dev/null); then
+    owner=$owner_candidate
+  fi
   [ "$owner" = "$(id -u)" ] || fail "install root is not owned by the current user"
 fi
 umask 077
