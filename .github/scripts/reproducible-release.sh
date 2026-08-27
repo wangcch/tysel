@@ -23,6 +23,9 @@ export CARGO_TARGET_DIR="${PWD}/target/repro-${ordinal}"
 path_remap="--remap-path-prefix=${PWD}=/src --remap-path-prefix=${CARGO_TARGET_DIR}=/build"
 case "$release_target" in
   linux-x64|linux-arm64)
+    # Fat LTO has produced nondeterministic ELF output when identical sources
+    # are built in the two independent target directories used below.
+    export CARGO_PROFILE_RELEASE_LTO=thin
     export RUSTFLAGS="${path_remap} -C link-arg=-Wl,--build-id=none"
     ;;
   darwin-x64|darwin-arm64)

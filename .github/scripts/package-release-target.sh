@@ -19,10 +19,36 @@ sha256_file() {
   fi
 }
 
+write_payload_hashes() {
+  local root="$1"
+  local output="$2"
+  local file relative
+
+  : > "$output"
+  while IFS= read -r file; do
+    relative="${file#"${root}/"}"
+    printf '%s  %s\n' "$(sha256_file "$file")" "$relative" >> "$output"
+  done < <(find "$root" -type f -print | LC_ALL=C sort)
+}
+
 rm -rf target/release-output
 mkdir -p target/release-output
 bash .github/scripts/reproducible-release.sh 1 "$version" "$release_target" "$source_date_epoch"
 bash .github/scripts/reproducible-release.sh 2 "$version" "$release_target" "$source_date_epoch"
+first_archive="target/${archive%.gz}.1.tar.gz"
+second_archive="target/${archive%.gz}.2.tar.gz"
+if [[ "$(sha256_file "$first_archive")" != "$(sha256_file "$second_archive")" ]]; then
+  first_payload_hashes="target/release-payload-1.sha256"
+  second_payload_hashes="target/release-payload-2.sha256"
+  write_payload_hashes "target/archive-1/tysel-${version}-${release_target}" "$first_payload_hashes"
+  write_payload_hashes "target/archive-2/tysel-${version}-${release_target}" "$second_payload_hashes"
+  echo "release archive payload differences:" >&2
+  if cmp -s "$first_payload_hashes" "$second_payload_hashes"; then
+    echo "  file payloads are identical; the difference is in archive metadata" >&2
+  else
+    diff -u "$first_payload_hashes" "$second_payload_hashes" >&2 || true
+  fi
+fi
 mv "target/${archive%.gz}.1.tar.gz" "target/release-output/${archive}"
 mv target/release-asset-1.json "target/release-output/release-asset-${release_target}.json"
 mv "target/${archive%.gz}.2.tar.gz" "target/${archive}.second"
