@@ -49,9 +49,9 @@ do not treat a recipe as an end-to-end acceptance path.
 
 The trusted `service` profile currently exposes SQLite, with
 `durable.store = "sqlite"` and `./data/tysel.db` as manifest defaults. The
-tables below therefore list SQLite as effective authority even when an example
-does not call it. “No additional grants” would describe application intent,
-not the runtime boundary; review `tysel inspect` for the effective deployment.
+tables below name only the capabilities that each example actually exercises;
+they do not repeat unused profile defaults. Review `tysel inspect` for the
+complete effective deployment before adapting an example for production.
 
 | Capability | Start here | Complete example | Coverage |
 | --- | --- | --- | --- |
@@ -76,41 +76,42 @@ examples: they are intentionally outside the Tysel application contract. The
 
 ## Start here
 
-| Example | Demonstrates | Try | Profile |
+| Example | Demonstrates | Try | Profile and exercised capabilities |
 | --- | --- | --- | --- |
-| [Hello service](https://github.com/wangcch/tysel/tree/main/examples/hello-service) | Fetch handler and one-executable build | `tysel run` then `curl http://127.0.0.1:3000/hello` | `service`; SQLite default |
-| [Hono API](https://github.com/wangcch/tysel/tree/main/examples/hono-api) | Web-API-first npm router | Install its Hono dependency, then run `tysel run` | `service`; SQLite default; run `tysel compat` |
-| [WebSocket service](https://github.com/wangcch/tysel/tree/main/examples/websocket-service) | HTTP/1.1 upgrade and bounded text echo | `tysel run`, then connect to `ws://127.0.0.1:3000/ws` | `service`; inbound WebSocket; SQLite default |
+| [Hello service](https://github.com/wangcch/tysel/tree/main/examples/hello-service) | Fetch handler and one-executable build | `tysel run` then `curl http://127.0.0.1:3000/hello` | `service`; HTTP and Fetch |
+| [Hono API](https://github.com/wangcch/tysel/tree/main/examples/hono-api) | Web-API-first npm router | Install its Hono dependency, then run `tysel run` | `service`; HTTP and Hono; run `tysel compat` |
+| [WebSocket service](https://github.com/wangcch/tysel/tree/main/examples/websocket-service) | HTTP/1.1 upgrade and bounded text echo | `tysel run`, then connect to `ws://127.0.0.1:3000/ws` | `service`; HTTP and inbound WebSocket |
 
 ## Tasks
 
-| Example | Demonstrates | Try | Profile |
+| Example | Demonstrates | Try | Profile and exercised capabilities |
 | --- | --- | --- | --- |
-| [Task worker](https://github.com/wangcch/tysel/tree/main/examples/task-worker) | UTC Cron registration and named Queue consumer | `tysel queue jobs --input '{"id":"job_123","action":"reindex"}'` | `service`; SQLite default |
+| [Task worker](https://github.com/wangcch/tysel/tree/main/examples/task-worker) | UTC Cron registration and named Queue consumer | `tysel queue jobs --input '{"id":"job_123","action":"reindex"}'` | `service`; Cron and Queue |
 
 ## Storage
 
-| Example | Demonstrates | Try | Profile |
+| Example | Demonstrates | Try | Profile and exercised capabilities |
 | --- | --- | --- | --- |
 | [SQLite worker](https://github.com/wangcch/tysel/tree/main/examples/sqlite-worker) | Persistent counter, runtime-relative file | `tysel run` then `curl 'http://127.0.0.1:3000/?key=visits'` | `service`; SQLite |
-| [Postgres service](https://github.com/wangcch/tysel/tree/main/examples/postgres-service) | Named grant; URL stays in the host | Set `TYSEL_POSTGRES_MAIN`, then run `tysel run` | `service`; `main:read-write`; SQLite default |
-| [Filesystem transform](https://github.com/wangcch/tysel/tree/main/examples/filesystem-transform) | Separate pinned roots and bounded UTF-8 file transformation | `tysel run`, request `/transform`, then inspect `output/result.json` | `service`; read/write roots; SQLite default |
+| [Postgres service](https://github.com/wangcch/tysel/tree/main/examples/postgres-service) | Named grant; URL stays in the host | Set `TYSEL_POSTGRES_MAIN`, then run `tysel run` | `service`; PostgreSQL `main:read-write` |
+| [Redis service](https://github.com/wangcch/tysel/tree/main/examples/redis-service) | Named cache grant with bounded operations | Set `TYSEL_REDIS_CACHE`, then run `tysel run` | `service`; Redis `cache:read-write` |
+| [Filesystem transform](https://github.com/wangcch/tysel/tree/main/examples/filesystem-transform) | Separate pinned roots and bounded UTF-8 file transformation | `tysel run`, request `/transform`, then inspect `output/result.json` | `service`; filesystem read/write roots |
 
 ## Agents
 
-| Example | Demonstrates | Try | Profile |
+| Example | Demonstrates | Try | Profile and exercised capabilities |
 | --- | --- | --- | --- |
-| [Durable agent](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) | LLM effect, suspend, restart, approval, single save | `./demo.sh` in the example directory after setting the LLM endpoint | `service`; LLM, secret, SQLite, durable store |
+| [Durable agent](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) | LLM effect, suspend, restart, approval, single save | `./demo.sh` in the example directory after setting the LLM endpoint | `service`; LLM, secret, SQLite, durable execution |
 | [MCP tool](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool) | NDJSON MCP, validation, opaque secret handles | `tysel mcp` from the example directory | `isolated`; brokered secret only |
-| [LLM service](https://github.com/wangcch/tysel/tree/main/examples/llm-service) | Host-configured provider alias, token usage, bounded HTTP adapter | Set the provider environment, then `tysel run` | `service`; provider secret; SQLite default |
+| [LLM service](https://github.com/wangcch/tysel/tree/main/examples/llm-service) | Host-configured provider alias, token usage, bounded HTTP adapter | Set the provider environment, then `tysel run` | `service`; LLM and provider secret |
 
 ## Isolation and Wasm
 
-| Example | Demonstrates | Try | Profile |
+| Example | Demonstrates | Try | Profile and exercised capabilities |
 | --- | --- | --- | --- |
 | [Isolated plugin](https://github.com/wangcch/tysel/tree/main/examples/isolated-plugin) | Denied fetch/fs probes and worker replacement | `tysel run` from the example directory | `isolated`; host-facing capabilities remain denied |
-| [Rust Component starter](/docs/guides/wasm-component-rust) | One-shot JSON task, no ambient WASI | `printf '{"value":42}' \| tysel run` | `component`; experimental |
-| [Go Component starter](/docs/guides/wasm-component-go) | Same world with committed Go bindings | `printf '{"value":42}' \| tysel run` | `component`; experimental |
+| [Rust Component starter](/docs/guides/wasm-component-rust) | One-shot JSON task, no ambient WASI | `printf '{"value":42}' \| tysel run` | `component`; JSON task; no ambient WASI; experimental |
+| [Go Component starter](/docs/guides/wasm-component-go) | Same world with committed Go bindings | `printf '{"value":42}' \| tysel run` | `component`; JSON task; no ambient WASI; experimental |
 
 Review the [execution profile](/docs/concepts/execution-profiles) and
 [capability matrix](/docs/capabilities) before adapting an example for

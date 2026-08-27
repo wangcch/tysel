@@ -9,8 +9,8 @@ export type Example = {
   purpose: string;
   status: ExampleStatus;
   profile: string;
-  /** Effective application capabilities, including profile defaults. */
-  grants: string;
+  /** Capabilities exercised by this example, excluding unused profile defaults. */
+  capabilities: string;
   /** Primary verification command from the README. */
   run: string;
   /** Context shown above the command block. */
@@ -33,7 +33,7 @@ export const featuredExample: Example = {
     "Start an LLM draft, suspend for human approval, restart the process, resume, and save the result once.",
   status: "runnable",
   profile: "service",
-  grants: "LLM · secret · SQLite · durable store",
+  capabilities: "LLM · secret · SQLite · durable execution",
   run: "tysel task verify\n./demo.sh",
   sourceHref: tree("examples/durable-agent"),
   docsHref: "/docs/concepts/durable-execution",
@@ -60,6 +60,8 @@ export type ExampleSection = {
   title: string;
   /** Why this group exists — one line. */
   intent: string;
+  /** Effective profile behavior shared by entries in this group. */
+  note?: string;
   examples: Example[];
 };
 
@@ -67,7 +69,10 @@ export const exampleSections: ExampleSection[] = [
   {
     id: "services",
     title: "Services",
-    intent: "Trusted first-party HTTP apps. Grants stay closed until declared.",
+    intent:
+      "Trusted first-party HTTP apps. Labels name the behavior each example exercises.",
+    note:
+      'The service profile currently defaults to durable.store = "sqlite" and ./data/tysel.db, even when an example does not call SQLite. Run tysel inspect to review the complete effective configuration.',
     examples: [
       {
         id: "hello-service",
@@ -75,7 +80,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Minimal Fetch handler and one-executable build.",
         status: "runnable",
         profile: "service",
-        grants: "SQLite (default)",
+        capabilities: "HTTP · Fetch",
         run: "tysel task verify\ntysel dev",
         sourceHref: tree("examples/hello-service"),
         docsHref: "/docs/getting-started",
@@ -87,7 +92,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Web-API-first npm router. Compatibility is scanned, not assumed.",
         status: "runnable",
         profile: "service",
-        grants: "SQLite (default)",
+        capabilities: "HTTP · Hono",
         run: "npm install\ntysel task verify\ntysel run",
         sourceHref: tree("examples/hono-api"),
         docsHref: "/docs/compatibility",
@@ -99,7 +104,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "HTTP/1.1 upgrade and bounded text echo.",
         status: "runnable",
         profile: "service",
-        grants: "inbound WebSocket · SQLite (default)",
+        capabilities: "HTTP · inbound WebSocket",
         run: "tysel task verify\ntysel run",
         sourceHref: tree("examples/websocket-service"),
         docsHref: "/docs/guides/service-networking",
@@ -111,7 +116,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Persistent counter through a runtime-owned, grant-bound client.",
         status: "runnable",
         profile: "service",
-        grants: "SQLite",
+        capabilities: "SQLite",
         run: "tysel task verify\ntysel run",
         sourceHref: tree("examples/sqlite-worker"),
         docsHref: "/docs/guides/sqlite",
@@ -123,7 +128,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Named database grant. The URL stays in the host environment.",
         status: "runnable",
         profile: "service",
-        grants: "main:read-write · SQLite (default)",
+        capabilities: "PostgreSQL · main:read-write",
         run: "tysel task verify\ntysel run",
         sourceHref: tree("examples/postgres-service"),
         docsHref: "/docs/guides/postgresql",
@@ -135,7 +140,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Bounded cache operations through a named, host-injected Redis grant.",
         status: "runnable",
         profile: "service",
-        grants: "cache:read-write · SQLite (default)",
+        capabilities: "Redis · cache:read-write",
         run: "tysel task verify\ntysel run",
         sourceHref: tree("examples/redis-service"),
         docsHref: "/docs/guides/redis",
@@ -147,7 +152,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Read and write UTF-8 files beneath separate pinned roots.",
         status: "runnable",
         profile: "service",
-        grants: "fs read · fs write · SQLite (default)",
+        capabilities: "filesystem read · filesystem write",
         run: "tysel task verify\ntysel run",
         sourceHref: tree("examples/filesystem-transform"),
         docsHref: "/docs/guides/filesystem",
@@ -166,7 +171,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "UTC Cron registration and one named Queue consumer.",
         status: "runnable",
         profile: "service",
-        grants: "SQLite (default)",
+        capabilities: "Cron · Queue",
         run:
           "tysel task verify\ntysel queue jobs --input '{\"id\":\"job_123\",\"action\":\"reindex\"}'",
         sourceHref: tree("examples/task-worker"),
@@ -187,7 +192,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Host-configured provider alias with credential isolation and usage metadata.",
         status: "runnable",
         profile: "service",
-        grants: "provider secret · SQLite (default)",
+        capabilities: "LLM · provider secret",
         run: "tysel task verify\ntysel run",
         sourceHref: tree("examples/llm-service"),
         docsHref: "/docs/guides/llm-gateway",
@@ -200,7 +205,7 @@ export const exampleSections: ExampleSection[] = [
           "Validated JSON tool over bounded stdio. Returns an opaque secret handle only.",
         status: "runnable",
         profile: "isolated",
-        grants: "brokered secret only",
+        capabilities: "MCP · brokered secret",
         run: "tysel task verify\ntysel mcp",
         sourceHref: tree("examples/mcp-tool"),
         contractHref: "/reference/runtime/application#mcp-tasks",
@@ -220,7 +225,7 @@ export const exampleSections: ExampleSection[] = [
           "Fetch handler under the isolated profile. Manifest grants are still denied.",
         status: "runnable",
         profile: "isolated",
-        grants: "host capabilities denied",
+        capabilities: "host capabilities denied",
         run: "tysel task verify\ntysel run",
         sourceHref: tree("examples/isolated-plugin"),
         docsHref: "/docs/concepts/execution-profiles",
@@ -232,7 +237,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "One-shot JSON task via tysel:component/task@0.4.0.",
         status: "experimental",
         profile: "component",
-        grants: "deny by default",
+        capabilities: "JSON task · no ambient WASI",
         run: "printf '{\"value\":42}' | tysel run",
         runLabel: "after building the Rust starter",
         sourceHref: "/docs/guides/wasm-component-rust",
@@ -245,7 +250,7 @@ export const exampleSections: ExampleSection[] = [
         purpose: "Same Component world with committed Go bindings.",
         status: "experimental",
         profile: "component",
-        grants: "deny by default",
+        capabilities: "JSON task · no ambient WASI",
         run: "printf '{\"value\":42}' | tysel run",
         runLabel: "after building the Go starter",
         sourceHref: "/docs/guides/wasm-component-go",

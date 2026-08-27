@@ -70,7 +70,7 @@ tysel dev`,
 function MetaLine({ example }: { example: Example }) {
   return (
     <p className="font-mono text-xs text-tysel-blue">
-      {statusLabel[example.status]} · {example.profile} · {example.grants}
+      {statusLabel[example.status]} · {example.profile} · {example.capabilities}
     </p>
   );
 }
@@ -285,6 +285,14 @@ export default function ExamplesPage() {
             <p className="mt-2 max-w-2xl text-sm leading-6 text-fd-muted-foreground">
               {section.intent}
             </p>
+            {section.note ? (
+              <p className="mt-4 max-w-3xl border-l-2 border-tysel-blue pl-4 text-xs leading-5 text-fd-muted-foreground">
+                <span className="font-medium text-fd-foreground">
+                  Effective profile default.
+                </span>{" "}
+                {section.note}
+              </p>
+            ) : null}
             <div className="mt-5 border border-fd-border">
               {section.examples
                 .filter((example) => example.id !== featuredExample.id)
