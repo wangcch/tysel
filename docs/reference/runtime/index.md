@@ -24,7 +24,7 @@ export default app;
 | --- | --- |
 | JSON values, profiles, trust modes, and shared value types | [Core types](types.md) |
 | Default export, HTTP handler, cron, queue, and MCP tasks | [Application module](application.md) |
-| Secrets, SQLite, Postgres, filesystem, LLM, and WebSocket APIs | [Host capabilities](capabilities.md) |
+| Secrets, SQLite, Postgres, Redis, filesystem, LLM, and WebSocket APIs | [Host capabilities](capabilities.md) |
 | Replay-safe workflows and signals | [Durable API](durable.md) |
 | Test declaration, assertions, and handler invocation | [Testing API](testing.md) |
 | `Request`, `Response`, `Headers`, `fetch`, crypto, timers, and other globals | [JavaScript API reference](../javascript/index.md) |

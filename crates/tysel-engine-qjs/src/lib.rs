@@ -80,7 +80,7 @@ pub fn runtime_compatibility() -> Result<RuntimeCompatibility, serde_json::Error
 }
 
 /// Apply the TAP execution profile. `isolated` denies fetch, SQLite,
-/// WebSocket, Postgres, and filesystem access; every other profile is the
+/// WebSocket, Postgres, Redis, and filesystem access; every other profile is the
 /// trusted service path.
 pub fn configure_execution_profile(profile: &str) {
     trust::configure(tysel_policy::Policy::from_profile(profile));
@@ -116,6 +116,12 @@ pub fn configure_fs(read: Vec<String>, write: Vec<String>, root: Option<&Path>) 
 /// `None` leaves Postgres unconfigured.
 pub fn configure_postgres(url: Option<String>, read_only: bool) {
     tysel_cap_postgres::configure(url, read_only);
+}
+
+/// Pin the trusted-path Redis URL resolved from `TYSEL_REDIS_<NAME>`.
+/// `None` leaves Redis unconfigured.
+pub fn configure_redis(url: Option<String>, read_only: bool) {
+    tysel_cap_redis::configure(url, read_only);
 }
 
 #[cfg(test)]

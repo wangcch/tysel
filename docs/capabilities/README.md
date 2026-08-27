@@ -10,7 +10,7 @@ them.
 | HTTP handler | Yes | Worker IPC | No; one-shot task | `[server]` |
 | Outbound `fetch` | Allowlisted | No | No | `permissions.fetch` |
 | Opaque secret handles | Yes | Brokered handle only | No | `permissions.secrets` |
-| SQLite / Postgres | Grant-bound | No | No | Corresponding permission/store |
+| SQLite / Postgres / Redis | Grant-bound | No | No | Corresponding permission/store |
 | Filesystem | Grant-bound | No | Read/write WIT imports | Manifest roots + Component deployment policy |
 | Inbound WebSocket | Yes | No | No | `server.websocket = true` |
 | Outbound WebSocket | Allowlisted | No | No | `permissions.fetch` |

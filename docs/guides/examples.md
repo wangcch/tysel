@@ -57,6 +57,7 @@ not the runtime boundary; review `tysel inspect` for the effective deployment.
 | WebSocket | [Service networking](service-networking.md) | [WebSocket service](https://github.com/wangcch/tysel/tree/main/examples/websocket-service) | Runnable |
 | SQLite | [SQLite guide](sqlite.md) | [SQLite worker](https://github.com/wangcch/tysel/tree/main/examples/sqlite-worker) | Runnable |
 | PostgreSQL | [PostgreSQL guide](postgresql.md) | [Postgres service](https://github.com/wangcch/tysel/tree/main/examples/postgres-service) | Runnable |
+| Redis | [Redis guide](redis.md) | [Redis service](https://github.com/wangcch/tysel/tree/main/examples/redis-service) | Runnable |
 | Filesystem | [Filesystem guide](filesystem.md) | [Filesystem transform](https://github.com/wangcch/tysel/tree/main/examples/filesystem-transform) | Runnable |
 | Secrets | [Host capabilities](../reference/runtime/capabilities.md#secrets) | [MCP tool](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool) | Runnable as a brokered handle |
 | LLM | [LLM gateway](llm-gateway.md) | [LLM service](https://github.com/wangcch/tysel/tree/main/examples/llm-service) / [Durable agent](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) | Runnable with provider setup |

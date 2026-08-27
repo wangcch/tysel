@@ -1,0 +1,17 @@
+[package]
+name = "tysel-cap-redis"
+version.workspace = true
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Official Redis capability."
+
+[lints]
+workspace = true
+
+[dependencies]
+redis.workspace = true
+tokio.workspace = true
+tysel-engine.workspace = true

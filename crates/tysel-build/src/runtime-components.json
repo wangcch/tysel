@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "d4314a71ef0bb34eaaaec5e4e5e65ab62073e632fc3318dc7f943f209f9a927e",
+  "cargo_lock_sha256": "602bec5b7c5335f34b6c10c3490c07b00b8584a69fd0f207e93046993f20d829",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -112,6 +112,14 @@
       "checksum": "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
     },
     {
+      "name": "arc-swap",
+      "version": "1.9.2",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/arc-swap@1.9.2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+    },
+    {
       "name": "async-trait",
       "version": "0.1.92",
       "license": "MIT OR Apache-2.0",
@@ -134,6 +142,14 @@
       "purl": "pkg:cargo/autocfg@1.5.1",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+    },
+    {
+      "name": "backon",
+      "version": "1.6.0",
+      "license": "Apache-2.0",
+      "purl": "pkg:cargo/backon@1.6.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
     },
     {
       "name": "base64-simd",
@@ -358,6 +374,14 @@
       "purl": "pkg:cargo/colorchoice@1.0.5",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+    },
+    {
+      "name": "combine",
+      "version": "4.6.8",
+      "license": "MIT",
+      "purl": "pkg:cargo/combine@4.6.8",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
     },
     {
       "name": "compact_str",
@@ -1481,6 +1505,14 @@
     },
     {
       "name": "num-bigint",
+      "version": "0.4.8",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/num-bigint@0.4.8",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+    },
+    {
+      "name": "num-bigint",
       "version": "0.5.1",
       "license": "MIT OR Apache-2.0",
       "purl": "pkg:cargo/num-bigint@0.5.1",
@@ -2126,6 +2158,14 @@
       "purl": "pkg:cargo/rand_core@0.9.5",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
+    },
+    {
+      "name": "redis",
+      "version": "0.32.7",
+      "license": "BSD-3-Clause",
+      "purl": "pkg:cargo/redis@0.32.7",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "014cc767fefab6a3e798ca45112bccad9c6e0e218fbd49720042716c73cfef44"
     },
     {
       "name": "redox_syscall",
@@ -2856,6 +2896,13 @@
       "version": "0.1.0",
       "license": "Apache-2.0",
       "purl": "pkg:cargo/tysel-cap-postgres@0.1.0",
+      "source": "workspace"
+    },
+    {
+      "name": "tysel-cap-redis",
+      "version": "0.1.0",
+      "license": "Apache-2.0",
+      "purl": "pkg:cargo/tysel-cap-redis@0.1.0",
       "source": "workspace"
     },
     {

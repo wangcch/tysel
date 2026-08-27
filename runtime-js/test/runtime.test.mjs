@@ -82,7 +82,7 @@ test("compatibility manifest identifies the embedded runtime boundary", () => {
   assert.equal(manifest.runtimeJsVersion, packageJson.version);
   assert.deepEqual(manifest.tap, {
     minimumSupportedVersion: 1,
-    maximumSupportedVersion: 4,
+    maximumSupportedVersion: 5,
   });
   assert.equal(manifest.componentAbiVersion, "0.4.0");
   assert.equal(manifest.quickjsAdapter, "rquickjs-0.12/quickjs-ng");

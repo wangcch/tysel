@@ -62,6 +62,12 @@ type SqlRow = Readonly<Record<string, JsonValue>>;
 application knows the selected columns. This generic is a static assertion,
 not runtime row validation.
 
+## Redis values
+
+`RedisClient` accepts UTF-8 string keys and values. `RedisSetOptions` carries
+the optional bounded `ttlSeconds` value; see the [Redis capability](capabilities.md#redis)
+for operations and limits.
+
 ## Secret references
 
 ```ts
@@ -122,6 +128,7 @@ remain undiscoverable.
 | Durable handler | `DurableHandler`, `DurableDuration`, `DurableRetryPolicy`, `DurableContext`, `DurableHost` | [Durable API](durable.md) |
 | Durable control | `DurableSuspendedResult`, `DurableCompletedResult`, `DurableStartResult`, `DurableControlClient` | [Durable control](durable.md#control-api) |
 | SQL and files | `SqlParameter`, `SqlRow`, `SqlClient`, `FileSystemClient` | [Host capabilities](capabilities.md) |
+| Redis | `RedisSetOptions`, `RedisClient` | [Redis](capabilities.md#redis) |
 | Secrets | `SecretReference`, `SecretClient` | [Secrets](capabilities.md#secrets) |
 | LLM | `LlmGenerateOptions`, `LlmUsage`, `LlmResponse`, `LlmClient` | [LLM generation](capabilities.md#llm-generation) |
 | Accepted WebSocket | `AcceptedWebSocketEvent`, `AcceptedWebSocketEventType`, `AcceptedWebSocketListener`, `AcceptedWebSocket` | [WebSockets](capabilities.md#websockets) |

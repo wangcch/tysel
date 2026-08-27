@@ -225,6 +225,24 @@
       return tysel._pgQuery(String(sql), JSON.stringify(params == null ? [] : params));
     },
   };
+  globalThis.tysel.redis = {
+    get(key) {
+      return tysel._redisGet(String(key));
+    },
+    set(key, value, options) {
+      const ttl = options == null ? undefined : options.ttlSeconds;
+      return tysel._redisSet(String(key), String(value), ttl);
+    },
+    del(...keys) {
+      return tysel._redisDel(JSON.stringify(keys.map(String)));
+    },
+    exists(key) {
+      return tysel._redisExists(String(key));
+    },
+    expire(key, ttlSeconds) {
+      return tysel._redisExpire(String(key), ttlSeconds);
+    },
+  };
   globalThis.tysel.fs = {
     read(path) {
       return tysel._fsRead(String(path));

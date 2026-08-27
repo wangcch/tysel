@@ -64,10 +64,11 @@ the manifest cannot override a profile-level denial.
 | `permissions.fetch` | Unique string array | Hostnames such as `api.example.com` | Outbound `fetch` and outbound WebSocket connections to matching hosts. |
 | `permissions.secrets` | Unique string array | Environment-variable names | Opaque handles returned by `tysel.secrets.ref`; it does not expose plaintext values. |
 | `permissions.postgres` | Array, at most one item | `name`, `name:read-only`, or `name:read-write` | A named Postgres grant whose URL is injected by the deployment. |
+| `permissions.redis` | Array, at most one item | `name`, `name:read-only`, or `name:read-write` | A named Redis grant whose URL is injected by the deployment. |
 | `permissions.fs_read` | Unique string array, at most 64 | Directory roots | UTF-8 regular-file reads beneath pinned roots. Relative roots resolve from the project root; absolute roots remain absolute. |
 | `permissions.fs_write` | Unique string array, at most 64 | Directory roots | UTF-8 regular-file writes beneath pinned roots. Relative roots resolve from the project root; absolute roots remain absolute. Read permission is not implied. |
 
-See [Permissions](/reference/manifest/permissions) for hostname semantics, Postgres environment
+See [Permissions](/reference/manifest/permissions) for hostname semantics, Postgres and Redis environment
 mapping, filesystem confinement, and profile-specific denial behavior.
 
 ### Limit fields
@@ -118,6 +119,7 @@ These relationships are validated in addition to the individual field types:
 | `server.workers > 1` | `app.profile = "service"` | Isolated and Component profiles accept only one worker. |
 | Outbound `fetch` or WebSocket | Matching `permissions.fetch` hostname and a profile that permits it | The manifest grant alone is not authority. Redirect targets are checked again. |
 | Postgres use | At most one named grant plus <code>{"TYSEL_POSTGRES_<NAME>"}</code> | Connection URLs and credentials stay outside the manifest. |
+| Redis use | At most one named grant plus <code>{"TYSEL_REDIS_<NAME>"}</code> | Connection URLs and credentials stay outside the manifest. |
 | Component filesystem import | Matching `fs_read` or `fs_write` root plus deployment capability | Component imports, manifest request, and deployment policy must all agree. |
 | Manifest task | At least one non-empty `depends` or `steps` value | Empty workflows are rejected. |
 

@@ -197,14 +197,17 @@ fn allowed_label(value: &str, allowed: &[&str]) -> String {
 fn safe_capability_label(value: &str) -> String {
     allowed_label(
         value,
-        &["durable", "fetch", "fs", "llm", "postgres", "secrets", "sqlite", "websocket"],
+        &["durable", "fetch", "fs", "llm", "postgres", "redis", "secrets", "sqlite", "websocket"],
     )
 }
 
 fn safe_operation_label(value: &str) -> String {
     allowed_label(
         value,
-        &["claim", "close", "exec", "generate", "query", "read", "ref", "request", "send", "write"],
+        &[
+            "claim", "close", "del", "exec", "exists", "expire", "generate", "get", "query",
+            "read", "ref", "request", "send", "set", "write",
+        ],
     )
 }
 

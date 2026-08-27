@@ -24,6 +24,7 @@ fn sample_manifest() -> PackageManifest {
         secret_names: Vec::new(),
         fetch_hosts: Vec::new(),
         postgres: Vec::new(),
+        redis: Vec::new(),
         fs_read: Vec::new(),
         fs_write: Vec::new(),
         json_logs: true,
@@ -219,6 +220,34 @@ fn tap_v3_without_worker_or_admission_fields_remains_readable() {
     assert_eq!(decoded.manifest.format_version, 3);
     assert_eq!(decoded.manifest.workers, 1);
     assert_eq!(decoded.manifest.max_in_flight, 1000);
+    assert_eq!(compatibility_report(&encoded).status, TapCompatibilityStatus::Legacy);
+}
+
+#[test]
+fn tap_v4_without_redis_grants_remains_readable() {
+    let mut manifest = serde_json::to_value(sample_manifest()).unwrap();
+    manifest["format_version"] = 4.into();
+    manifest["bundle_hash"] = bundle_hash(BUNDLE.as_bytes()).into();
+    manifest.as_object_mut().unwrap().remove("redis");
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let map = identity_source_map("src/index.ts", TYPESCRIPT).unwrap();
+    let component_index = br#"{"components":[]}"#;
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(b"TYSELTAP");
+    encoded.extend_from_slice(&4u32.to_le_bytes());
+    encoded.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(BUNDLE.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(map.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&(component_index.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(&0u64.to_le_bytes());
+    encoded.extend_from_slice(&manifest);
+    encoded.extend_from_slice(BUNDLE.as_bytes());
+    encoded.extend_from_slice(&map);
+    encoded.extend_from_slice(component_index);
+
+    let decoded = Tap::decode(&encoded).unwrap();
+    assert_eq!(decoded.manifest.format_version, 4);
+    assert!(decoded.manifest.redis.is_empty());
     assert_eq!(compatibility_report(&encoded).status, TapCompatibilityStatus::Legacy);
 }
 

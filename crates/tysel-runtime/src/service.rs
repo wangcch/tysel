@@ -220,6 +220,12 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         postgres.as_ref().map(|config| config.url.clone()),
         postgres.is_some_and(|config| config.read_only),
     );
+    let redis =
+        tysel_manifest::resolve_redis(&tap.manifest.redis, &std::collections::HashMap::new());
+    tysel_engine_qjs::configure_redis(
+        redis.as_ref().map(|config| config.url.clone()),
+        redis.is_some_and(|config| config.read_only),
+    );
     tysel_engine_qjs::configure_secrets(tysel_engine_qjs::load_declared(
         &tap.manifest.secret_names,
         &std::collections::HashMap::new(),

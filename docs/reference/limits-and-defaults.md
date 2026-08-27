@@ -50,6 +50,11 @@ request limit. The smaller applicable bound wins.
 | Postgres rows | 10,000 |
 | Postgres serialized result | 1 MiB |
 | Postgres connections | 4 |
+| Redis key | 4 KiB |
+| Redis value | 1 MiB |
+| Redis keys per `del` | 128 |
+| Redis TTL | 1–31,536,000 seconds |
+| Redis concurrent operations | 4 |
 | Filesystem read or write | 1 MiB per operation |
 | Filesystem roots | 64 read and 64 write entries |
 

@@ -26,3 +26,7 @@ Suite-specific setup and interpretation live in the
 [benchmark README](https://github.com/wangcch/tysel/tree/main/benchmarks).
 Publish an exact number only with the artifact, environment, command, and
 evidence document that produced it.
+
+Capability-specific evidence:
+
+- [Redis provider and QuickJS end-to-end evaluation](redis.md)

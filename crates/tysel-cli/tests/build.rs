@@ -358,7 +358,7 @@ export default {
 }
 
 #[test]
-fn build_does_not_embed_postgres_urls() {
+fn build_does_not_embed_database_urls() {
     let dir = std::env::temp_dir().join(format!("tysel-cli-build-pg-{}", std::process::id()));
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::write(
@@ -371,6 +371,7 @@ profile = "service"
 
 [permissions]
 postgres = ["main:read-write"]
+redis = ["cache:read-write"]
 "#,
     )
     .unwrap();
@@ -385,6 +386,7 @@ postgres = ["main:read-write"]
 
     let result = Command::new(cli_exe())
         .env("TYSEL_POSTGRES_MAIN", "postgres://tysel:s3cret-not-for-tap@127.0.0.1:5432/tysel")
+        .env("TYSEL_REDIS_CACHE", "redis://:redis-secret-not-for-tap@127.0.0.1:6379/0")
         .args([
             "build",
             "--manifest",
@@ -399,14 +401,19 @@ postgres = ["main:read-write"]
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(stdout.contains("postgres"), "{stdout}");
+    assert!(stdout.contains("redis"), "{stdout}");
 
     let tap = Tap::from_path(&output).expect("extract tap");
     assert_eq!(tap.manifest.postgres, ["main:read-write"]);
+    assert_eq!(tap.manifest.redis, ["cache:read-write"]);
     let bytes = fs::read(&output).unwrap();
     let haystack = String::from_utf8_lossy(&bytes);
     assert!(haystack.contains("main:read-write"), "alias missing from binary");
     assert!(!haystack.contains("postgres://"), "URL leaked into binary");
     assert!(!haystack.contains("s3cret-not-for-tap"), "password leaked into binary");
+    assert!(haystack.contains("cache:read-write"), "Redis alias missing from binary");
+    assert!(!haystack.contains("redis://"), "Redis URL leaked into binary");
+    assert!(!haystack.contains("redis-secret-not-for-tap"), "Redis password leaked into binary");
 }
 
 #[test]

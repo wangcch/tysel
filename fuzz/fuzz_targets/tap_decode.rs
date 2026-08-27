@@ -27,6 +27,7 @@ fuzz_target!(|data: &[u8]| {
             secret_names: Vec::new(),
             fetch_hosts: Vec::new(),
             postgres: Vec::new(),
+            redis: Vec::new(),
             fs_read: Vec::new(),
             fs_write: Vec::new(),
             http1: true,

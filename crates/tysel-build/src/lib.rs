@@ -164,6 +164,7 @@ fn package_manifest(manifest: &Manifest, runtime_version: &str) -> PackageManife
         secret_names: manifest.permissions.secrets.clone(),
         fetch_hosts: manifest.permissions.fetch.clone(),
         postgres: manifest.permissions.postgres.clone(),
+        redis: manifest.permissions.redis.clone(),
         fs_read: manifest.permissions.fs_read.clone(),
         fs_write: manifest.permissions.fs_write.clone(),
         json_logs: manifest.observability.logs.eq_ignore_ascii_case("json"),
@@ -470,7 +471,7 @@ max_response_mb = 7
     }
 
     #[test]
-    fn tap_copies_postgres_and_fs_permissions() {
+    fn tap_copies_data_and_fs_permissions() {
         let manifest = Manifest::parse(
             r#"
 [app]
@@ -480,6 +481,7 @@ profile = "service"
 
 [permissions]
 postgres = ["main:read-write"]
+redis = ["cache:read-only"]
 fs_read = ["./data"]
 fs_write = ["./data"]
 "#,
@@ -492,6 +494,7 @@ fs_write = ["./data"]
             identity_source_map("src/index.ts", "export default {}\n").unwrap(),
         );
         assert_eq!(tap.manifest.postgres, ["main:read-write"]);
+        assert_eq!(tap.manifest.redis, ["cache:read-only"]);
         assert_eq!(tap.manifest.fs_read, ["./data"]);
         assert_eq!(tap.manifest.fs_write, ["./data"]);
     }

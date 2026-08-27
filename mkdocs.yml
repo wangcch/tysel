@@ -33,6 +33,7 @@ nav:
       - Filesystem: guides/filesystem.md
       - SQLite: guides/sqlite.md
       - PostgreSQL: guides/postgresql.md
+      - Redis: guides/redis.md
       - Container image: guides/container-image.md
       - Observability: guides/observability.md
       - Debugging: guides/debugging.md
@@ -84,7 +85,9 @@ nav:
   - Operate:
       - Security: security/README.md
       - Production: operations/production.md
-      - Performance: performance/README.md
+      - Performance:
+          - Overview: performance/README.md
+          - Redis: performance/redis.md
   - Internals:
       - Architecture: architecture/README.md
       - Decision records: adr/index.md

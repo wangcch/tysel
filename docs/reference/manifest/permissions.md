@@ -8,6 +8,7 @@ defaults to empty, so access is denied unless declared.
 | `fetch` | Unique hostnames | — | Outbound `fetch` and WebSocket connections to matching hosts. |
 | `secrets` | Unique environment-variable names | — | Opaque secret references through `tysel.secrets`. |
 | `postgres` | One unique named grant | 1 item | A named Postgres connection and access mode. |
+| `redis` | One unique named grant | 1 item | A named Redis connection and access mode. |
 | `fs_read` | Unique directory roots | 64 items | UTF-8 regular-file reads beneath pinned roots. |
 | `fs_write` | Unique directory roots | 64 items | UTF-8 regular-file writes beneath pinned roots. |
 
@@ -19,6 +20,7 @@ execution profile that disallows the capability.
 fetch = ["api.example.com"]
 secrets = ["API_TOKEN"]
 postgres = ["main:read-only"]
+redis = ["cache:read-write"]
 fs_read = ["./fixtures"]
 fs_write = ["./data/output"]
 ```
@@ -49,6 +51,13 @@ environment variable.
 
 Follow the [PostgreSQL guide](../../guides/postgresql.md) for parameter types,
 read-only verification, pooling, TLS, and deployment checks.
+
+## Redis
+
+Redis grants use the same named `read-write` or `read-only` form. A grant named
+`cache` resolves only from `TYSEL_REDIS_CACHE`; connection URLs never belong in
+the manifest. Read-only mode permits `get` and `exists` and rejects mutations
+before connecting. See the [Redis guide](../../guides/redis.md).
 
 ## Filesystem
 

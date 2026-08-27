@@ -21,6 +21,7 @@ pub enum Cap {
     Sqlite,
     WebSocket,
     Postgres,
+    Redis,
     Fs,
     Llm,
 }
@@ -82,6 +83,7 @@ impl Policy {
                         | Cap::Sqlite
                         | Cap::WebSocket
                         | Cap::Postgres
+                        | Cap::Redis
                         | Cap::Fs
                         | Cap::Llm
                 )
@@ -125,6 +127,7 @@ mod tests {
         assert!(!policy.allows(Cap::Sqlite));
         assert!(!policy.allows(Cap::WebSocket));
         assert!(!policy.allows(Cap::Postgres));
+        assert!(!policy.allows(Cap::Redis));
         assert!(!policy.allows(Cap::Fs));
         assert!(!policy.allows(Cap::Llm));
         assert_eq!(
@@ -141,6 +144,7 @@ mod tests {
         assert!(policy.allows(Cap::Sqlite));
         assert!(policy.allows(Cap::WebSocket));
         assert!(policy.allows(Cap::Postgres));
+        assert!(policy.allows(Cap::Redis));
         assert!(policy.allows(Cap::Fs));
         assert!(policy.allows(Cap::Llm));
         policy.require(Cap::Fetch).unwrap();

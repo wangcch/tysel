@@ -34,6 +34,7 @@ const titles = {
   "guides/filesystem.md": "Filesystem",
   "guides/sqlite.md": "SQLite",
   "guides/postgresql.md": "PostgreSQL",
+  "guides/redis.md": "Redis",
   "guides/container-image.md": "Container image",
   "guides/observability.md": "Observability",
   "guides/debugging.md": "Debugging",
@@ -48,6 +49,7 @@ const titles = {
   "security/README.md": "Security model",
   "operations/production.md": "Production operations",
   "performance/README.md": "Performance and evidence",
+  "performance/redis.md": "Redis performance evaluation",
 };
 
 function walk(dir) {
@@ -390,6 +392,7 @@ const docsMetas = {
       "filesystem",
       "sqlite",
       "postgresql",
+      "redis",
       "container-image",
       "observability",
       "debugging",

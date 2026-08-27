@@ -1,0 +1,20 @@
+schema_version = 1
+
+[app]
+name = "redis-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+
+[permissions]
+redis = ["cache:read-write"]
+
+[tasks.verify]
+description = "Check the application"
+steps = [["check"]]
+
+[tasks.release]
+depends = ["verify"]
+steps = [["build", "--release"]]

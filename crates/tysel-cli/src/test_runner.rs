@@ -145,6 +145,11 @@ fn configure_host(manifest: &Manifest, root: &Path) -> Result<()> {
         postgres.as_ref().map(|config| config.url.clone()),
         postgres.is_some_and(|config| config.read_only),
     );
+    let redis = tysel_manifest::resolve_redis(&manifest.permissions.redis, &file_values);
+    tysel_engine_qjs::configure_redis(
+        redis.as_ref().map(|config| config.url.clone()),
+        redis.is_some_and(|config| config.read_only),
+    );
     tysel_engine_qjs::configure_secrets(tysel_engine_qjs::load_declared(
         &manifest.permissions.secrets,
         &file_values,

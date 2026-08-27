@@ -8,6 +8,14 @@ export interface SqlClient {
   query(sql: string, params?: readonly unknown[]): Promise<Record<string, unknown>[]>;
 }
 
+export interface RedisClient {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, options?: { readonly ttlSeconds?: number }): Promise<void>;
+  del(...keys: readonly string[]): Promise<number>;
+  exists(key: string): Promise<boolean>;
+  expire(key: string, ttlSeconds: number): Promise<boolean>;
+}
+
 export interface FileSystemClient {
   read(path: string): Promise<string>;
   write(path: string, data: string): Promise<void>;
@@ -92,6 +100,7 @@ export interface TyselRuntime {
   acceptWebSocket(): AcceptedWebSocket;
   sqlite: SqlClient;
   postgres: SqlClient;
+  redis: RedisClient;
   fs: FileSystemClient;
   secrets: SecretClient;
   llm: LlmClient;

@@ -7,6 +7,7 @@ use crate::DurableSession;
 use crate::queue::{IoHandle, IoRequest, OpId};
 
 const PENDING: &str = "__tysel_pending";
+const MAX_REDIS_TTL_SECONDS: f64 = 31_536_000.0;
 const CAPABILITY_API: &str = include_str!("../../../runtime-js/capability-client/runtime.js");
 const DURABLE_CONTROL_API: &str = include_str!("../../../runtime-js/durable/control.js");
 
@@ -53,6 +54,11 @@ fn install_inner(
     let io_sqlite_query = io.clone();
     let io_pg_exec = io.clone();
     let io_pg_query = io.clone();
+    let io_redis_get = io.clone();
+    let io_redis_set = io.clone();
+    let io_redis_del = io.clone();
+    let io_redis_exists = io.clone();
+    let io_redis_expire = io.clone();
     let io_fs_read = io.clone();
     let io_fs_write = io.clone();
     let io_llm = io.clone();
@@ -262,6 +268,41 @@ fn install_inner(
         })?,
     )?;
     tysel.set(
+        "_redisGet",
+        Function::new(ctx.clone(), move |ctx, key: String| {
+            submit(ctx, &io_redis_get, |id| IoRequest::RedisGet { id, key })
+        })?,
+    )?;
+    tysel.set(
+        "_redisSet",
+        Function::new(
+            ctx.clone(),
+            move |ctx, key: String, value: String, ttl_seconds: Option<f64>| {
+                let ttl_seconds = ttl_seconds.map(|value| redis_ttl(&ctx, value)).transpose()?;
+                submit(ctx, &io_redis_set, |id| IoRequest::RedisSet { id, key, value, ttl_seconds })
+            },
+        )?,
+    )?;
+    tysel.set(
+        "_redisDel",
+        Function::new(ctx.clone(), move |ctx, keys_json: String| {
+            submit(ctx, &io_redis_del, |id| IoRequest::RedisDel { id, keys_json })
+        })?,
+    )?;
+    tysel.set(
+        "_redisExists",
+        Function::new(ctx.clone(), move |ctx, key: String| {
+            submit(ctx, &io_redis_exists, |id| IoRequest::RedisExists { id, key })
+        })?,
+    )?;
+    tysel.set(
+        "_redisExpire",
+        Function::new(ctx.clone(), move |ctx, key: String, ttl_seconds: f64| {
+            let ttl_seconds = redis_ttl(&ctx, ttl_seconds)?;
+            submit(ctx, &io_redis_expire, |id| IoRequest::RedisExpire { id, key, ttl_seconds })
+        })?,
+    )?;
+    tysel.set(
         "_fsRead",
         Function::new(ctx.clone(), move |ctx, path: String| {
             submit(ctx, &io_fs_read, |id| IoRequest::FsRead { id, path })
@@ -358,6 +399,16 @@ fn install_inner(
     }
     ctx.eval::<(), _>(DURABLE_CONTROL_API)?;
     Ok(())
+}
+
+fn redis_ttl(ctx: &Ctx<'_>, value: f64) -> rquickjs::Result<u64> {
+    if !value.is_finite() || value.fract() != 0.0 {
+        return Err(Exception::throw_type(ctx, "redis TTL must be a finite integer"));
+    }
+    if !(1.0..=MAX_REDIS_TTL_SECONDS).contains(&value) {
+        return Err(Exception::throw_type(ctx, "redis TTL must be between 1 and 31536000 seconds"));
+    }
+    Ok(value as u64)
 }
 
 const DURABLE_API: &str = include_str!("../../../runtime-js/durable/runtime.js");

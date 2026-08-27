@@ -130,6 +130,18 @@ export const exampleSections: ExampleSection[] = [
         contractHref: "/reference/runtime/capabilities#sql",
       },
       {
+        id: "redis-service",
+        name: "Redis service",
+        purpose: "Bounded cache operations through a named, host-injected Redis grant.",
+        status: "runnable",
+        profile: "service",
+        grants: "cache:read-write · SQLite (default)",
+        run: "tysel task verify\ntysel run",
+        sourceHref: tree("examples/redis-service"),
+        docsHref: "/docs/guides/redis",
+        contractHref: "/reference/runtime/capabilities#redis",
+      },
+      {
         id: "filesystem-transform",
         name: "Filesystem transform",
         purpose: "Read and write UTF-8 files beneath separate pinned roots.",

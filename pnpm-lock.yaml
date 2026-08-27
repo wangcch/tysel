@@ -79,6 +79,15 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  examples/redis-service:
+    devDependencies:
+      '@tysel/types':
+        specifier: workspace:*
+        version: link:../../packages/tysel-types
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   examples/sqlite-worker:
     devDependencies:
       '@tysel/types':

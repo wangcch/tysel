@@ -1,0 +1,102 @@
+# Redis performance evaluation
+
+This report measures both the bounded Rust Redis provider and the public
+`tysel.redis` path through QuickJS, capability policy, the host I/O reactor,
+Promise settlement, value conversion, and HTTP response handling.
+
+Results are local comparison evidence, not production capacity promises.
+
+## Environment
+
+- Date: 2026-08-27
+- Host: Apple M5 Pro, arm64, macOS 26.6
+- Container VM: Podman, 8 CPUs, 4096 MiB memory
+- Redis: 7.4.9, Linux arm64, jemalloc, RDB and AOF disabled
+- Rust Redis client: 0.32.7, release build
+- Transport: loopback forwarded into the Podman VM; no TLS, authentication, or cluster
+- Method: three measured rounds with rotated mode order; tables report the median round
+- Provider samples per round: 3,000 for 16 B and 1 KiB; 750 for 64 KiB
+- End-to-end samples per round: 1,000 for 16 B and 1 KiB; 250 for 64 KiB
+
+Each benchmark creates process- and time-scoped keys. A cleanup guard removes
+them on success or unwinding; a post-run scan confirmed that no `tysel:*` keys
+remained.
+
+## Provider microbenchmark
+
+`bounded Redis` uses the same atomic `GETRANGE + EXISTS` transaction as Tysel,
+without Tysel's validation, concurrency gate, and runtime value conversion.
+
+### Sequential GET
+
+| Value | Raw Redis ops/s | Bounded Redis ops/s | Tysel provider ops/s | Provider p50 | Provider p95 |
+|---:|---:|---:|---:|---:|---:|
+| 16 B | 2,730 | 2,533 | 2,654 | 362.3 us | 412.0 us |
+| 1 KiB | 2,723 | 2,575 | 2,566 | 376.2 us | 415.0 us |
+| 64 KiB | 2,489 | 2,136 | 2,067 | 476.7 us | 542.6 us |
+
+The atomic bounded-read semantics account for most of the small-value GET
+difference. The remaining large-value cost includes UTF-8 validation and
+materializing a runtime string.
+
+### Sequential SET
+
+| Value | Raw Redis ops/s | Tysel provider ops/s | Provider p50 | Provider p95 |
+|---:|---:|---:|---:|---:|
+| 16 B | 2,677 | 2,660 | 360.1 us | 399.1 us |
+| 1 KiB | 2,643 | 2,737 | 352.8 us | 397.4 us |
+| 64 KiB | 1,353 | 1,292 | 723.5 us | 861.9 us |
+
+SET remains close to the raw client. Positive differences are measurement
+variation, not evidence that the wrapper makes Redis faster.
+
+## QuickJS end-to-end benchmark
+
+The end-to-end handler is loaded once into a four-worker `IsolatePool`. Every
+measured operation dispatches an HTTP request through a reused isolate. The
+`runtime-noop` route performs the same dispatch and response handling without a
+Redis call, providing a runtime-floor comparison.
+
+### Sequential operations
+
+| Operation | Value | Runtime-noop p50 | `tysel.redis` p50 | `tysel.redis` p95 | ops/s |
+|---|---:|---:|---:|---:|---:|
+| GET | 16 B | 26.8 us | 362.4 us | 412.0 us | 2,486 |
+| GET | 1 KiB | 23.2 us | 358.5 us | 401.0 us | 2,723 |
+| GET | 64 KiB | 25.7 us | 394.6 us | 427.5 us | 2,508 |
+| SET | 16 B | 24.4 us | 355.3 us | 383.5 us | 2,793 |
+| SET | 1 KiB | 23.2 us | 358.0 us | 388.4 us | 2,772 |
+| SET | 64 KiB | 22.8 us | 620.2 us | 780.0 us | 1,447 |
+
+On this VM-forwarded local setup, the reusable QuickJS request path contributes
+roughly 20–30 us at p50; Redis/network time dominates the end-to-end result.
+
+### Four-concurrent throughput
+
+| Operation | 16 B | 1 KiB | 64 KiB |
+|---|---:|---:|---:|
+| GET | 8,850 ops/s | 9,049 ops/s | 5,712 ops/s |
+| SET | 9,539 ops/s | 9,854 ops/s | 2,505 ops/s |
+
+Four concurrent calls exercise the supported Redis in-flight limit. Results
+above that concurrency are intentionally outside this benchmark.
+
+## Reproduce
+
+```sh
+podman run --rm -d --name tysel-redis-bench \
+  -p 127.0.0.1:16379:6379 \
+  docker.io/library/redis:7-alpine \
+  redis-server --save '' --appendonly no
+
+TYSEL_REDIS_BENCH_URL=redis://127.0.0.1:16379 \
+cargo run --release --locked -p tysel-cap-redis --example benchmark
+
+TYSEL_REDIS_BENCH_URL=redis://127.0.0.1:16379 \
+cargo run --release --locked -p tysel-engine-qjs \
+  --example redis_end_to_end_benchmark
+```
+
+Both tools emit every raw round followed by `median` CSV rows. Override
+`TYSEL_REDIS_BENCH_ROUNDS`, `TYSEL_REDIS_BENCH_ITERS`, or
+`TYSEL_REDIS_E2E_BENCH_ITERS` when a different measurement scale is required.

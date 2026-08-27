@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use tysel_manifest::{Manifest, parse_postgres_grant};
+use tysel_manifest::{Manifest, parse_postgres_grant, parse_redis_grant};
 
 use crate::project::ProjectContext;
 
@@ -115,6 +115,19 @@ pub fn render(manifest: &Manifest) -> Result<String> {
             capabilities.push("postgres");
         }
     }
+    if service && !manifest.permissions.redis.is_empty() {
+        let grant =
+            parse_redis_grant(&manifest.permissions.redis[0]).map_err(|error| anyhow!(error))?;
+        if grant.mode.as_deref() == Some("read-only") {
+            imports.push("RedisClient");
+            overrides.push((
+                "redis",
+                "  readonly redis: Pick<RedisClient, \"get\" | \"exists\">;".into(),
+            ));
+        } else {
+            capabilities.push("redis");
+        }
+    }
     if service
         && (!manifest.permissions.fs_read.is_empty() || !manifest.permissions.fs_write.is_empty())
     {
@@ -201,6 +214,7 @@ profile = "{profile}"
         manifest.permissions.fetch = vec!["api.example.com".into()];
         manifest.permissions.secrets = vec!["API_TOKEN".into()];
         manifest.permissions.postgres = vec!["main:read-only".into()];
+        manifest.permissions.redis = vec!["cache:read-only".into()];
         manifest.permissions.fs_read = vec!["./input".into()];
         manifest.server.websocket = true;
 
@@ -210,6 +224,7 @@ profile = "{profile}"
         assert!(output.contains("\"httpGet\""));
         assert!(output.contains("\"sqlite\""));
         assert!(output.contains("Pick<SqlClient, \"query\">"));
+        assert!(output.contains("Pick<RedisClient, \"get\" | \"exists\">"));
         assert!(output.contains("Pick<FileSystemClient, \"read\">"));
         assert!(output.contains("SecretClient<\"API_TOKEN\">"));
     }

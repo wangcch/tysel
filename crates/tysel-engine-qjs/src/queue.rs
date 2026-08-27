@@ -65,6 +65,11 @@ pub enum IoRequest {
     SqliteQuery { id: OpId, sql: String, params_json: String },
     PostgresExec { id: OpId, sql: String, params_json: String },
     PostgresQuery { id: OpId, sql: String, params_json: String },
+    RedisGet { id: OpId, key: String },
+    RedisSet { id: OpId, key: String, value: String, ttl_seconds: Option<u64> },
+    RedisDel { id: OpId, keys_json: String },
+    RedisExists { id: OpId, key: String },
+    RedisExpire { id: OpId, key: String, ttl_seconds: u64 },
     FsRead { id: OpId, path: String },
     FsWrite { id: OpId, path: String, data: String },
     LlmGenerate { id: OpId, request_json: String },
@@ -90,6 +95,11 @@ impl IoRequest {
             | Self::SqliteQuery { id, .. }
             | Self::PostgresExec { id, .. }
             | Self::PostgresQuery { id, .. }
+            | Self::RedisGet { id, .. }
+            | Self::RedisSet { id, .. }
+            | Self::RedisDel { id, .. }
+            | Self::RedisExists { id, .. }
+            | Self::RedisExpire { id, .. }
             | Self::FsRead { id, .. }
             | Self::FsWrite { id, .. }
             | Self::LlmGenerate { id, .. } => *id,
@@ -112,6 +122,11 @@ impl IoRequest {
             | Self::WsClientClose { .. } => Cap::WebSocket,
             Self::SqliteExec { .. } | Self::SqliteQuery { .. } => Cap::Sqlite,
             Self::PostgresExec { .. } | Self::PostgresQuery { .. } => Cap::Postgres,
+            Self::RedisGet { .. }
+            | Self::RedisSet { .. }
+            | Self::RedisDel { .. }
+            | Self::RedisExists { .. }
+            | Self::RedisExpire { .. } => Cap::Redis,
             Self::FsRead { .. } | Self::FsWrite { .. } => Cap::Fs,
             Self::LlmGenerate { .. } => Cap::Llm,
         }
@@ -125,6 +140,11 @@ impl IoRequest {
             Self::SqliteQuery { .. } => Some(("sqlite", "query")),
             Self::PostgresExec { .. } => Some(("postgres", "exec")),
             Self::PostgresQuery { .. } => Some(("postgres", "query")),
+            Self::RedisGet { .. } => Some(("redis", "get")),
+            Self::RedisSet { .. } => Some(("redis", "set")),
+            Self::RedisDel { .. } => Some(("redis", "del")),
+            Self::RedisExists { .. } => Some(("redis", "exists")),
+            Self::RedisExpire { .. } => Some(("redis", "expire")),
             Self::FsRead { .. } => Some(("fs", "read")),
             Self::FsWrite { .. } => Some(("fs", "write")),
             Self::LlmGenerate { .. } => Some(("llm", "generate")),
@@ -895,6 +915,30 @@ async fn execute(
         IoRequest::PostgresQuery { id, sql, params_json } => {
             IoCompletion { id, result: postgres_op(sql, params_json, true, cancel, deadline).await }
         }
+        IoRequest::RedisGet { id, key } => IoCompletion {
+            id,
+            result: redis_op(tysel_cap_redis::get(&key), cancel, deadline).await,
+        },
+        IoRequest::RedisSet { id, key, value, ttl_seconds } => IoCompletion {
+            id,
+            result: redis_op(tysel_cap_redis::set(&key, &value, ttl_seconds), cancel, deadline)
+                .await,
+        },
+        IoRequest::RedisDel { id, keys_json } => IoCompletion {
+            id,
+            result: match serde_json::from_str::<Vec<String>>(&keys_json) {
+                Ok(keys) => redis_op(tysel_cap_redis::del(&keys), cancel, deadline).await,
+                Err(_) => Err("redis keys must be a JSON string array".into()),
+            },
+        },
+        IoRequest::RedisExists { id, key } => IoCompletion {
+            id,
+            result: redis_op(tysel_cap_redis::exists(&key), cancel, deadline).await,
+        },
+        IoRequest::RedisExpire { id, key, ttl_seconds } => IoCompletion {
+            id,
+            result: redis_op(tysel_cap_redis::expire(&key, ttl_seconds), cancel, deadline).await,
+        },
         IoRequest::FsRead { id, path } => IoCompletion {
             id,
             result: run_blocking(cancel, deadline, move || {
@@ -970,6 +1014,17 @@ async fn postgres_op(
                 tysel_cap_postgres::exec(&sql, &params_json).await.map(Value::Number)
             }
         } => result,
+        _ = cancelled(&cancel, deadline) => Err(interrupt_err(&cancel, deadline)),
+    }
+}
+
+async fn redis_op<F>(future: F, cancel: Arc<AtomicBool>, deadline: Instant) -> Result<Value, String>
+where
+    F: std::future::Future<Output = Result<Value, String>>,
+{
+    tokio::select! {
+        biased;
+        result = future => result,
         _ = cancelled(&cancel, deadline) => Err(interrupt_err(&cancel, deadline)),
     }
 }

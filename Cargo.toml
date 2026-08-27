@@ -22,6 +22,7 @@ members = [
     "crates/tysel-cap-fs",
     "crates/tysel-cap-sqlite",
     "crates/tysel-cap-postgres",
+    "crates/tysel-cap-redis",
     "crates/tysel-cap-llm",
     "crates/tysel-cap-mcp",
     "crates/tysel-isolate",
@@ -67,6 +68,7 @@ wasmtime-wasi = { version = "=36.0.13", default-features = false }
 libc = "0.2"
 oxc = { version = "0.146", features = ["semantic", "transformer", "codegen"] }
 oxc_resolver = "11"
+redis = { version = "0.32", default-features = false, features = ["connection-manager", "tokio-native-tls-comp"] }
 
 tysel-manifest = { path = "crates/tysel-manifest" }
 tysel-distribution = { path = "crates/tysel-distribution" }
@@ -84,6 +86,7 @@ tysel-policy = { path = "crates/tysel-policy" }
 tysel-cap-sqlite = { path = "crates/tysel-cap-sqlite" }
 tysel-cap-fs = { path = "crates/tysel-cap-fs" }
 tysel-cap-postgres = { path = "crates/tysel-cap-postgres" }
+tysel-cap-redis = { path = "crates/tysel-cap-redis" }
 tysel-observability = { path = "crates/tysel-observability" }
 tysel-task = { path = "crates/tysel-task" }
 tysel-task-rpc = { path = "crates/tysel-task-rpc" }

@@ -25,6 +25,7 @@ the complete contract for a command, manifest field, or runtime API.
 | Transform files beneath pinned roots | [Filesystem](filesystem.md) | Separate UTF-8 read/write roots; traversal and symlinks denied. |
 | Persist local application state | [SQLite](sqlite.md) | One runtime-owned connection and a stable deployment volume. |
 | Connect to a remote relational database | [PostgreSQL](postgresql.md) | One named grant, host-injected URL, least-privilege database role. |
+| Add bounded cache and ephemeral key/value state | [Redis](redis.md) | One named grant, host-injected URL, restricted command surface. |
 | Expose a function as an MCP tool | [MCP example](examples.md#agents) | Registered MCP task; isolated example keeps secret values in the host. |
 | Run generated or third-party JavaScript | [Isolated plugin example](examples.md#isolation-and-wasm) | Linux is the production isolation security target. |
 | Suspend for retry, time, or human approval | [Durable execution](../concepts/durable-execution.md) | Durable store and replay-safe boundaries. |

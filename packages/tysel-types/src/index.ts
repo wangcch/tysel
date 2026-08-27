@@ -157,6 +157,18 @@ export interface SqlClient {
   ): Promise<Row[]>;
 }
 
+export interface RedisSetOptions {
+  readonly ttlSeconds?: number;
+}
+
+export interface RedisClient {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, options?: RedisSetOptions): Promise<void>;
+  del(...keys: readonly string[]): Promise<number>;
+  exists(key: string): Promise<boolean>;
+  expire(key: string, ttlSeconds: number): Promise<boolean>;
+}
+
 export interface FileSystemClient {
   read(path: string): Promise<string>;
   write(path: string, data: string): Promise<void>;
@@ -260,6 +272,7 @@ export interface TyselRuntime {
   acceptWebSocket(): AcceptedWebSocket;
   readonly sqlite: SqlClient;
   readonly postgres: SqlClient;
+  readonly redis: RedisClient;
   readonly fs: FileSystemClient;
   readonly secrets: SecretClient;
   readonly llm: LlmClient;

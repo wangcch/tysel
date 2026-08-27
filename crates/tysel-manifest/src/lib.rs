@@ -149,6 +149,8 @@ pub struct Permissions {
     #[serde(default)]
     pub postgres: Vec<String>,
     #[serde(default)]
+    pub redis: Vec<String>,
+    #[serde(default)]
     pub fs_read: Vec<String>,
     #[serde(default)]
     pub fs_write: Vec<String>,
@@ -297,6 +299,12 @@ impl Manifest {
                     out.push_str(&format!("    {item}\n"));
                 }
             }
+            if !self.permissions.redis.is_empty() {
+                out.push_str("  Redis\n");
+                for item in &self.permissions.redis {
+                    out.push_str(&format!("    {item}\n"));
+                }
+            }
             if !self.permissions.secrets.is_empty() {
                 out.push_str("  Secrets\n");
                 for secret in &self.permissions.secrets {
@@ -329,7 +337,7 @@ impl Manifest {
         }
         if is_component {
             out.push_str(
-                "\nDenied\n  HTTP Client\n  Secrets\n  SQLite\n  Postgres\n  LLM\n  WebSocket\n  Durable Handlers\n  Raw TCP\n  Child Process\n  FFI\n  Dynamic Library\n  Environment\n",
+                "\nDenied\n  HTTP Client\n  Secrets\n  SQLite\n  Postgres\n  Redis\n  LLM\n  WebSocket\n  Durable Handlers\n  Raw TCP\n  Child Process\n  FFI\n  Dynamic Library\n  Environment\n",
             );
         } else {
             out.push_str(
@@ -430,6 +438,15 @@ impl Manifest {
         }
         for item in &self.permissions.postgres {
             parse_postgres_grant(item).map_err(ManifestError::Invalid)?;
+        }
+        if self.permissions.redis.len() > 1 {
+            return Err(ManifestError::Invalid(
+                "this runtime supports exactly one Redis connection; declare at most one grant"
+                    .into(),
+            ));
+        }
+        for item in &self.permissions.redis {
+            parse_redis_grant(item).map_err(ManifestError::Invalid)?;
         }
         self.validate_tasks()?;
         Ok(())
@@ -654,6 +671,67 @@ pub fn resolve_postgres(
         .filter(|value| !value.is_empty())
         .or_else(|| file_values.get(&key).filter(|value| !value.is_empty()).cloned())?;
     Some(ResolvedPostgres { url, read_only: grant.mode.as_deref() == Some("read-only") })
+}
+
+/// A named Redis connection from `[permissions] redis`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedisGrant {
+    pub name: String,
+    pub mode: Option<String>,
+}
+
+/// Parse `cache` or `cache:read-write`. URLs are rejected so credentials cannot
+/// enter the manifest or TAP trailer.
+pub fn parse_redis_grant(raw: &str) -> Result<RedisGrant, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("redis permission must not be empty".into());
+    }
+    if raw.contains("://") || raw.contains('/') || raw.contains('@') {
+        return Err(format!(
+            "redis permission {raw:?} must be a connection name (e.g. cache:read-write), not a URL"
+        ));
+    }
+    let (name, mode) = match raw.split_once(':') {
+        Some((name, mode)) => (name, Some(mode)),
+        None => (raw, None),
+    };
+    if !is_postgres_alias(name) {
+        return Err(format!(
+            "redis permission {raw:?} must be a connection name (e.g. cache:read-write)"
+        ));
+    }
+    if let Some(mode) = mode
+        && mode != "read-write"
+        && mode != "read-only"
+    {
+        return Err(format!("redis permission {raw:?} mode must be read-write or read-only"));
+    }
+    Ok(RedisGrant { name: name.to_owned(), mode: mode.map(str::to_owned) })
+}
+
+pub fn redis_url_env_key(name: &str) -> String {
+    format!("TYSEL_REDIS_{}", name.replace('-', "_").to_ascii_uppercase())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRedis {
+    pub url: String,
+    pub read_only: bool,
+}
+
+pub fn resolve_redis(
+    grants: &[String],
+    file_values: &std::collections::HashMap<String, String>,
+) -> Option<ResolvedRedis> {
+    let raw = grants.iter().map(|item| item.trim()).find(|item| !item.is_empty())?;
+    let grant = parse_redis_grant(raw).ok()?;
+    let key = redis_url_env_key(&grant.name);
+    let url = std::env::var(&key)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| file_values.get(&key).filter(|value| !value.is_empty()).cloned())?;
+    Some(ResolvedRedis { url, read_only: grant.mode.as_deref() == Some("read-only") })
 }
 
 fn is_postgres_alias(name: &str) -> bool {
@@ -1168,6 +1246,33 @@ postgres = ["postgres://user:pass@localhost/db"]
         let resolved = resolve_postgres(&["review_ro:read-only".into()], &file_values).unwrap();
         assert_eq!(resolved.url, "postgres://localhost/app");
         assert!(resolved.read_only);
+    }
+
+    #[test]
+    fn redis_grants_reject_urls_and_resolve_named_environment_values() {
+        let err = parse_redis_grant("redis://user:pass@localhost/0").unwrap_err();
+        assert!(err.contains("not a URL"), "{err}");
+        let mut file_values = std::collections::HashMap::new();
+        file_values.insert("TYSEL_REDIS_REVIEW_CACHE".into(), "redis://localhost/1".into());
+        let resolved = resolve_redis(&["review-cache:read-only".into()], &file_values).unwrap();
+        assert_eq!(resolved.url, "redis://localhost/1");
+        assert!(resolved.read_only);
+    }
+
+    #[test]
+    fn rejects_multiple_redis_connections() {
+        let err = Manifest::parse(
+            r#"
+[app]
+name = "redis-service"
+entry = "src/index.ts"
+
+[permissions]
+redis = ["cache", "sessions"]
+"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("at most one grant"), "{err}");
     }
 
     #[test]

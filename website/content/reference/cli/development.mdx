@@ -28,7 +28,8 @@ tysel types [-o FILE] [--check] [--manifest FILE]
 Generate `tysel-env.d.ts` from the effective manifest. The exported `TyselEnv`
 contains core runtime utilities plus only the declared service capabilities.
 Secret names become string literals, filesystem read/write methods are selected
-independently, and read-only Postgres exposes only `query`.
+independently, read-only Postgres exposes only `query`, and read-only Redis
+exposes only `get` and `exists`.
 `tysel init` generates this file for typed projects and wires the entry module
 to `TyselApp<TyselEnv>` automatically.
 
@@ -79,7 +80,7 @@ tysel dev [ENTRY] [--manifest FILE]
 Bundle and serve the application, watch project files, and reload after a
 successful rebuild. An explicit `ENTRY` overrides `app.entry` for this run.
 Development mode can read `.env`, but only declared secrets and named Postgres
-connections become visible through their host capabilities.
+and Redis connections become visible through their host capabilities.
 
 `tysel dev` rejects a `.wasm` Component entry. Components are one-shot tasks;
 use `tysel run` and provide one JSON value on stdin.

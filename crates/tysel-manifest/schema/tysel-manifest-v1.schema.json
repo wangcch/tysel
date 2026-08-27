@@ -95,6 +95,15 @@
             "pattern": "^[a-z][a-z0-9_-]*(?::(?:read-write|read-only))?$"
           }
         },
+        "redis": {
+          "type": "array",
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*(?::(?:read-write|read-only))?$"
+          }
+        },
         "fs_read": { "$ref": "#/$defs/filesystemRoots" },
         "fs_write": { "$ref": "#/$defs/filesystemRoots" }
       }

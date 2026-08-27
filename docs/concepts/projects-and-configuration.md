@@ -52,7 +52,7 @@ receives documented defaults.
 | Root | `schema_version` | Pinning the manifest contract. Version 1 is the current and only accepted value. |
 | `[app]` | `name`, `entry`, `profile` | Selecting the artifact, source entry, and `service`, `isolated`, or `component` execution boundary. |
 | `[server]` | `listen`, `workers`, `http1`, `http2`, `websocket` | Changing the inbound listener, concurrency, or protocol set. It does not grant outbound access. |
-| `[permissions]` | `fetch`, `secrets`, `postgres`, `fs_read`, `fs_write` | Requesting a host capability. Omission means denied, and deployment policy may deny further. |
+| `[permissions]` | `fetch`, `secrets`, `postgres`, `redis`, `fs_read`, `fs_write` | Requesting a host capability. Omission means denied, and deployment policy may deny further. |
 | `[limits]` | Memory, CPU, timeout, concurrency, request and response sizes | Replacing application resource defaults with explicit budgets. |
 | `[durable]` | `store`, `path` | Selecting manifest-backed durable storage and its runtime-relative SQLite path. |
 | `[observability]` | `logs`, `traces`, `metrics` | Declaring log format and telemetry endpoint intent. Some export controls remain environment-based. |

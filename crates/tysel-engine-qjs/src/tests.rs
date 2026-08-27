@@ -71,6 +71,7 @@ fn public_runtime_surface_is_explicit_and_stable() {
           root: Object.keys(tysel).filter((key) => !key.startsWith("_")).sort(),
           sqlite: Object.keys(tysel.sqlite).sort(),
           postgres: Object.keys(tysel.postgres).sort(),
+          redis: Object.keys(tysel.redis).sort(),
           fs: Object.keys(tysel.fs).sort(),
           secrets: Object.keys(tysel.secrets).sort(),
           llm: Object.keys(tysel.llm).sort(),
@@ -83,7 +84,7 @@ fn public_runtime_surface_is_explicit_and_stable() {
     assert_eq!(
         value,
         Value::String(
-            r#"{"root":["acceptWebSocket","durable","echo","fs","httpGet","isolateId","llm","postgres","secrets","sleep","sqlite"],"sqlite":["exec","query"],"postgres":["exec","query"],"fs":["read","write"],"secrets":["ref"],"llm":["generate"],"durable":["sendSignal","start"]}"#.into()
+            r#"{"root":["acceptWebSocket","durable","echo","fs","httpGet","isolateId","llm","postgres","redis","secrets","sleep","sqlite"],"sqlite":["exec","query"],"postgres":["exec","query"],"redis":["del","exists","expire","get","set"],"fs":["read","write"],"secrets":["ref"],"llm":["generate"],"durable":["sendSignal","start"]}"#.into()
         )
     );
 }
@@ -736,6 +737,55 @@ fn postgres_is_denied_until_configured() {
     match value {
         Value::String(message) => {
             assert!(message.contains("not configured"), "unexpected error: {message}");
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
+fn redis_is_denied_until_configured() {
+    tysel_cap_redis::configure(None, false);
+    let value = eval(
+        r#"
+        (async () => {
+            try {
+                await tysel.redis.get("key");
+                return "allowed";
+            } catch (err) {
+                return String(err);
+            }
+        })()
+        "#,
+        config(),
+    )
+    .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(message.contains("not configured"), "unexpected error: {message}");
+        }
+        other => panic!("expected error string, got {other:?}"),
+    }
+}
+
+#[test]
+fn redis_ttl_rejects_fractional_values_at_the_host_boundary() {
+    let value = eval(
+        r#"
+        (async () => {
+            try {
+                await tysel.redis.expire("key", 1.5);
+                return "allowed";
+            } catch (err) {
+                return String(err);
+            }
+        })()
+        "#,
+        config(),
+    )
+    .expect("eval");
+    match value {
+        Value::String(message) => {
+            assert!(message.contains("finite integer"), "unexpected error: {message}");
         }
         other => panic!("expected error string, got {other:?}"),
     }

@@ -23,14 +23,15 @@ options such as `build --stub` when an override is specific to one invocation.
 | Variable | Required when | Notes |
 | --- | --- | --- |
 | `TYSEL_POSTGRES_<NAME>` | The manifest grants named Postgres access | Connection URL for the one configured grant. Uppercase the name and replace `-` with `_`. |
+| `TYSEL_REDIS_<NAME>` | The manifest grants named Redis access | Connection URL for the one configured grant. Uppercase the name and replace `-` with `_`. |
 | A name in `permissions.secrets` | A host capability needs that secret | The name and value are deployment-owned; JavaScript receives only a `SecretReference`. |
 
 For a grant named `review-ro`, the host key is
-`TYSEL_POSTGRES_REVIEW_RO`. Connection URLs and secret values must not be
+`TYSEL_POSTGRES_REVIEW_RO`; Redis follows the same mapping. Connection URLs and secret values must not be
 placed in the manifest, command line, build artifact, or logs.
 
 Under `tysel dev`, `.env` participates in local resolution, but only declared
-secret names and the selected Postgres connection are imported. Unrelated
+secret names and the selected Postgres and Redis connections are imported. Unrelated
 variables do not become application globals.
 
 ## Durable storage

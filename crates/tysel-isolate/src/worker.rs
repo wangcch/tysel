@@ -161,6 +161,7 @@ fn configure_isolated_capabilities(secret_names: Vec<String>) {
     tysel_engine_qjs::configure_execution_profile("isolated");
     tysel_engine_qjs::configure_fetch_hosts(Vec::new());
     tysel_engine_qjs::configure_postgres(None, false);
+    tysel_engine_qjs::configure_redis(None, false);
     tysel_engine_qjs::configure_fs(Vec::new(), Vec::new(), None);
     let mut secrets = HashMap::new();
     for name in secret_names {

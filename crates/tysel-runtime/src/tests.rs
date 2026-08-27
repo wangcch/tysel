@@ -261,6 +261,7 @@ fn component_manifest() -> PackageManifest {
         secret_names: Vec::new(),
         fetch_hosts: Vec::new(),
         postgres: Vec::new(),
+        redis: Vec::new(),
         fs_read: Vec::new(),
         fs_write: Vec::new(),
         json_logs: false,

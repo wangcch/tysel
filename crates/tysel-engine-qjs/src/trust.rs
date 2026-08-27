@@ -1,7 +1,7 @@
 //! Process-wide trust policy for in-process isolates.
 //!
 //! Unconfigured processes (unit tests) use the trusted service policy. After
-//! `configure`, isolated profiles deny fetch, SQLite, WebSocket, Postgres, and
+//! `configure`, isolated profiles deny fetch, SQLite, WebSocket, Postgres, Redis, and
 //! filesystem access even when `[permissions]` lists them. Do not call
 //! `configure` from engine-qjs unit tests: they share a process with open-mode
 //! tests.
