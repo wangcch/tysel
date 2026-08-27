@@ -259,6 +259,7 @@ jobs:
             ${{ env.RECORD_ROOT }}/summary-v1-${{ matrix.arch }}-cycle1.json
             ${{ env.RECORD_ROOT }}/runner-doctor-${{ matrix.arch }}.json
           if-no-files-found: error
+          retention-days: 90
       - name: Record or resume cycle 2
         id: record_cycle_2
         if: >-
@@ -281,6 +282,7 @@ jobs:
             ${{ env.RECORD_ROOT }}/summary-v1-${{ matrix.arch }}-cycle2.json
             ${{ env.RECORD_ROOT }}/runner-doctor-${{ matrix.arch }}.json
           if-no-files-found: error
+          retention-days: 90
       - name: Record or resume cycle 3
         id: record_cycle_3
         if: >-
@@ -303,6 +305,7 @@ jobs:
             ${{ env.RECORD_ROOT }}/summary-v1-${{ matrix.arch }}-cycle3.json
             ${{ env.RECORD_ROOT }}/runner-doctor-${{ matrix.arch }}.json
           if-no-files-found: error
+          retention-days: 90
       - name: Enforce cycle stability
         if: >-
           ${{ success() && inputs.record_finalize &&
@@ -338,3 +341,4 @@ jobs:
             ${{ env.RECORD_ROOT }}/stability-v1-${{ matrix.arch }}.json
             ${{ env.RECORD_ROOT }}/runner-doctor-${{ matrix.arch }}.json
           if-no-files-found: error
+          retention-days: 90

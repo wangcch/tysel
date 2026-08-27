@@ -1,0 +1,363 @@
+{
+  "status": "published",
+  "provenance": {
+    "sample": true,
+    "fetched_at": "2026-08-26T11:59:17Z",
+    "artifact_name": "benchmark-evidence-linux-x64"
+  },
+  "evidence": {
+    "evidence_version": 2,
+    "source_commit": "0123456789abcdef0123456789abcdef01234567",
+    "target": "linux-x64",
+    "profile": "release",
+    "command": "target/release/tysel bench all --format json --evidence target/benchmark-evidence-v2-linux-x64.json",
+    "system": {
+      "os": "linux",
+      "arch": "x86_64",
+      "os_version": "Ubuntu 24.04.4 LTS",
+      "cpu_model": "Sample CPU"
+    },
+    "artifact": {
+      "kind": "tysel-single-executable",
+      "size_bytes": 20295378,
+      "sha256": "f8f80005e285cd6a5cf9ea499024911c6cc57936340bef7201af5a6a49b34037"
+    },
+    "measurements": {
+      "cold_start_ms": [
+        13.084581,
+        13.307708,
+        13.279285,
+        13.203619999999999,
+        13.22325,
+        14.909288,
+        14.307149,
+        13.166424,
+        13.213569999999999,
+        13.190669,
+        13.242025
+      ],
+      "cold_start_p50_ms": {
+        "measured": 13.22325,
+        "limit": 15.0,
+        "passed": true
+      },
+      "idle_memory_mb": {
+        "measured": 7.25390625,
+        "limit": 32.0,
+        "passed": true
+      },
+      "artifact_mb": {
+        "measured": 19.355180740356445,
+        "limit": 20.0,
+        "passed": true
+      },
+      "memory_kind": "pss"
+    },
+    "suites": [
+      {
+        "suite": "startup",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "system": {
+          "os": "linux",
+          "arch": "x86_64",
+          "os_version": "Ubuntu 24.04.4 LTS",
+          "cpu_model": "Sample CPU"
+        },
+        "metrics": [
+          {
+            "name": "cold_start_p50_ms",
+            "unit": "ms",
+            "samples": [
+              13.084581,
+              13.307708,
+              13.279285,
+              13.203619999999999,
+              13.22325,
+              14.909288,
+              14.307149,
+              13.166424,
+              13.213569999999999,
+              13.190669,
+              13.242025
+            ],
+            "sample_count": 11,
+            "p50": 13.22325,
+            "status": "pass",
+            "limit": 15.0,
+            "passed": true
+          }
+        ]
+      },
+      {
+        "suite": "memory",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "system": {
+          "os": "linux",
+          "arch": "x86_64",
+          "os_version": "Ubuntu 24.04.4 LTS",
+          "cpu_model": "Sample CPU"
+        },
+        "metrics": [
+          {
+            "name": "idle_memory_mb",
+            "unit": "MB",
+            "samples": [
+              7.25390625
+            ],
+            "sample_count": 1,
+            "p50": 7.25390625,
+            "status": "pass",
+            "limit": 32.0,
+            "passed": true,
+            "extra": {
+              "kind": "pss"
+            }
+          }
+        ]
+      },
+      {
+        "suite": "binary-size",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "system": {
+          "os": "linux",
+          "arch": "x86_64",
+          "os_version": "Ubuntu 24.04.4 LTS",
+          "cpu_model": "Sample CPU"
+        },
+        "metrics": [
+          {
+            "name": "artifact_mb",
+            "unit": "MB",
+            "samples": [
+              19.355180740356445
+            ],
+            "sample_count": 1,
+            "p50": 19.355180740356445,
+            "status": "pass",
+            "limit": 20.0,
+            "passed": true,
+            "extra": {
+              "bytes": 20295378,
+              "sha256": "f8f80005e285cd6a5cf9ea499024911c6cc57936340bef7201af5a6a49b34037"
+            }
+          }
+        ]
+      },
+      {
+        "suite": "isolate",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "system": {
+          "os": "linux",
+          "arch": "x86_64",
+          "os_version": "Ubuntu 24.04.4 LTS",
+          "cpu_model": "Sample CPU"
+        },
+        "metrics": [
+          {
+            "name": "cold_create_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 1.556464,
+            "p95": 1.632145,
+            "p99": 1.876913
+          },
+          {
+            "name": "warm_create_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 2.985889,
+            "status": "pass",
+            "limit": 5.0,
+            "passed": true,
+            "p95": 4.719474000000001,
+            "p99": 4.95281
+          },
+          {
+            "name": "warm_pool_acquire_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 0.10165,
+            "p95": 0.164488,
+            "p99": 0.193656
+          },
+          {
+            "name": "reuse_1000_growth_kb",
+            "unit": "KB",
+            "samples": [
+              1968.0
+            ],
+            "sample_count": 1,
+            "p50": 1968.0,
+            "status": "pass",
+            "limit": 16384.0,
+            "passed": true
+          },
+          {
+            "name": "crash_replace_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 15.023261,
+            "p95": 15.268715,
+            "p99": 15.319921
+          }
+        ]
+      },
+      {
+        "suite": "task",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "system": {
+          "os": "linux",
+          "arch": "x86_64",
+          "os_version": "Ubuntu 24.04.4 LTS",
+          "cpu_model": "Sample CPU"
+        },
+        "metrics": [
+          {
+            "name": "enqueue_10000_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 2.352873,
+            "p95": 2.5909079999999998,
+            "p99": 2.910386
+          },
+          {
+            "name": "claim_commit_1000_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 1.099578,
+            "p95": 1.11714,
+            "p99": 1.1519659999999998
+          },
+          {
+            "name": "backpressure_memory_delta_kb",
+            "unit": "KB",
+            "samples": [
+              6056.0
+            ],
+            "sample_count": 1,
+            "p50": 6056.0,
+            "status": "pass",
+            "limit": 32768.0,
+            "passed": true,
+            "extra": {
+              "kind": "pss",
+              "capacity": 10000,
+              "before_kb": 2696,
+              "after_kb": 8752,
+              "pending": 10000
+            }
+          },
+          {
+            "name": "crash_requeue_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 0.0009620000000000001,
+            "p95": 0.000993,
+            "p99": 0.0012720000000000001
+          }
+        ]
+      },
+      {
+        "suite": "durable",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "system": {
+          "os": "linux",
+          "arch": "x86_64",
+          "os_version": "Ubuntu 24.04.4 LTS",
+          "cpu_model": "Sample CPU"
+        },
+        "metrics": [
+          {
+            "name": "sqlite_append_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 0.786733,
+            "p95": 0.8469760000000001,
+            "p99": 0.895356
+          },
+          {
+            "name": "resume_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 3.9369490000000003,
+            "status": "pass",
+            "limit": 10.0,
+            "passed": true,
+            "p95": 3.9957700000000003,
+            "p99": 4.120483
+          },
+          {
+            "name": "replay_1000_effects_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 8.704782,
+            "p95": 8.886431,
+            "p99": 9.491414
+          },
+          {
+            "name": "restart_recovery_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 1.327362,
+            "p95": 1.691276,
+            "p99": 1.766559
+          }
+        ]
+      },
+      {
+        "suite": "http",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "system": {
+          "os": "linux",
+          "arch": "x86_64",
+          "os_version": "Ubuntu 24.04.4 LTS",
+          "cpu_model": "Sample CPU"
+        },
+        "metrics": [
+          {
+            "name": "json_1kb_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 0.3372,
+            "p95": 0.372887,
+            "p99": 0.37858800000000004
+          },
+          {
+            "name": "websocket_echo_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 0.567398,
+            "p95": 0.627251,
+            "p99": 0.6458879999999999
+          },
+          {
+            "name": "http1_concurrency_100_ms",
+            "unit": "ms",
+            "samples": [],
+            "sample_count": 101,
+            "p50": 12.252158000000001,
+            "p95": 13.753843999999999,
+            "p99": 14.301763000000001,
+            "extra": {
+              "in_flight": 100,
+              "protocol": "http1"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

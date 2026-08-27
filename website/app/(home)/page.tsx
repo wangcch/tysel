@@ -226,19 +226,23 @@ export default function HomePage() {
       <section className="border-b border-fd-border">
         <div className="mx-auto max-w-6xl px-6 py-20">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-fd-muted-foreground">
-            Production evidence
+            Ship with proof
           </p>
           <h2 className="font-heading mt-3 max-w-3xl text-3xl font-medium tracking-tight text-balance">
-            Claims wait for a named release. The gates are already public.
+            Every release carries evidence, not just a binary.
           </h2>
-          <div className="mt-10 grid gap-px bg-fd-border sm:grid-cols-2 lg:grid-cols-3">
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-fd-muted-foreground">
+            Compatibility reports, SBOMs, checksums, and CI admission gates
+            travel with the artifact. Marketing performance claims stay off the
+            homepage until cross-runtime evidence clears the publication
+            contract.
+          </p>
+          <div className="mt-10 grid gap-px bg-fd-border sm:grid-cols-2 lg:grid-cols-4">
             {[
-              ["Compatibility and evidence", "/reference/cli/evidence"],
-              ["SBOM, licenses, checksums", "/reference/cli/evidence"],
-              ["Security and isolation", "/docs/security"],
-              ["Benchmark methodology", "/benchmarks"],
+              ["Compatibility & evidence", "/reference/cli/evidence"],
+              ["Security model", "/docs/security"],
               ["Production operations", "/docs/operations/production"],
-              ["Limits and defaults", "/reference/limits-and-defaults"],
+              ["CI admission", "/benchmarks"],
             ].map(([label, href]) => (
               <Link
                 key={label}
@@ -249,12 +253,6 @@ export default function HomePage() {
               </Link>
             ))}
           </div>
-          <p className="mt-6 max-w-3xl text-sm leading-6 text-fd-muted-foreground">
-            Release-admission thresholds include a 20 MiB artifact, 15 ms median
-            cold start, 32 MiB idle Linux PSS, 5 ms warm isolate p50, and 10 ms
-            durable resume p50. Those are engineering gates, not marketing
-            measurements.
-          </p>
         </div>
       </section>
 

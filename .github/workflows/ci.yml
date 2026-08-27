@@ -261,3 +261,4 @@ jobs:
             target/benchmark-evidence-linux-x64.json
             target/benchmark-evidence-v2-linux-x64.json
           if-no-files-found: error
+          retention-days: 90
