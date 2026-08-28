@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -15,7 +23,102 @@ env:
   MSRV_TOOLCHAIN: 1.95.0
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      full: ${{ steps.classify.outputs.full }}
+      benchmark_required: ${{ steps.classify.outputs.benchmark_required }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/ci-change-classification
+          changed=target/ci-change-classification/changed-files.txt
+          case "$EVENT_NAME" in
+            pull_request)
+              [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+              git cat-file -e "${BASE_SHA}^{commit}"
+              git cat-file -e "${HEAD_SHA}^{commit}"
+              git diff --no-renames --name-only "$BASE_SHA...$HEAD_SHA" > "$changed"
+              ;;
+            push)
+              [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+              git cat-file -e "${HEAD_SHA}^{commit}"
+              prior_runs_url="https://api.github.com/repos/${REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=100"
+              validated_sha=
+              if prior_runs="$(curl --fail --silent --show-error --retry 3 \
+                --connect-timeout 10 --max-time 30 \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "$prior_runs_url")"; then
+                validated_sha="$(jq -r \
+                  '.workflow_runs | max_by(.created_at) | .head_sha // empty' \
+                  <<< "$prior_runs")"
+              fi
+              if [[ "$validated_sha" =~ ^[0-9a-f]{40}$ ]] \
+                && git cat-file -e "${validated_sha}^{commit}"; then
+                echo "Comparing current main against last successful CI: $validated_sha"
+                git diff --no-renames --name-only "$validated_sha" "$HEAD_SHA" > "$changed"
+              else
+                # Without a trustworthy validated base, reduced CI is unsafe.
+                echo "No usable successful main CI baseline; forcing full validation"
+                printf '%s\n' .github/workflows/ci.yml > "$changed"
+              fi
+              ;;
+            *)
+              echo "unsupported CI event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+          LC_ALL=C sort -u -o "$changed" "$changed"
+          echo "Changed files:"
+          sed 's/^/  /' "$changed"
+          bash .github/scripts/test-classify-ci-changes.sh
+          bash .github/scripts/classify-ci-changes.sh "$changed" | tee -a "$GITHUB_OUTPUT"
+      - name: Record change classification
+        env:
+          MODE: ${{ steps.classify.outputs.mode }}
+          DOCS_ONLY: ${{ steps.classify.outputs.docs_only }}
+          FULL: ${{ steps.classify.outputs.full }}
+          BENCHMARK_REQUIRED: ${{ steps.classify.outputs.benchmark_required }}
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          jq -n \
+            --arg mode "$MODE" \
+            --arg sourceCommit "$SOURCE_COMMIT" \
+            --argjson docsOnly "$DOCS_ONLY" \
+            --argjson full "$FULL" \
+            --argjson benchmarkRequired "$BENCHMARK_REQUIRED" \
+            '{schemaVersion: 1, sourceCommit: $sourceCommit,
+              mode: $mode, docsOnly: $docsOnly,
+              full: $full, benchmarkRequired: $benchmarkRequired}' \
+            > target/ci-change-classification/classification.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-change-classification
+          path: target/ci-change-classification
+          if-no-files-found: error
+          retention-days: 7
+
   rust:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -68,6 +171,8 @@ jobs:
       - run: cargo test --locked --workspace --all-targets
 
   rust-msrv:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -98,6 +203,8 @@ jobs:
       - run: cargo deny check
 
   fuzz-smoke:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -127,6 +234,8 @@ jobs:
           done
 
   component-host-macos:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -140,6 +249,8 @@ jobs:
   # x86_64 coverage comes from the rust job. One arm64 runner covers both
   # the component host and architecture-specific sandbox syscall tables.
   rust-arm64:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -170,6 +281,8 @@ jobs:
         run: bash .github/scripts/test-types-package.sh
 
   component-sdk-go:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -196,6 +309,8 @@ jobs:
           TYSEL_GO_COMPONENT_FIXTURE: sdk/examples/go-echo/echo.component.wasm
 
   component-sdk-rust:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -227,6 +342,8 @@ jobs:
 
   # Roadmap §23 idle PSS is Linux-only. macOS RSS from tysel-bench is a proxy.
   linux-pss:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -262,3 +379,45 @@ jobs:
             target/benchmark-evidence-v2-linux-x64.json
           if-no-files-found: error
           retention-days: 90
+
+  gate:
+    if: always()
+    needs:
+      - changes
+      - rust
+      - rust-msrv
+      - security-audit
+      - fuzz-smoke
+      - component-host-macos
+      - rust-arm64
+      - javascript
+      - component-sdk-go
+      - component-sdk-rust
+      - linux-pss
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected CI job to pass
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          jq -e '
+            . as $needs
+            | ["rust", "rust-msrv", "fuzz-smoke", "component-host-macos",
+                "rust-arm64", "component-sdk-go", "component-sdk-rust",
+                "linux-pss"] as $conditional
+            | ($needs.changes.result == "success")
+              and ($needs.javascript.result == "success")
+              and ($needs["security-audit"].result == "success")
+              and if $needs.changes.outputs.full == "true" then
+                all($conditional[]; $needs[.].result == "success")
+              elif $needs.changes.outputs.docs_only == "true" then
+                all($conditional[]; $needs[.].result == "skipped")
+              else
+                false
+              end
+          ' <<< "$NEEDS_JSON" > /dev/null || {
+            echo "CI jobs do not match the required change classification:" >&2
+            jq -r 'to_entries[] | "  \(.key): \(.value.result)"' <<< "$NEEDS_JSON" >&2
+            exit 1
+          }
