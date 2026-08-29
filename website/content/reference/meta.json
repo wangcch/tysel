@@ -4,6 +4,7 @@
     "index",
     "javascript",
     "runtime",
+    "component",
     "cli",
     "manifest",
     "environment",

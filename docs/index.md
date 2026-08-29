@@ -85,5 +85,7 @@ run [`tysel compat`](compatibility/README.md) before adopting a dependency.
   [production operations](operations/production.md), and
   [performance evidence](performance/README.md).
 
-For tools that consume documentation, use the full [`llms.txt`](llms.txt) or
-the compact [`llms-small.txt`](llms-small.txt) index.
+Machine-readable documentation is available as a compact
+[`llms.txt`](https://tysel.dev/llms.txt) index for page discovery or as
+[`llms-full.txt`](https://tysel.dev/llms-full.txt) with the complete
+documentation in one file.

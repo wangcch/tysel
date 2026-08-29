@@ -3,5 +3,7 @@ import { llms, referenceSource, source } from "@/lib/source";
 export const revalidate = false;
 
 export function GET() {
-  return new Response(`${llms(source).index()}\n\n${llms(referenceSource).index()}`);
+  const docsIndex = llms(source).index();
+  const referenceIndex = llms(referenceSource).index().replace(/^# Reference$/m, "## Reference");
+  return new Response(`${docsIndex}\n\n${referenceIndex}`);
 }

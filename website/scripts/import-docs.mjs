@@ -420,6 +420,7 @@ const referenceMetas = {
       "index",
       "javascript",
       "runtime",
+      "component",
       "cli",
       "manifest",
       "environment",
