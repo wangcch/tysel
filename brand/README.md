@@ -29,6 +29,8 @@ The secondary `ty` mark is a direct crop of the same outlined wordmark. It is re
 ## Logo usage
 
 - Use [`logo/tysel-wordmark.svg`](./logo/tysel-wordmark.svg) as the default signature.
+- Use [`logo/tysel-wordmark-blue.svg`](./logo/tysel-wordmark-blue.svg) when an
+  external image context cannot inherit `currentColor`, such as the repository README.
 - Use [`logo/tysel-mark.svg`](./logo/tysel-mark.svg) only when the full name cannot fit.
 - Both SVGs are outlined paths. They contain no live text or external font dependency.
 - Preserve clear space equal to the height of the wordmark's lowercase `t` crossbar.
@@ -37,4 +39,8 @@ The secondary `ty` mark is a direct crop of the same outlined wordmark. It is re
 
 ## GitHub social preview
 
-[`github/tysel-github-banner.png`](./github/tysel-github-banner.png) is the upload-ready 1280×640 image. Its SVG source is included for future size variants. The wordmark is the only focal symbol; the low-contrast line field stays in the background and suggests continuous runtime flow.
+[`github/tysel-github-banner.png`](./github/tysel-github-banner.png) is the
+upload-ready 1280×640 image. Its editable
+[`SVG source`](./github/tysel-github-banner.svg) is included for future size
+variants. The wordmark is the only focal symbol; the low-contrast line field
+stays in the background and suggests continuous runtime flow.

@@ -1,38 +1,36 @@
-# Tysel
+<p align="center">
+  <img src="brand/logo/tysel-wordmark-blue.svg" alt="Tysel" width="170">
+</p>
 
-> **Write TypeScript. Ship a binary.**
+<h1 align="center">Write TypeScript. Ship a binary.</h1>
 
-Tysel is a lightweight native TypeScript runtime for services and AI agents.
-It packages your application and runtime into one executable—without Node.js,
-V8, or `node_modules` in production.
+<p align="center">
+  A native TypeScript runtime for services and durable agents.<br>
+  Deploy one capability-bounded executable—without Node.js, V8, or
+  <code>node_modules</code> in production.
+</p>
 
-```ts
-import type { TyselApp } from "@tysel/types";
-
-export default {
-  async fetch(request) {
-    return Response.json({
-      message: "Hello from Tysel",
-      path: new URL(request.url).pathname,
-    });
-  },
-} satisfies TyselApp;
-```
+<p align="center">
+  <a href="docs/getting-started.md">Get started</a> ·
+  <a href="docs/guides/examples.md">Examples</a> ·
+  <a href="docs/index.md">Documentation</a> ·
+  <a href="docs/security/README.md">Security</a>
+</p>
 
 ## Why Tysel
 
-- **Ship one file.** Deploy an executable instead of a JavaScript environment.
-- **Grant capabilities explicitly.** Network, secrets, databases, and files are
-  denied until declared.
-- **Suspend and resume work.** Durable steps, effects, sleep, retry, and signals
-  survive process restarts.
-- **Run language-neutral tasks.** Package bounded Rust or Go Wasm Components
-  behind a versioned JSON ABI and restricted WASI host.
+- **Ship one artifact.** Package your application and its native runtime as one
+  executable.
+- **Bound every capability.** Network, secrets, databases, and files are denied
+  until explicitly granted.
+- **Resume durable work.** Persist steps, effects, sleep, retry, and signals so
+  work can continue after a process restart.
 
-Tysel uses Web-standard APIs and is built for HTTP services, workers, MCP tools,
-isolated plugins, and durable agents.
+Tysel is Web-API-first and designed for HTTP services, workers, MCP tools,
+isolated plugins, and durable agents. Experimental Wasm Component tasks let
+bounded Rust or Go code use the same task model.
 
-## Install
+## Quick start
 
 Install the latest published release on Linux or macOS:
 
@@ -41,11 +39,7 @@ curl -fsSL https://tysel.dev/install.sh | sh
 tysel doctor --install
 ```
 
-The installer adds the complete native toolchain; cloning this repository,
-Rust, Node.js, and npm are not required. See the [installation guide](docs/install.md)
-for version pinning, upgrades, rollback, and Windows support.
-
-## Try it
+Create, verify, and run an HTTP service:
 
 ```sh
 tysel init hello-tysel --yes
@@ -54,34 +48,91 @@ tysel task verify
 tysel dev
 ```
 
-Then package the application:
+In another terminal, call the address printed by the server:
+
+```sh
+curl http://127.0.0.1:3000/hello
+# {"message":"Hello from Tysel","path":"/hello"}
+```
+
+Stop the development server with `Ctrl-C`, then package and run it:
 
 ```sh
 tysel task release
 ./dist/hello-tysel
 ```
 
-The developer toolchain uses three binaries. Your application ships as one.
+```text
+src/index.ts + tysel.toml
+             │  tysel build --release
+             ▼
+      dist/hello-tysel
+      one native executable
+```
 
-## Scope
+The developer installation contains three cooperating tools. The application
+artifact is still one executable. See [installation](docs/install.md) for
+version pinning, authenticated upgrades, rollback, and Windows via WSL.
 
-Tysel is Web-API-first, not a general Node.js compatibility layer. Node
-builtins, native addons, subprocesses, dynamic libraries, and ambient host
-access are outside its application contract.
+## Where Tysel fits
 
-The `service` profile is for trusted application code. The `isolated` profile
-runs JavaScript in a separate worker process; Linux is the production isolation
-target. The experimental `component` profile runs one-shot Wasm Component
-tasks with no ambient host authority. Cross-compilation is not currently
-implemented.
+| Choose Tysel when you need | Know this before adopting |
+| --- | --- |
+| One executable instead of a JavaScript environment | Builds currently target the host platform |
+| Web-standard APIs for services and tasks | Tysel is not a general Node.js compatibility layer |
+| Explicit host-resource grants | Native addons, subprocesses, and dynamic libraries are outside the contract |
+| Durable work that survives restarts | Linux is the production isolation target |
 
-## Learn more
+Run [`tysel compat`](docs/compatibility/README.md) before adopting an npm
+dependency. Choose Node.js, Bun, or Deno instead when broad Node.js compatibility
+or a general-purpose JavaScript toolchain is the primary requirement.
 
-- [Getting started](docs/getting-started.md)
-- [How Tysel works](docs/concepts/how-tysel-works.md)
-- [Projects and configuration](docs/concepts/projects-and-configuration.md)
-- [Wasm Components](docs/reference/component/index.md)
-- [Documentation](docs/index.md)
+## What you can build
+
+| Workload | Runnable example |
+| --- | --- |
+| Fetch-style HTTP service | [Hello service](examples/hello-service) |
+| Hono API | [Hono API](examples/hono-api) |
+| Cron and Queue worker | [Task worker](examples/task-worker) |
+| Durable LLM workflow | [Durable agent](examples/durable-agent) |
+| MCP tool with a brokered secret | [MCP tool](examples/mcp-tool) |
+| Isolated third-party code | [Isolated plugin](examples/isolated-plugin) |
+| Rust or Go Wasm task | [Wasm Component guides](docs/reference/component/index.md) |
+
+Browse the complete [example gallery](docs/guides/examples.md) for filesystem,
+SQLite, PostgreSQL, Redis, WebSocket, and LLM integrations.
+
+## Security and evidence
+
+Evaluate Tysel through its [security model](docs/security/README.md),
+[capability matrix](docs/capabilities/README.md),
+[performance evidence](docs/performance/README.md), and
+[production runbook](docs/operations/production.md). Quantitative claims are
+published only with a named release, environment, workload, and reproduction
+command.
+
+## Platform and stability
+
+| Area | Current contract |
+| --- | --- |
+| API stability | Pre-1.0; APIs may change between minor releases |
+| Toolchain | Linux and macOS, x64 and arm64 |
+| Windows | WSL; no native Windows archive yet |
+| `service` profile | Trusted first-party application code |
+| `isolated` profile | Separate worker process; Linux is the production security gate |
+| `component` profile | Experimental Wasm Component tasks with restricted WASI |
+| Cross-compilation | Not currently implemented |
+
+See [execution profiles](docs/concepts/execution-profiles.md) and
+[how Tysel works](docs/concepts/how-tysel-works.md) for the complete runtime
+model.
+
+## Contributing
+
+Issues and focused pull requests are welcome. CI validates formatting, tests,
+compatibility, supply-chain checks, and release evidence. Do not report
+vulnerabilities in a public issue; follow the
+[security reporting guidance](docs/security/README.md#reporting-vulnerabilities).
 
 ## License
 
