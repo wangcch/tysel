@@ -9,6 +9,11 @@
     "url": "git+https://github.com/wangcch/tysel.git",
     "directory": "packages/tysel-types"
   },
+  "homepage": "https://tysel.dev/docs/",
+  "bugs": {
+    "url": "https://github.com/wangcch/tysel/issues"
+  },
+  "keywords": ["tysel", "typescript", "types", "runtime"],
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {

@@ -45,12 +45,12 @@ sed \
   sdk/examples/rust-echo/src/lib.rs \
   > "$staging/$root/rust-echo/src/lib.rs"
 sed \
-  's#../../../docs/guides/wasm-component-rust.md#https://tysel.dev/docs/guides/wasm-component-rust#' \
+  's#../../../docs/guides/wasm-component-rust.md#https://tysel.dev/docs/guides/wasm-component-rust/#' \
   sdk/examples/rust-echo/README.md \
   > "$staging/$root/rust-echo/README.md"
 sed \
-  -e 's#../../sdk/examples/rust-echo/README.md#https://tysel.dev/docs/guides/wasm-component-rust#' \
-  -e 's#../../sdk/README.md#https://tysel.dev/reference/component/rust-sdk#' \
+  -e 's#../../sdk/examples/rust-echo/README.md#https://tysel.dev/docs/guides/wasm-component-rust/#' \
+  -e 's#../../sdk/README.md#https://tysel.dev/reference/component/rust-sdk/#' \
   crates/tysel-component-sdk/README.md \
   > "$staging/$root/rust-echo/sdk/tysel-component-sdk/README.md"
 cat > "$staging/$root/rust-echo/sdk/tysel-component-sdk/Cargo.toml" <<EOF
@@ -85,11 +85,11 @@ sed \
   > "$staging/$root/go-echo/go.mod"
 sed \
   -e 's#../../../wit/component#wit/component#g' \
-  -e 's#../../../docs/guides/wasm-component-go.md#https://tysel.dev/docs/guides/wasm-component-go#' \
+  -e 's#../../../docs/guides/wasm-component-go.md#https://tysel.dev/docs/guides/wasm-component-go/#' \
   sdk/examples/go-echo/README.md \
   > "$staging/$root/go-echo/README.md"
 sed \
-  's#../examples/go-echo/README.md#https://tysel.dev/docs/guides/wasm-component-go#' \
+  's#../examples/go-echo/README.md#https://tysel.dev/docs/guides/wasm-component-go/#' \
   sdk/component-go/README.md \
   > "$staging/$root/go-echo/sdk/component-go/README.md"
 

@@ -1,25 +1,19 @@
 # tysel
 
-Public typed helpers for defining a Tysel application. Applications remain
-plain objects checked with `satisfies TyselApp`. Import `defineApp` only when a
-definition needs cross-property inference, notably MCP input schemas.
+Typed definition helpers for Tysel applications. This npm package is not the
+Tysel CLI or native runtime; install those through the
+[Tysel installer](https://tysel.dev/docs/install/).
 
-```ts
-import type { TyselApp } from "@tysel/types";
+`tysel init` adds the matching package version automatically. For a manual
+installation, pin it to the native toolchain version:
 
-export default {
-  async fetch() {
-    return new Response("ok");
-  },
-} satisfies TyselApp;
+```sh
+version="$(tysel --version | awk '{print $2}')"
+npm install --save-dev "tysel@$version" "@tysel/types@$version"
 ```
 
-The package exports `defineApp`, `cron`, `queue`, `mcp`, and `durableTask`, plus
-the public application types from `@tysel/types`. Helpers return plain objects;
-the native Tysel runtime provides the actual execution APIs.
-
-`defineApp()` infers an MCP handler input from the literal input schema. The
-package version must match the native toolchain and `@tysel/types` version.
+Use `defineApp` when an application needs cross-property inference, notably for
+MCP input schemas:
 
 ```ts
 import type { TyselEnv } from "./tysel-env.js";
@@ -39,9 +33,10 @@ export default defineApp<TyselEnv>()({
 });
 ```
 
-For a single MCP task or a mixed task registry, `mcp({...})` provides the same
-schema-driven inference locally. It is an optional convenience constructor,
-not the default application style.
+The package also exports `cron`, `queue`, `mcp`, and `durableTask`, plus public
+types from `@tysel/types`. Helpers return plain objects; the native runtime
+provides execution APIs. Applications that do not need helper inference can use
+`satisfies TyselApp` directly.
 
 See the [runtime API](https://tysel.dev/reference/runtime/) and
-[durable execution guide](../../docs/concepts/durable-execution.md).
+[durable execution guide](https://tysel.dev/docs/concepts/durable-execution/).

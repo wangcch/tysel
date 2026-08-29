@@ -1,6 +1,14 @@
 # @tysel/test
 
-Test helpers for applications running under `tysel test`.
+Test helpers for applications running under `tysel test`. This package does not
+provide a Node.js test runner.
+
+`tysel init` adds the matching version automatically. For a manual installation:
+
+```sh
+version="$(tysel --version | awk '{print $2}')"
+npm install --save-dev "@tysel/test@$version"
+```
 
 ```ts
 import app from "../src/index.ts";
@@ -13,20 +21,9 @@ test("returns a greeting", async () => {
 });
 ```
 
-`test(name, body)` registers synchronous or asynchronous tests. `assert`,
-`assert.equal`, and `assert.deepEqual` report failures through the native test
-runner. `invokeFetch` constructs a `Request` and invokes a Fetch handler without
-opening a network listener. `invokeFetchWithRuntime` additionally injects an
-explicit capability host and accepts focused runtime mocks.
+Run tests with `tysel test`. Each test file executes in a fresh QuickJS isolate.
+`invokeFetch` calls a Fetch handler without opening a listener;
+`invokeFetchWithRuntime` additionally injects a focused capability mock. The
+package version must match the native toolchain.
 
-Run the suite with:
-
-```sh
-tysel test
-tysel test tests/http.test.ts --timeout-ms 10000
-tysel test --json
-```
-
-Each test runs in a fresh QuickJS isolate. Test APIs are available only under
-`tysel test`; importing this package does not provide a Node.js test runner.
-The package version must match the installed Tysel native toolchain.
+See the [testing API](https://tysel.dev/reference/runtime/testing/).

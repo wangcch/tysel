@@ -9,6 +9,11 @@
     "url": "git+https://github.com/wangcch/tysel.git",
     "directory": "packages/tysel-test"
   },
+  "homepage": "https://tysel.dev/docs/",
+  "bugs": {
+    "url": "https://github.com/wangcch/tysel/issues"
+  },
+  "keywords": ["tysel", "typescript", "testing", "quickjs"],
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
