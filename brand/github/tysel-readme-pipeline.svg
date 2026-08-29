@@ -1,0 +1,35 @@
+<svg viewBox="0 0 640 112" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">TypeScript source becomes one native executable</title>
+  <desc id="desc">src/index.ts and tysel.toml compress through tysel build --release into dist/hello-tysel, one native executable.</desc>
+  <style>
+    .panel { fill: #F1F3F7; stroke: #D8DCE6; stroke-width: 1; }
+    .ink { fill: #111318; }
+    .muted { fill: #5C6370; }
+    .arrow { fill: none; stroke: #5B5CE2; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .out { fill: #111318; }
+    .out-text { fill: #F1F3F7; }
+    .lime { fill: #C9FF63; }
+    @media (prefers-color-scheme: dark) {
+      .panel { fill: #161B22; stroke: #30363D; }
+      .ink { fill: #F1F3F7; }
+      .muted { fill: #8B949E; }
+      .out { fill: #0D1117; stroke: #5B5CE2; stroke-width: 1; }
+      .out-text { fill: #F1F3F7; }
+    }
+  </style>
+
+  <rect class="panel" x="8" y="20" width="220" height="72" rx="6"/>
+  <text class="ink" x="118" y="52" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="600">src/index.ts</text>
+  <text class="muted" x="118" y="74" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">+ tysel.toml</text>
+
+  <g class="arrow">
+    <path d="M248 56 H300"/>
+    <path d="M290 48 L304 56 L290 64"/>
+  </g>
+  <text class="muted" x="274" y="39" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">build</text>
+
+  <rect class="out" x="312" y="20" width="320" height="72" rx="6"/>
+  <rect class="lime" x="312" y="20" width="4" height="72" rx="2"/>
+  <text class="out-text" x="480" y="52" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="600">dist/hello-tysel</text>
+  <text class="lime" x="480" y="74" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">one native executable</text>
+</svg>

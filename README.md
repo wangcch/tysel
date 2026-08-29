@@ -1,8 +1,13 @@
 <p align="center">
-  <img src="brand/logo/tysel-wordmark-blue.svg" alt="Tysel" width="170">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/tysel-wordmark-white.svg">
+    <img src="brand/logo/tysel-wordmark-blue.svg" alt="Tysel" width="200">
+  </picture>
 </p>
 
-<h1 align="center">Write TypeScript. Ship a binary.</h1>
+<p align="center">
+  <strong>Write TypeScript. Ship a binary.</strong>
+</p>
 
 <p align="center">
   A native TypeScript runtime for services and durable agents.<br>
@@ -15,6 +20,10 @@
   <a href="docs/guides/examples.md">Examples</a> ·
   <a href="docs/index.md">Documentation</a> ·
   <a href="docs/security/README.md">Security</a>
+</p>
+
+<p align="center">
+  <img src="brand/github/tysel-readme-pipeline.svg" alt="src/index.ts and tysel.toml build into dist/hello-tysel, one native executable" width="560">
 </p>
 
 ## Why Tysel
@@ -52,7 +61,6 @@ In another terminal, call the address printed by the server:
 
 ```sh
 curl http://127.0.0.1:3000/hello
-# {"message":"Hello from Tysel","path":"/hello"}
 ```
 
 Stop the development server with `Ctrl-C`, then package and run it:
@@ -60,14 +68,6 @@ Stop the development server with `Ctrl-C`, then package and run it:
 ```sh
 tysel task release
 ./dist/hello-tysel
-```
-
-```text
-src/index.ts + tysel.toml
-             │  tysel build --release
-             ▼
-      dist/hello-tysel
-      one native executable
 ```
 
 The developer installation contains three cooperating tools. The application
@@ -89,15 +89,13 @@ or a general-purpose JavaScript toolchain is the primary requirement.
 
 ## What you can build
 
-| Workload | Runnable example |
-| --- | --- |
-| Fetch-style HTTP service | [Hello service](examples/hello-service) |
-| Hono API | [Hono API](examples/hono-api) |
-| Cron and Queue worker | [Task worker](examples/task-worker) |
-| Durable LLM workflow | [Durable agent](examples/durable-agent) |
-| MCP tool with a brokered secret | [MCP tool](examples/mcp-tool) |
-| Isolated third-party code | [Isolated plugin](examples/isolated-plugin) |
-| Rust or Go Wasm task | [Wasm Component guides](docs/reference/component/index.md) |
+- **Fetch-style HTTP service** — [Hello service](examples/hello-service)
+- **Hono API** — [Hono API](examples/hono-api)
+- **Cron and Queue worker** — [Task worker](examples/task-worker)
+- **Durable LLM workflow** — [Durable agent](examples/durable-agent)
+- **MCP tool with a brokered secret** — [MCP tool](examples/mcp-tool)
+- **Isolated third-party code** — [Isolated plugin](examples/isolated-plugin)
+- **Rust or Go Wasm task** — [Wasm Component guides](docs/reference/component/index.md)
 
 Browse the complete [example gallery](docs/guides/examples.md) for filesystem,
 SQLite, PostgreSQL, Redis, WebSocket, and LLM integrations.

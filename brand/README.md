@@ -30,17 +30,29 @@ The secondary `ty` mark is a direct crop of the same outlined wordmark. It is re
 
 - Use [`logo/tysel-wordmark.svg`](./logo/tysel-wordmark.svg) as the default signature.
 - Use [`logo/tysel-wordmark-blue.svg`](./logo/tysel-wordmark-blue.svg) when an
-  external image context cannot inherit `currentColor`, such as the repository README.
+  external image context cannot inherit `currentColor` on a light surface, such as
+  the repository README.
+- Use [`logo/tysel-wordmark-white.svg`](./logo/tysel-wordmark-white.svg) for the same
+  situation on a dark surface (for example GitHub dark mode via `<picture>`).
+  Reversed marks use Runtime White, not Runtime Mist.
 - Use [`logo/tysel-mark.svg`](./logo/tysel-mark.svg) only when the full name cannot fit.
-- Both SVGs are outlined paths. They contain no live text or external font dependency.
+- The blue and white README marks are cropped to the ink box
+  (`viewBox="8.88 18.22 147.91 71.91"`). The default `currentColor` wordmark keeps
+  the 170×100 artboard for clear-space layouts.
+- All wordmark SVGs are outlined paths. They contain no live text or external font dependency.
 - Preserve clear space equal to the height of the wordmark's lowercase `t` crossbar.
 - Recommended minimum widths: 96 px for the wordmark and 24 px for the `ty` mark.
 - Use a single solid color. Do not stretch, rotate, add shadows, re-typeset, or separate the connected letters.
 
-## GitHub social preview
+## GitHub surfaces
 
 [`github/tysel-github-banner.png`](./github/tysel-github-banner.png) is the
-upload-ready 1280×640 image. Its editable
+upload-ready 1280×640 social preview. Its editable
 [`SVG source`](./github/tysel-github-banner.svg) is included for future size
 variants. The wordmark is the only focal symbol; the low-contrast line field
 stays in the background and suggests continuous runtime flow.
+
+[`github/tysel-readme-pipeline.svg`](./github/tysel-readme-pipeline.svg) is the
+inline README diagram: source plus manifest compress into one native executable.
+It uses Binary Ink, Tysel Blue, and Byte Lime, and adapts with
+`prefers-color-scheme`. Do not paste the social banner into the README body.
