@@ -8,6 +8,33 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
+mod support;
+
+use support::process::{CapturedLog, ManagedChild, wait_listen};
+
+#[cfg(unix)]
+#[test]
+fn readiness_failure_reports_status_and_stderr() {
+    let mut child = ManagedChild::spawn(
+        Command::new("sh")
+            .args(["-c", "echo readiness-diagnostic >&2; exit 7"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        "readiness diagnostic fixture",
+    );
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_listen(&mut child, Duration::from_secs(1));
+    }))
+    .expect_err("fixture exits before readiness");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .expect("string panic");
+    assert!(message.contains("exit status: 7"), "{message}");
+    assert!(message.contains("readiness-diagnostic"), "{message}");
+}
+
 #[test]
 fn run_executes_a_component_over_stdio() {
     let dir = temp_app("run-component");
@@ -187,11 +214,10 @@ fs_write = ["./data"]
     let mut child = Command::new(cli_exe())
         .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel run");
-    let stdout = child.stdout.take().expect("stdout");
-    let _ = wait_listen(stdout, Duration::from_secs(8));
+    let _ = wait_listen(&mut child, Duration::from_secs(8));
     let marker = dir.join("data/cron.txt");
     let started = std::time::Instant::now();
     while !marker.exists() && started.elapsed() < Duration::from_secs(3) {
@@ -1062,11 +1088,10 @@ listen = "127.0.0.1:0"
     let mut child = Command::new(cli_exe())
         .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel dev");
-    let stdout = child.stdout.take().expect("stdout");
-    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
     let mut stream = TcpStream::connect(&addr).expect("connect");
     stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
     let mut body = String::new();
@@ -1093,11 +1118,10 @@ fn run_serves_hello_until_killed() {
     let mut child = Command::new(cli_exe())
         .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel run");
-    let stdout = child.stdout.take().expect("stdout");
-    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
     let body = http_get(&addr);
     let _ = child.kill();
     let _ = child.wait();
@@ -1142,7 +1166,7 @@ path = "./data/tysel.db"
     fs::write(dir.join(".env"), "OPENAI_API_KEY=test-key\n").unwrap();
 
     let mut first = spawn_durable_agent(&dir, &llm_addr);
-    let first_addr = wait_listen(first.stdout.take().expect("stdout"), Duration::from_secs(8));
+    let (first_addr, _first_log) = wait_listen(&mut first, Duration::from_secs(8));
     let started = http_json(
         &first_addr,
         "POST",
@@ -1156,7 +1180,7 @@ path = "./data/tysel.db"
     first.wait().unwrap();
 
     let mut second = spawn_durable_agent(&dir, &llm_addr);
-    let second_addr = wait_listen(second.stdout.take().expect("stdout"), Duration::from_secs(8));
+    let (second_addr, _second_log) = wait_listen(&mut second, Duration::from_secs(8));
     let waiting = http_json(&second_addr, "GET", &format!("/runs/{run_id}"), None);
     assert_eq!(waiting["status"], "awaiting_approval");
     assert_eq!(llm_calls.load(Ordering::SeqCst), 1, "LLM effect replayed after restart");
@@ -1184,7 +1208,7 @@ path = "./data/tysel.db"
     second.wait().unwrap();
 
     let mut third = spawn_durable_agent(&dir, &llm_addr);
-    let third_addr = wait_listen(third.stdout.take().expect("stdout"), Duration::from_secs(8));
+    let (third_addr, _third_log) = wait_listen(&mut third, Duration::from_secs(8));
     let replayed = http_json(&third_addr, "GET", &format!("/runs/{run_id}"), None);
     assert_eq!(replayed["status"], "completed");
     assert_eq!(replayed["saveCount"], 1, "save-result effect replayed after restart");
@@ -1205,9 +1229,7 @@ fn run_does_not_reload_when_source_changes() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel run");
-    let stdout = child.stdout.take().expect("stdout");
-    let log = capture_output(child.stderr.take().expect("stderr"));
-    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
     assert!(http_get(&addr).contains("v1"), "initial body");
 
     fs::write(
@@ -1240,10 +1262,7 @@ fn dev_reloads_source_but_ignores_node_modules() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel dev");
-    let stdout = child.stdout.take().expect("stdout");
-    let stderr = child.stderr.take().expect("stderr");
-    let addr = wait_listen(stdout, Duration::from_secs(8));
-    let log = capture_output(stderr);
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
     assert!(http_get(&addr).contains("v1"), "initial body");
 
     thread::sleep(Duration::from_millis(300));
@@ -1309,10 +1328,7 @@ secrets = ["API_KEY"]
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel dev");
-    let stdout = child.stdout.take().expect("stdout");
-    let stderr = child.stderr.take().expect("stderr");
-    let addr = wait_listen(stdout, Duration::from_secs(8));
-    let log = capture_output(stderr);
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
     let missing = http_get(&addr);
     assert!(missing.contains("500"), "{missing}");
     assert!(missing.contains("unknown secret API_KEY"), "{missing}");
@@ -1373,8 +1389,7 @@ request_timeout_ms = 2000
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel dev");
-    let stdout = child.stdout.take().expect("stdout");
-    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
     let started = std::time::Instant::now();
     let body = http_get(&addr);
     let elapsed = started.elapsed();
@@ -1422,7 +1437,7 @@ export default {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel run for source-map error");
-    let addr = wait_listen(child.stdout.take().expect("stdout"), Duration::from_secs(8));
+    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
     let response = http_get(&addr);
     let _ = child.kill();
     let _ = child.wait();
@@ -1490,9 +1505,7 @@ fetch = ["192.0.2.1"]
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel dev");
-    let stdout = child.stdout.take().expect("stdout");
-    let log = capture_output(child.stderr.take().expect("stderr"));
-    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
     let started = std::time::Instant::now();
     let body = http_get(&addr);
     let elapsed = started.elapsed();
@@ -1540,16 +1553,16 @@ listen = "127.0.0.1:0"
     )
     .unwrap();
 
-    let mut child = Command::new(cli_exe())
-        .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
-        .env("TYSEL_WORKER", ensure_worker())
-        .env("TYSEL_TEST_SECRET", "should-not-leak")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn tysel dev");
-    let stdout = child.stdout.take().expect("stdout");
-    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let mut child = ManagedChild::spawn(
+        Command::new(cli_exe())
+            .args(["dev", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+            .env("TYSEL_WORKER", ensure_worker())
+            .env("TYSEL_TEST_SECRET", "should-not-leak")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        "tysel dev",
+    );
+    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
     let body = http_get(&addr);
     let start = body.find("ENV:").expect("env marker");
     let rest = &body[start + 4..];
@@ -1608,8 +1621,7 @@ secrets = ["API_KEY"]
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel dev");
-    let stdout = child.stdout.take().expect("stdout");
-    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
     let body = http_get(&addr);
     assert!(body.contains("200"), "{body}");
     assert!(body.contains("ok"), "{body}");
@@ -1672,9 +1684,7 @@ fs_write = ["./data"]
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tysel dev");
-    let stdout = child.stdout.take().expect("stdout");
-    let log = capture_output(child.stderr.take().expect("stderr"));
-    let addr = wait_listen(stdout, Duration::from_secs(8));
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
     let body = http_get(&addr);
     wait_log(&log, "\"capability\":\"fs\"", Duration::from_secs(2));
     let _ = child.kill();
@@ -1757,7 +1767,7 @@ fn spawn_durable_agent(dir: &std::path::Path, llm_addr: &str) -> std::process::C
         .env("TYSEL_LLM_ENDPOINT", format!("http://{llm_addr}/v1/responses"))
         .env("TYSEL_LLM_MODEL", "demo-model")
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn durable agent")
 }
@@ -1806,25 +1816,7 @@ fn http_get(addr: &str) -> String {
     body
 }
 
-fn capture_output(
-    mut reader: impl Read + Send + 'static,
-) -> std::sync::Arc<std::sync::Mutex<String>> {
-    let log = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-    let captured = log.clone();
-    thread::spawn(move || {
-        let mut buf = [0u8; 256];
-        loop {
-            let n = reader.read(&mut buf).unwrap_or(0);
-            if n == 0 {
-                break;
-            }
-            captured.lock().expect("log").push_str(&String::from_utf8_lossy(&buf[..n]));
-        }
-    });
-    log
-}
-
-fn wait_log(log: &std::sync::Arc<std::sync::Mutex<String>>, needle: &str, timeout: Duration) {
+fn wait_log(log: &CapturedLog, needle: &str, timeout: Duration) {
     let started = std::time::Instant::now();
     while started.elapsed() < timeout {
         if log.lock().expect("log").contains(needle) {
@@ -1862,31 +1854,6 @@ fn assert_matching_rid(captured: &str, capability: &str) {
         cap_rids.iter().all(|value| *value == Some(rid)),
         "{capability} rids {cap_rids:?} did not match HTTP rid {rid}: {captured}"
     );
-}
-
-fn wait_listen(stdout: impl Read + Send + 'static, timeout: Duration) -> String {
-    let (tx, rx) = std::sync::mpsc::channel();
-    thread::spawn(move || {
-        let mut buf = Vec::new();
-        let mut reader = stdout;
-        let mut chunk = [0u8; 256];
-        loop {
-            let n = reader.read(&mut chunk).unwrap_or(0);
-            if n == 0 {
-                let _ = tx.send(Err("eof"));
-                return;
-            }
-            buf.extend_from_slice(&chunk[..n]);
-            if let Some(line) = std::str::from_utf8(&buf)
-                .ok()
-                .and_then(|text| text.lines().find_map(|line| line.strip_prefix("tysel listen ")))
-            {
-                let _ = tx.send(Ok(line.trim().to_owned()));
-                return;
-            }
-        }
-    });
-    rx.recv_timeout(timeout).expect("listen").expect("addr")
 }
 
 fn write_js_app(dir: &std::path::Path, source: &str) {

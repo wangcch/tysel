@@ -354,7 +354,7 @@ pub(crate) fn wait_until_settled(
 ) -> Result<(), EngineError> {
     loop {
         cpu.resume();
-        drain_jobs(runtime)?;
+        drain_jobs(runtime, cancel, request_deadline, cpu)?;
         if context.with(|ctx| promise_is_settled(&ctx))? {
             return context.with(|ctx| match take_raw(&ctx) {
                 Some(Err(err)) => Err(map_eval_error(&ctx, err, cancel, request_deadline, cpu)),
@@ -389,7 +389,7 @@ pub(crate) fn wait_until_settled(
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 cpu.resume();
-                drain_jobs(runtime)?;
+                drain_jobs(runtime, cancel, request_deadline, cpu)?;
                 if context.with(|ctx| promise_is_settled(&ctx))? {
                     return Ok(());
                 }
@@ -425,7 +425,12 @@ fn take_settled(
     }
 }
 
-pub(crate) fn drain_jobs(runtime: &Runtime) -> Result<(), EngineError> {
+fn drain_jobs(
+    runtime: &Runtime,
+    cancel: &IsolateCancel,
+    request_deadline: Instant,
+    cpu: &CpuBudget,
+) -> Result<(), EngineError> {
     loop {
         match runtime.execute_pending_job() {
             Ok(true) => {}
@@ -434,7 +439,7 @@ pub(crate) fn drain_jobs(runtime: &Runtime) -> Result<(), EngineError> {
                 return err.0.with(|ctx| {
                     let value = ctx.catch();
                     let error = ctx.throw(value);
-                    Err(js_err_ctx(&ctx, error))
+                    Err(map_eval_error(&ctx, error, cancel, request_deadline, cpu))
                 });
             }
         }

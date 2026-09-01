@@ -3,9 +3,13 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+mod support;
+
+use support::process::{ManagedChild, wait_listen};
 
 const MCP_VERSION: &str = "2026-07-28";
 const RAW_SECRET: &str = "sk-example-must-not-leak";
@@ -13,14 +17,15 @@ const RAW_SECRET: &str = "sk-example-must-not-leak";
 #[test]
 fn isolated_plugin_enforces_profile_and_recovers() {
     let manifest = example_manifest("isolated-plugin");
-    let mut child = RunningChild::spawn(
+    let mut child = ManagedChild::spawn(
         Command::new(cli_exe())
             .args(["run", "--manifest", manifest.to_str().unwrap()])
             .env("TYSEL_WORKER", ensure_worker())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped()),
+        "isolated plugin example",
     );
-    let addr = wait_listen(child.stdout(), Duration::from_secs(8));
+    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
 
     let (status, root) = http_json(&addr, "/");
     assert_eq!(status, 200);
@@ -111,29 +116,6 @@ fn mcp_tool_covers_stdio_contract_and_opaque_secrets() {
     );
 }
 
-struct RunningChild(Child);
-
-impl RunningChild {
-    fn spawn(command: &mut Command) -> Self {
-        Self(command.spawn().expect("spawn example"))
-    }
-
-    fn id(&self) -> u32 {
-        self.0.id()
-    }
-
-    fn stdout(&mut self) -> impl Read + Send + 'static {
-        self.0.stdout.take().expect("example stdout")
-    }
-}
-
-impl Drop for RunningChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 fn example_manifest(name: &str) -> PathBuf {
     workspace_root().join("examples").join(name).join("tysel.toml")
 }
@@ -179,30 +161,6 @@ fn decode_chunked(mut encoded: &str) -> String {
         encoded = std::str::from_utf8(&bytes[size + 2..]).expect("chunked UTF-8");
     }
     String::from_utf8(decoded).expect("HTTP JSON UTF-8")
-}
-
-fn wait_listen(stdout: impl Read + Send + 'static, timeout: Duration) -> String {
-    let (tx, rx) = std::sync::mpsc::channel();
-    thread::spawn(move || {
-        let mut text = String::new();
-        let mut reader = std::io::BufReader::new(stdout);
-        loop {
-            text.clear();
-            match std::io::BufRead::read_line(&mut reader, &mut text) {
-                Ok(0) | Err(_) => {
-                    let _ = tx.send(Err("example exited before listening"));
-                    return;
-                }
-                Ok(_) => {
-                    if let Some(addr) = text.trim().strip_prefix("tysel listen ") {
-                        let _ = tx.send(Ok(addr.to_owned()));
-                        return;
-                    }
-                }
-            }
-        }
-    });
-    rx.recv_timeout(timeout).expect("listen timeout").expect("listen address")
 }
 
 fn wait_for_worker(parent: u32, exclude: Option<u32>, timeout: Duration) -> u32 {

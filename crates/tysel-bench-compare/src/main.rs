@@ -357,12 +357,24 @@ fn spawn_ready(
     match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
         Ok(Ok(address)) => Ok((child, address, pid)),
         Ok(Err(error)) => {
+            let status = child
+                .try_wait()
+                .ok()
+                .flatten()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "still running".to_owned());
             stop_server(&mut child);
-            Err(error)
+            Err(error).with_context(|| format!("{} readiness failed; status={status}", runtime.id))
         }
         Err(_) => {
+            let status = child
+                .try_wait()
+                .ok()
+                .flatten()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "still running".to_owned());
             stop_server(&mut child);
-            Err(anyhow!("timed out waiting for {} readiness", runtime.id))
+            Err(anyhow!("timed out waiting for {} readiness; status={status}", runtime.id))
         }
     }
 }

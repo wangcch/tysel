@@ -577,7 +577,27 @@ fn wait_listen(child: &mut Child, timeout: Duration) -> Result<String> {
             let _ = tx.send(Err(anyhow!("service exited before listen")));
         }
     });
-    rx.recv_timeout(timeout).map_err(|_| anyhow!("timed out waiting for listen"))?
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(address)) => Ok(address),
+        Ok(Err(error)) => {
+            let status = child
+                .try_wait()
+                .ok()
+                .flatten()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "still running".to_owned());
+            Err(error).with_context(|| format!("service readiness failed; status={status}"))
+        }
+        Err(_) => {
+            let status = child
+                .try_wait()
+                .ok()
+                .flatten()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "still running".to_owned());
+            Err(anyhow!("timed out waiting for listen; status={status}"))
+        }
+    }
 }
 
 pub fn process_memory_kb(pid: u32) -> Result<(u64, &'static str)> {
