@@ -1,5 +1,5 @@
 /** Versioned, server-side Web API subset installed into each isolate. */
-export const webApiVersion = "0.1.0";
+export const webApiVersion = "0.1.1";
 
 export type WebEventListener<E extends TyselEvent = TyselEvent> =
   | ((event: E) => void)

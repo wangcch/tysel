@@ -1,6 +1,6 @@
 {
   "name": "tysel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "Apache-2.0",
   "description": "Tysel application SDK: defineApp, durable tasks, and capability imports.",

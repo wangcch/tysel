@@ -4,7 +4,7 @@ Status: **experimental and versioned**. For a Rust Component project, use the
 published crate that matches the installed Tysel minor release:
 
 ```toml
-tysel-component-sdk = "0.1.0"
+tysel-component-sdk = "0.1.1"
 ```
 
 The release starter is also self-contained: it vendors the same SDK version and

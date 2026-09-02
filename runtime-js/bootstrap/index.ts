@@ -1,5 +1,5 @@
 /** Build-time manifest for the JavaScript layers embedded by `tysel-engine-qjs`. */
-export const runtimeJsVersion = "0.1.0";
+export const runtimeJsVersion = "0.1.1";
 
 export const runtimeLayers = ["web-api", "capability-client", "durable"] as const;
 
