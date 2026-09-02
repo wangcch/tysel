@@ -38,8 +38,9 @@ the complete contract for a command, manifest field, or runtime API.
 
 | Outcome | Guide | Important limit |
 | --- | --- | --- |
+| Choose an artifact and deployment boundary | [Deployment selection](/docs/operations/deployment) | Tysel emits an executable or OCI context; platform resources remain deployment-owned. |
 | Build one executable | [Build one executable](/docs/getting-started#build-one-executable) | The target must match the build host. |
-| Generate and verify a non-root container | [Container image](/docs/guides/container-image) | A matching Linux x64/arm64 executable is required. |
+| Write or generate a container image | [Container image](/docs/guides/container-image) | Choose a source-build or runtime-only Dockerfile; the embedded listener must be container-reachable. |
 | Export structured logs, traces, and metrics | [Observability](/docs/guides/observability) | OTLP environment variables are the active runtime control. |
 | Correlate and safely map a production failure | [Debugging](/docs/guides/debugging) | Packaged HTTP errors are not currently source-mapped. |
 | Verify and sign an application artifact set | [Reproducible release](/docs/guides/reproducible-release) | Evidence binds one build; it does not promise cross-host byte identity. |

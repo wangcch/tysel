@@ -48,6 +48,9 @@ const titles = {
   "compatibility/README.md": "npm compatibility",
   "security/README.md": "Security model",
   "operations/production.md": "Production operations",
+  "operations/deployment.md": "Deployment selection",
+  "operations/component-tasks.md": "Deploy Component tasks",
+  "operations/continuous-delivery.md": "Continuous delivery contract",
   "performance/README.md": "Performance and evidence",
   "performance/redis.md": "Redis performance evaluation",
 };
@@ -410,7 +413,10 @@ const docsMetas = {
       "durable-execution",
     ],
   },
-  "operations/meta.json": { title: "Operate", pages: ["production"] },
+  "operations/meta.json": {
+    title: "Operate",
+    pages: ["deployment", "component-tasks", "continuous-delivery", "production"],
+  },
 };
 
 const referenceMetas = {

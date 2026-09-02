@@ -1,0 +1,67 @@
+---
+title: "Deploy Component tasks"
+description: "Use this page for an application whose manifest has app.profile = 'component'. A Component is a one-shot JSON task, not an HTTP service."
+---
+
+Use this page for an application whose manifest has
+`app.profile = "component"`. A Component is a one-shot JSON task, not an HTTP
+service. `tysel image` rejects this profile because it generates an HTTP
+service image contract with a listener and exposed port.
+
+## Build contract
+
+Build the packaged Linux executable on the target architecture:
+
+```sh
+tysel build --release \
+  --manifest tysel.toml \
+  --output dist/task
+```
+
+Keep the executable and its five release sidecars together for admission and
+rollback. The executable reads one JSON value from stdin until EOF, invokes the
+Component once, writes one JSON value followed by a newline to stdout, and
+exits. Input and output are each limited to 1 MiB.
+
+## Runtime-only container
+
+Package the executable directly when a container scheduler is required:
+
+```dockerfile
+ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
+FROM ${RUNTIME_IMAGE}
+WORKDIR /task
+COPY --chown=65532:65532 dist/task /task/task
+USER 65532:65532
+ENTRYPOINT ["/task/task"]
+```
+
+Build and invoke it with stdin attached:
+
+```sh
+docker build --tag registry.example/component-task:VERSION .
+printf '%s\n' '{"job":"example"}' \
+  | docker run --rm --interactive registry.example/component-task:VERSION
+```
+
+The final image needs only the executable. Keep release sidecars outside the
+runtime image unless registry admission explicitly consumes them from the
+build context.
+
+## Scheduler integration
+
+A process supervisor can pipe JSON to stdin and use the exit status and stdout
+as the task result. A Kubernetes Job manifest cannot directly supply an
+arbitrary JSON value as container stdin. Use a deployment-owned launcher that
+reads the input from a queue, object store, mounted file, or other controlled
+source and then invokes the packaged executable. Tysel does not provide that
+launcher.
+
+Do not configure an HTTP Service, Ingress, readiness probe, or listener for a
+Component task. Apply CPU, memory, deadline, retry, secret, and output-retention
+policy in the scheduler.
+
+For the invocation and resource limits, see
+[Component runtime and WASI](/reference/component/runtime). For guest
+construction, use the [Rust](/docs/guides/wasm-component-rust) or
+[Go](/docs/guides/wasm-component-go) guide.

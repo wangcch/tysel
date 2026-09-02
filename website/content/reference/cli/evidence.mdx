@@ -39,6 +39,11 @@ Sign and verify application release evidence.
 `sign` and `verify` take an application executable, validate its complete
 release sidecar set, and create or check `<artifact>.evidence.sig.json`.
 
+The `--key` file accepted by `sign` and `key-info` is UTF-8 text containing a
+32-byte Ed25519 private key encoded as exactly 64 hexadecimal characters. It
+must be a regular file no larger than 256 bytes. On Unix, every group and other
+permission bit must be unset; mode `0600` is accepted.
+
 Private signing material must not be stored in the repository or passed
 through logs. Use subcommand `--help` for the exact installed evidence format.
 

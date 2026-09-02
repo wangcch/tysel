@@ -1,6 +1,9 @@
 {
   "title": "Operate",
   "pages": [
+    "deployment",
+    "component-tasks",
+    "continuous-delivery",
     "production"
   ]
 }

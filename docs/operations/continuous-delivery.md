@@ -1,0 +1,93 @@
+# Continuous delivery contract
+
+This page defines the artifact hand-off between CI, a registry, and a
+deployment platform. Tysel does not create a promotion record or deploy to a
+registry. The commands and record fields below are an operator-owned contract.
+
+## Pipeline stages
+
+| Stage | Required input | Required output |
+| --- | --- | --- |
+| Validate | Source and complete deployment manifest | Passing checks and tests |
+| Build | Validated source on the target Linux architecture | Release executable plus five verified sidecars |
+| Package | Admitted executable and matching manifest | OCI image containing that executable |
+| Publish | Versioned image | Registry image or OCI index digest |
+| Promote | Admission evidence and registry digest | Platform change pinned to the admitted digest |
+
+Do not rebuild between environments. Promote the same executable and image
+digest from test to production.
+
+## Build and preserve evidence
+
+```sh
+tysel task verify --manifest tysel.container.toml
+tysel build --release \
+  --manifest tysel.container.toml \
+  --output dist/hello-service
+
+tysel image \
+  --manifest tysel.container.toml \
+  --binary dist/hello-service \
+  --copy-sidecars \
+  --image-version VERSION \
+  --context-only \
+  --output-dir dist/image
+```
+
+`--copy-sidecars` verifies the executable and all five release sidecars, then
+checks that the recorded target matches the ELF architecture before copying
+them beside the generated Dockerfile. The Dockerfile copies only the executable
+into the runtime image. Archive the sidecars as CI evidence; do not depend on
+finding them in a running container.
+
+## Add source labels and publish
+
+The generated context already labels the application title, execution profile,
+runtime version, application version, and executable digest. Add source-owned
+metadata when building:
+
+```sh
+docker build \
+  --label org.opencontainers.image.source=https://github.com/OWNER/REPOSITORY \
+  --label org.opencontainers.image.revision=COMMIT \
+  --tag registry.example/hello-service:VERSION \
+  dist/image
+
+docker push registry.example/hello-service:VERSION
+docker buildx imagetools inspect registry.example/hello-service:VERSION
+```
+
+Use the digest returned by the registry inspection for deployment. A local
+image ID and the `io.tysel.artifact.digest` label are not registry digests.
+Registry authentication, signing, vulnerability policy, and admission remain
+platform responsibilities.
+
+For the checked-in multi-stage Dockerfile, pass the same OCI labels with
+`docker build --label`. Its source-build stage does not expose a verified
+executable digest to the outer CI job automatically; omit that label unless CI
+has independently extracted and verified the built executable digest.
+
+## Promotion record
+
+The record format is platform-owned. Preserve at least these values without
+assigning one digest to another field:
+
+| Field | Source |
+| --- | --- |
+| Source revision | Version-control checkout |
+| Manifest identity | The exact deployment manifest used for the build |
+| Executable SHA-256 | `io.tysel.artifact.digest` and the verified `.sha256` sidecar |
+| Compatibility, SBOM, licenses, evidence | The four matching release sidecars |
+| Application version | `org.opencontainers.image.version` |
+| Source and revision labels | OCI image configuration |
+| Image or OCI index digest | Registry response after publication |
+| Previous admitted image digest | Deployment history used for rollback |
+
+Promotion must fail when the sidecars do not verify, the executable digest
+label differs from the admitted executable, or the registry digest is absent.
+Rollback selects the previous admitted registry digest; it does not rebuild an
+old source tag.
+
+See [Container image](../guides/container-image.md),
+[Reproducible release](../guides/reproducible-release.md), and
+[Production operations](production.md).

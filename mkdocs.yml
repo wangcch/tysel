@@ -84,6 +84,9 @@ nav:
       - npm compatibility: compatibility/README.md
   - Operate:
       - Security: security/README.md
+      - Deployment selection: operations/deployment.md
+      - Component tasks: operations/component-tasks.md
+      - Continuous delivery: operations/continuous-delivery.md
       - Production: operations/production.md
       - Performance:
           - Overview: performance/README.md

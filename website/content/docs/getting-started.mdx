@@ -1,108 +1,53 @@
 ---
 title: "Getting started"
-description: "This guide creates, tests, runs, and packages a small HTTP service."
+description: "Create, verify, run, and package one HTTP service."
 ---
 
-This guide creates, tests, runs, and packages a small HTTP service.
+Create, verify, run, and package one HTTP service.
 
-## Prerequisites
-
-Install the latest published Tysel release, then verify the managed toolchain:
+## Install
 
 ```sh
 curl -fsSL https://tysel.dev/install.sh | sh
 tysel doctor --install
 ```
 
-The installer includes everything required to create, run, test, and package a
-Tysel application. You do not need to clone the Tysel repository or install
-Rust, Node.js, or npm. See [Installation](/docs/install) for version pinning,
-upgrades, and rollback.
+The managed installation includes the Tysel CLI and native runtimes. Rust,
+Node.js, npm, and a Tysel source checkout are not required for this path.
 
-## Create a project
+## Create and run
 
 ```sh
-tysel init hello-tysel
+tysel init hello-tysel --yes
 cd hello-tysel
+tysel task verify
+tysel dev
 ```
 
-In an interactive terminal, `init` offers a recommended quick start and a
-customized flow. Customize can select an HTTP service, queue worker, MCP tool,
-or minimal template, along with manifest/package/test choices. Use `--yes` to
-accept explicit choices without prompting or `--no-interactive` in automation;
-every prompt also has a corresponding command-line option.
-
-The recommended quick start creates one useful default combination:
-
-```text
-hello-tysel/
-├── src/index.ts
-├── tests/app.test.ts
-├── package.json
-├── tsconfig.json
-└── tysel.toml
-```
-
-This tree is not a required project model. Only one `tysel.toml` or
-`tysel.json` manifest and its configured application entry are required by
-Tysel. `package.json`, the compiler config, and tests can be included or
-omitted independently. `init` checks all destinations before writing and does
-not overwrite existing files.
-
-Choose the combination that fits the project:
+`--yes` selects the generated HTTP service defaults. In another terminal:
 
 ```sh
-# Native-first TypeScript, tests included, no npm sidecar
-tysel init hello-native --package-json none --yes
-
-# Existing package, preserved; preview the separate Tysel files
-tysel init . --package-json reuse --dry-run
-
-# JSON manifest, MCP template, no package sidecar or tests
-tysel init hello-mcp \
-  --template mcp \
-  --manifest-format json \
-  --package-json none \
-  --no-tests \
-  --yes
-
-# TOML and JSON are interchangeable for every project shape
-tysel init hello-json --manifest-format json
+curl http://127.0.0.1:3000/hello
 ```
 
-See [Projects and configuration](/docs/concepts/projects-and-configuration#choose-the-files-you-need)
-for the file roles and combination matrix.
+Expected response:
 
-Inside an existing JavaScript or TypeScript project, `init` preserves
-`package.json` and existing
-source files and creates a separate `src/tysel.ts` entry and
-`tsconfig.tysel.json` by default. The Tysel-specific config keeps application
-checking isolated from the existing Node compiler configuration:
-
-```sh
-tysel init .
-tysel init . --add-scripts # optionally add tysel:* package scripts
+```json
+{
+  "message": "Hello from Tysel",
+  "path": "/hello"
+}
 ```
 
-With `--no-tests`, Init also omits test dependencies, the `test` package script,
-and the `test` step from the generated `verify` task.
+Stop the development server with `Ctrl-C`.
 
-The generated project pins the published `@tysel/types` and `@tysel/test`
-packages to the native toolchain version. The MCP template also pins
-`@tysel/sdk` for schema-driven handler inference. Tysel runtime and test
-commands work immediately without installing them. If you want editor
-declarations and the additional TypeScript compiler pass, install the generated
-development dependencies with your preferred package manager, for example:
-
-```sh
-npm install
-```
-
-This step is optional and does not install or replace the Tysel runtime.
+For an existing project, another template, JSON manifest, or different package
+integration, use the command matrix in
+[Projects and configuration](/docs/concepts/projects-and-configuration#choose-the-files-you-need).
 
 ## Write a Fetch handler
 
-The generated entry exports a Fetch-style application:
+The generated `src/index.ts` exports a Fetch-style application:
 
 ```ts
 import type { TyselApp } from "@tysel/types";
@@ -119,44 +64,17 @@ export default {
 ```
 
 `tysel-env.d.ts` is generated from the manifest. After changing permissions,
-run `tysel types` to refresh it.
-
-Validate the manifest, TypeScript, capabilities, and imports:
+refresh and validate it:
 
 ```sh
+tysel types
 tysel types --check
 tysel check
 tysel compat
 ```
 
-`compat` is an early dependency report, not a substitute for tests. See
-[npm compatibility](/docs/compatibility).
-
-## Test and run
-
-```sh
-tysel test
-tysel dev
-```
-
-The generated manifest also includes native `verify` and `release` workflows:
-
-```sh
-tysel task verify
-tysel task release
-```
-
-`dev` watches the application and reloads it after source changes. Call the
-address printed by the server:
-
-```sh
-curl http://127.0.0.1:3000/hello
-```
-
-Test files ending in `.test.ts`, `.test.mts`, `.test.js`, or `.test.mjs` are
-discovered recursively under `tests/`. Each test runs in a fresh QuickJS
-isolate. The built-in contract includes `test`, `assert`, `assert.equal`, and
-`assert.deepEqual`.
+`compat` reports dependency assumptions; it does not replace application
+tests.
 
 ## Grant a capability
 
@@ -168,23 +86,27 @@ fetch = ["api.example.com"]
 secrets = ["API_TOKEN"]
 ```
 
-The manifest requests authority; the execution profile and deployment policy
-can reduce it further. Review the [complete manifest field index](/reference/manifest#complete-field-index)
-and [capability matrix](/docs/capabilities).
+The manifest requests authority. The execution profile and deployment policy
+can reduce it further. See the
+[manifest field index](/reference/manifest#complete-field-index) and
+[capability matrix](/docs/capabilities).
 
 ## Build one executable
 
 ```sh
-tysel build --release
+tysel task release
 ./dist/hello-tysel
 ```
 
-The output contains the application and runtime. The target machine does not
-need Node.js or `node_modules`. Builds currently target the host platform;
-cross-compilation is not implemented.
+The release task runs the generated verification workflow before
+`tysel build --release`. The target machine needs only the executable; it
+does not need Node.js or `node_modules`.
 
-For a container, set the listener to `0.0.0.0:3000` and use `tysel image` on
-Linux. See [production operations](/docs/operations/production) before deploying.
+Application builds target the host operating system and architecture.
+Cross-compilation is not implemented.
+
+For a container, build with a complete manifest whose listener is
+`0.0.0.0:3000`. See [Container image](/docs/guides/container-image).
 
 ## Use in CI
 
@@ -195,5 +117,6 @@ tysel test --json
 tysel build --release
 ```
 
-Fatal JSON errors are written to stderr. Command reports such as test and
-compatibility results are written to stdout.
+Fatal JSON errors are written to stderr. Test and compatibility reports are
+written to stdout. See [Production operations](/docs/operations/production)
+before deployment.

@@ -13,10 +13,13 @@ an opaque reference available through `tysel.secrets`, not through
 | `TYSEL_DOWNLOAD_BASE` | Official release endpoint | Trusted mirror or CI fixture used by install, doctor, and upgrade. |
 | `TYSEL_STUB` | Located beside the CLI or in the build tree | Runtime stub used by `build`, `image`, and benchmark tooling. |
 | `TYSEL_WORKER` | Located beside the CLI or in the build tree | Isolated worker executable override. |
+| `DOCKER` | `docker` | Container builder executable used by `tysel image`; `--builder` takes precedence. |
 
 `TYSEL_DOWNLOAD_BASE` changes the origin of executable artifacts. Set it only
 to a controlled mirror with an equivalent verification policy. Prefer command
 options such as `build --stub` when an override is specific to one invocation.
+`DOCKER` must name one executable, without embedded command arguments. Use
+`tysel image --builder podman` for an invocation-specific alternative.
 
 ## Application capabilities
 

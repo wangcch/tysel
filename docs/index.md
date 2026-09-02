@@ -13,6 +13,7 @@ executable without Node.js or `node_modules` in production.
 | Run generated or third-party code | [Choose an execution profile](concepts/execution-profiles.md) | [Security model](security/README.md) |
 | Build a Rust or Go Wasm task | [Wasm Component guides](guides/wasm-component-rust.md) | [Component reference](reference/component/index.md) |
 | Build work that survives restarts | [Durable execution](concepts/durable-execution.md) | [Durable agent example](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) |
+| Deploy an application | [Deployment selection](operations/deployment.md) | [Production operations](operations/production.md) |
 | Evaluate Tysel for production | [Production operations](operations/production.md) | [Performance evidence](performance/README.md) |
 
 Browse the [task-oriented guide map](guides/index.md), the
@@ -82,10 +83,11 @@ run [`tysel compat`](compatibility/README.md) before adopting a dependency.
   [JavaScript APIs](reference/javascript/index.md).
 - **Operate:** [installation and upgrades](install.md),
   [security](security/README.md),
+  [deployment selection](operations/deployment.md),
   [production operations](operations/production.md), and
   [performance evidence](performance/README.md).
 
 Machine-readable documentation is available as a compact
-[`llms.txt`](https://tysel.dev/llms.txt) index for page discovery or as
-[`llms-full.txt`](https://tysel.dev/llms-full.txt) with the complete
-documentation in one file.
+[`llms-small.txt`](https://tysel.dev/llms-small.txt) starting set,
+[`llms.txt`](https://tysel.dev/llms.txt) page index, or
+[`llms-full.txt`](https://tysel.dev/llms-full.txt) complete export.

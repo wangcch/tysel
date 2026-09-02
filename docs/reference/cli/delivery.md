@@ -41,27 +41,62 @@ tysel image [ENTRY] [OPTIONS]
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--binary <path>` | Build the app | Package an existing Tysel executable. |
+| `--binary <path>` | Not set | Copy an existing Linux Tysel executable instead of building the application. Its embedded application, profile, and listener must match the selected manifest. |
 | `--stub <path>` | Bundled stub | Select the runtime stub used when building. |
 | `--tag <name>` | `<app.name>:latest` | Build a tagged image after generating the context. |
 | `--output-dir <path>` | `dist/image` | Destination for generated context files. |
 | `--base-image <image>` | `gcr.io/distroless/cc-debian13:nonroot` | Runtime base image. |
+| `--builder <path>` | `$DOCKER`, then `docker` | Container builder executable, for example `podman`. Embedded arguments are not supported. |
+| `--copy-sidecars` | Off | With `--binary`, verify and copy its five release sidecars into the build context for CI admission. The recorded target must match the ELF architecture. They are not copied into the runtime image. |
+| `--image-version <version>` | Not set | Set `org.opencontainers.image.version`. |
+| `--label <KEY=VALUE>` | None | Add an image label. Repeat the option for multiple labels. Tysel-generated keys cannot be overridden. |
 | `--context-only` | Off | Generate files without invoking Docker. |
-| `--force` | Off | Replace generated context files where supported. |
+| `--force` | Off | Replace generated context files. When sidecars are not copied, remove stale generated sidecars from the context. |
 | `--manifest <file>` | Discovered | Select one manifest. |
 
 ```sh
 tysel image --context-only
-tysel image --binary dist/orders --tag example/orders:local
+tysel image \
+  --binary dist/orders \
+  --copy-sidecars \
+  --image-version 1.4.0 \
+  --tag example/orders:1.4.0
 ```
 
 Review generated files before publishing. The command's default image runs as
 a non-root user, but registry authentication, image signing, and deployment
 policy remain operator responsibilities.
 
-On a non-Linux host, `--binary` is required and must name a 64-bit
-little-endian Linux x86-64 or arm64 ELF. Container listeners must use
-`0.0.0.0` or `[::]` and a non-zero port. See the end-to-end
-[Container image guide](../../guides/container-image.md),
+Build behavior:
+
+| Command | Builds the application | Runs `docker build` |
+| --- | --- | --- |
+| `tysel image` | Yes, in release mode | Yes |
+| `tysel image --context-only` | Yes, in release mode | No |
+| `tysel image --binary PATH` | No | Yes |
+| `tysel image --binary PATH --context-only` | No | No |
+
+On a non-Linux host, `--binary` is required. It must name a 64-bit
+little-endian Linux x86-64 or arm64 Tysel executable with valid embedded TAP
+metadata. The embedded application name, execution profile, and listener must
+match the selected manifest. Container listeners must use `0.0.0.0` or `[::]`
+and a non-zero port. The `component` profile is rejected; use
+[Component tasks](../../operations/component-tasks.md).
+
+Every generated Dockerfile includes `io.tysel.artifact.digest`,
+`io.tysel.execution-profile`, `io.tysel.runtime.version`, and
+`org.opencontainers.image.title`. These labels contain identifiers, not
+secrets. The artifact digest describes the packaged executable; it is not the
+registry image digest.
+Custom label values are preserved literally, including `$` characters.
+
+The default base-image check requires either a glibc interpreter or a static
+ELF. When `--base-image` selects another image, Tysel validates the Linux ELF,
+supported architecture, and interpreter structure but does not claim that the
+custom image contains the required libc or shared libraries.
+
+See the end-to-end
+[Container image reference](../../guides/container-image.md),
+[Continuous delivery](../../operations/continuous-delivery.md),
 [Production operations](../../operations/production.md), and
 [Benchmarks and release evidence](evidence.md).
