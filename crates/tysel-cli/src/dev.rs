@@ -216,7 +216,7 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
     if durable.is_some() {
         println!("tysel durable on");
     }
-    println!("tysel listen {bound}");
+    print!("{}", listen_announcement(bound));
     io::stdout().flush()?;
     if reload {
         let mut changes = watch(manifest_path.parent().unwrap_or(Path::new(".")))?;
@@ -288,6 +288,10 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
     shutdown_durable(durable.take()).await?;
     shutdown_task_service(task_service).await?;
     Ok(())
+}
+
+fn listen_announcement(bound: std::net::SocketAddr) -> String {
+    format!("tysel listen {bound}\ntysel url http://{bound}\n")
 }
 
 fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
@@ -563,6 +567,15 @@ fn ignored_dir(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listen_announcement_preserves_address_protocol_and_adds_url() {
+        let bound = "127.0.0.1:3000".parse().unwrap();
+        assert_eq!(
+            listen_announcement(bound),
+            "tysel listen 127.0.0.1:3000\ntysel url http://127.0.0.1:3000\n"
+        );
+    }
 
     #[test]
     fn watches_dotenv_and_source_but_not_ignored_paths() {

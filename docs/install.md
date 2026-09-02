@@ -18,8 +18,9 @@ curl -fsSL https://tysel.dev/install.sh | sh
 ```
 
 The managed installation does not require Rust, Node.js, npm, administrator
-access, or `sudo`. Restart the shell if the installer changes its startup file,
-then run `tysel doctor --install`.
+access, or `sudo`. If the installer changes a shell startup file, it prints the
+`source` (or `.`) command that makes `tysel` available in the current shell.
+You can also restart the shell. Then run `tysel doctor --install`.
 
 Create a project:
 

@@ -195,8 +195,18 @@ TARGET=$(detect_target) || fail "unsupported platform: $(uname -s 2>/dev/null ||
 download() {
   url=$1
   output=$2
+  show_progress=${3:-0}
   command -v curl >/dev/null 2>&1 || fail "curl is required to download Tysel"
-  if [ "$DOWNLOAD_BASE" = "$DEFAULT_DOWNLOAD_BASE" ]; then
+  if [ "$show_progress" -eq 1 ] && [ -t 2 ]; then
+    if [ "$DOWNLOAD_BASE" = "$DEFAULT_DOWNLOAD_BASE" ]; then
+      curl --proto '=https' --tlsv1.2 --location --fail --progress-bar --show-error \
+        --max-redirs 5 --retry 3 --connect-timeout 10 --max-time 120 \
+        --output "$output" "$url"
+    else
+      curl --location --fail --progress-bar --show-error --max-redirs 5 --retry 3 \
+        --connect-timeout 10 --max-time 120 --output "$output" "$url"
+    fi
+  elif [ "$DOWNLOAD_BASE" = "$DEFAULT_DOWNLOAD_BASE" ]; then
     curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error \
       --max-redirs 5 --retry 3 --connect-timeout 10 --max-time 120 \
       --output "$output" "$url"
@@ -289,7 +299,8 @@ trust_path="$WORK_DIR/trust.json"
 trust_signature_path="$WORK_DIR/trust.json.sig.json"
 channel_pointer_path="$WORK_DIR/channel-pointer.json"
 channel_pointer_signature_path="$WORK_DIR/channel-pointer.json.sig.json"
-download "${release_base}/${archive}" "$archive_path"
+say "Downloading $archive"
+download "${release_base}/${archive}" "$archive_path" 1
 download "${release_base}/${archive}.sha256" "$checksum_path"
 download "${release_base}/release-manifest.json" "$manifest_path"
 download "${release_base}/release-manifest.json.sig.json" "$manifest_signature_path"
@@ -579,6 +590,7 @@ update_profile_path() {
 }
 
 path_action="not modified"
+profile_to_source=
 if [ "$MODIFY_PATH" -eq 1 ]; then
   case "${SHELL:-}" in
     */zsh) [ -n "${ZDOTDIR:-${HOME:-}}" ] && profile=${ZDOTDIR:-$HOME}/.zshrc || profile= ;;
@@ -606,6 +618,7 @@ if [ "$MODIFY_PATH" -eq 1 ]; then
     else
       if update_profile_path "$profile"; then
         path_action="updated $profile"
+        profile_to_source=$profile
         PROFILE_PATH=
         PROFILE_BACKUP=
         PROFILE_EXISTED=0
@@ -626,4 +639,15 @@ fi
 PROFILE_PATH=
 say "Installed Tysel $VERSION ($TARGET) in $version_dir"
 say "PATH: $path_action"
-say "Next: $PREFIX/bin/tysel init hello-tysel"
+if [ -n "$profile_to_source" ]; then
+  quoted_profile=$(printf '%s' "$profile_to_source" | sed "s/'/'\\\\''/g")
+  case "${SHELL:-}" in
+    */zsh|*/bash) reload_profile=source ;;
+    *) reload_profile=. ;;
+  esac
+  say "To use tysel in this shell, run:"
+  say "  $reload_profile '$quoted_profile'"
+  say "Next: tysel init hello-tysel"
+else
+  say "Next: $PREFIX/bin/tysel init hello-tysel"
+fi
