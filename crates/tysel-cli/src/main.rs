@@ -330,6 +330,18 @@ enum Commands {
         output_dir: PathBuf,
         #[arg(long, default_value = "gcr.io/distroless/cc-debian13:nonroot")]
         base_image: String,
+        /// Container builder executable. Defaults to $DOCKER, then docker.
+        #[arg(long)]
+        builder: Option<PathBuf>,
+        /// Verify and copy the existing binary's release sidecars into the context.
+        #[arg(long, requires = "binary")]
+        copy_sidecars: bool,
+        /// Application version written to org.opencontainers.image.version.
+        #[arg(long)]
+        image_version: Option<String>,
+        /// Additional OCI image label in KEY=VALUE form.
+        #[arg(long, value_name = "KEY=VALUE")]
+        label: Vec<String>,
         /// Generate the Docker build context without invoking Docker.
         #[arg(long, alias = "no-build")]
         context_only: bool,
@@ -534,6 +546,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             tag,
             output_dir,
             base_image,
+            builder,
+            copy_sidecars,
+            image_version,
+            label,
             context_only,
             force,
         } => image::run(image::Options {
@@ -544,6 +560,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             tag,
             output_dir,
             base_image,
+            builder,
+            copy_sidecars,
+            image_version,
+            labels: label,
             context_only,
             force,
         }),

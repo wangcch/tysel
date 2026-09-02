@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+use tysel_manifest::Manifest;
 use tysel_package::Tap;
 
 fn write_release_stub(path: &std::path::Path) {
@@ -457,7 +458,8 @@ listen = "0.0.0.0:8080"
     )
     .unwrap();
     let binary = dir.join("linux-app");
-    fs::write(&binary, fake_linux_elf(62)).unwrap();
+    let binary_bytes = fake_tysel_elf(62, "image-app", "service", "0.0.0.0:8080");
+    fs::write(&binary, &binary_bytes).unwrap();
     let context = dir.join("dist/container");
 
     let output = Command::new(cli_exe())
@@ -468,18 +470,31 @@ listen = "0.0.0.0:8080"
             dir.join("tysel.toml").to_str().unwrap(),
             "--binary",
             binary.to_str().unwrap(),
+            "--image-version",
+            "1.4.0",
+            "--label",
+            "org.opencontainers.image.source=https://example.invalid/tysel",
+            "--label",
+            "example.literal=$PATH",
             "--output-dir",
             context.to_str().unwrap(),
         ])
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(fs::read(context.join("tysel-app")).unwrap(), fake_linux_elf(62));
+    assert_eq!(fs::read(context.join("tysel-app")).unwrap(), binary_bytes);
     let dockerfile = fs::read_to_string(context.join("Dockerfile")).unwrap();
     assert!(dockerfile.contains("FROM gcr.io/distroless/cc-debian13:nonroot"));
     assert!(dockerfile.contains("USER 65532:65532"));
     assert!(dockerfile.contains("EXPOSE 8080"));
     assert!(dockerfile.contains("ENTRYPOINT [\"/app/tysel-app\"]"));
+    assert!(dockerfile.contains("org.opencontainers.image.title=\"image-app\""));
+    assert!(dockerfile.contains("org.opencontainers.image.version=\"1.4.0\""));
+    assert!(
+        dockerfile.contains("org.opencontainers.image.source=\"https://example.invalid/tysel\"")
+    );
+    assert!(dockerfile.contains("example.literal=\"\\$PATH\""));
+    assert!(dockerfile.contains("io.tysel.artifact.digest=\"sha256:"));
 
     let repeated = Command::new(cli_exe())
         .args([
@@ -496,6 +511,195 @@ listen = "0.0.0.0:8080"
         .unwrap();
     assert!(!repeated.status.success());
     assert!(String::from_utf8_lossy(&repeated.stderr).contains("refusing to overwrite"));
+}
+
+#[test]
+fn image_rejects_manifest_that_differs_from_embedded_tap() {
+    let dir = temp_js_app("image-embedded-listen");
+    let manifest =
+        fs::read_to_string(dir.join("tysel.toml")).unwrap().replace("127.0.0.1:0", "0.0.0.0:8080");
+    fs::write(dir.join("tysel.toml"), manifest).unwrap();
+    let binary = dir.join("linux-app");
+    fs::write(&binary, fake_tysel_elf(62, "hello-service", "service", "0.0.0.0:9090")).unwrap();
+    let output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            dir.join("dist/container").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("embeds listen '0.0.0.0:9090'"), "{stderr}");
+    assert!(stderr.contains("declares '0.0.0.0:8080'"), "{stderr}");
+}
+
+#[test]
+fn image_rejects_component_profile_with_deployment_doc() {
+    let dir = temp_js_app("image-component");
+    let manifest = fs::read_to_string(dir.join("tysel.toml"))
+        .unwrap()
+        .replace("entry = \"src/index.js\"", "entry = \"echo.wasm\"")
+        .replace("profile = \"service\"", "profile = \"component\"");
+    fs::write(dir.join("tysel.toml"), manifest).unwrap();
+    let output = Command::new(cli_exe())
+        .args(["image", "--context-only", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("does not support profile = \"component\""), "{stderr}");
+    assert!(stderr.contains("docs/operations/component-tasks.md"), "{stderr}");
+}
+
+#[test]
+fn image_copies_only_verified_release_sidecars() {
+    let dir = temp_js_app("image-sidecars");
+    let manifest =
+        fs::read_to_string(dir.join("tysel.toml")).unwrap().replace("127.0.0.1:0", "0.0.0.0:8080");
+    fs::write(dir.join("tysel.toml"), manifest).unwrap();
+    let binary = dir.join("release-app");
+    fs::write(&binary, fake_release_tysel_elf(62, "hello-service", "service", "0.0.0.0:8080"))
+        .unwrap();
+    tysel_build::write_release_evidence(&binary, "linux-x64").unwrap();
+    let context = dir.join("dist/container");
+    let output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--copy-sidecars",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            context.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    for suffix in [".sha256", ".compat.json", ".sbom.cdx.json", ".licenses.json", ".evidence.json"]
+    {
+        assert!(context.join(format!("tysel-app{suffix}")).is_file());
+    }
+    let dockerfile = fs::read_to_string(context.join("Dockerfile")).unwrap();
+    assert!(!dockerfile.contains("evidence.json"));
+
+    let replaced = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--force",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            context.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(replaced.status.success(), "{}", String::from_utf8_lossy(&replaced.stderr));
+    for suffix in [".sha256", ".compat.json", ".sbom.cdx.json", ".licenses.json", ".evidence.json"]
+    {
+        assert!(!context.join(format!("tysel-app{suffix}")).exists());
+    }
+}
+
+#[test]
+fn image_rejects_release_evidence_for_another_target() {
+    let dir = temp_js_app("image-sidecar-target");
+    let manifest =
+        fs::read_to_string(dir.join("tysel.toml")).unwrap().replace("127.0.0.1:0", "0.0.0.0:8080");
+    fs::write(dir.join("tysel.toml"), manifest).unwrap();
+    let binary = dir.join("release-app");
+    fs::write(&binary, fake_release_tysel_elf(62, "hello-service", "service", "0.0.0.0:8080"))
+        .unwrap();
+    tysel_build::write_release_evidence(&binary, "linux-arm64").unwrap();
+
+    let output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--copy-sidecars",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            dir.join("dist/container").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("records target 'linux-arm64'"), "{stderr}");
+    assert!(stderr.contains("requires 'linux-x64'"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn image_uses_docker_environment_as_builder_executable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = temp_js_app("image-builder");
+    let manifest =
+        fs::read_to_string(dir.join("tysel.toml")).unwrap().replace("127.0.0.1:0", "0.0.0.0:8080");
+    fs::write(dir.join("tysel.toml"), manifest).unwrap();
+    let binary = dir.join("linux-app");
+    fs::write(&binary, fake_tysel_elf(62, "hello-service", "service", "0.0.0.0:8080")).unwrap();
+    let builder = dir.join("podman-fixture");
+    fs::write(&builder, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BUILDER_LOG\"\n").unwrap();
+    let mut permissions = fs::metadata(&builder).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&builder, permissions).unwrap();
+    let log = dir.join("builder.log");
+    let output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            dir.join("dist/container").to_str().unwrap(),
+        ])
+        .env("DOCKER", &builder)
+        .env("BUILDER_LOG", &log)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let arguments = fs::read_to_string(&log).unwrap();
+    assert!(arguments.contains("build\n--platform\nlinux/amd64\n--tag\nhello-service:latest"));
+
+    let ignored_builder = dir.join("ignored-builder");
+    fs::write(&ignored_builder, "#!/bin/sh\nexit 91\n").unwrap();
+    let mut permissions = fs::metadata(&ignored_builder).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&ignored_builder, permissions).unwrap();
+    let output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--builder",
+            builder.to_str().unwrap(),
+            "--output-dir",
+            dir.join("dist/explicit-builder").to_str().unwrap(),
+        ])
+        .env("DOCKER", ignored_builder)
+        .env("BUILDER_LOG", &log)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 }
 
 #[test]
@@ -561,6 +765,62 @@ listen = "192.0.2.10:8080"
     let elf = Command::new(cli_exe()).args(arguments).output().unwrap();
     assert!(!elf.status.success());
     assert!(String::from_utf8_lossy(&elf.stderr).contains("not a Linux ELF executable"));
+}
+
+#[test]
+fn image_allows_musl_only_with_an_explicit_custom_base() {
+    let dir = temp_js_app("image-custom-musl-base");
+    let manifest =
+        fs::read_to_string(dir.join("tysel.toml")).unwrap().replace("127.0.0.1:0", "0.0.0.0:8080");
+    fs::write(dir.join("tysel.toml"), manifest).unwrap();
+    let binary = dir.join("musl-app");
+    fs::write(
+        &binary,
+        fake_tysel_elf_with_interpreter(
+            62,
+            "hello-service",
+            "service",
+            "0.0.0.0:8080",
+            "/lib/ld-musl-x86_64.so.1",
+        ),
+    )
+    .unwrap();
+
+    let default_output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--output-dir",
+            dir.join("dist/default-base").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!default_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&default_output.stderr)
+            .contains("incompatible with the default glibc")
+    );
+
+    let custom_output = Command::new(cli_exe())
+        .args([
+            "image",
+            "--context-only",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+            "--base-image",
+            "registry.example/runtime-musl:1",
+            "--output-dir",
+            dir.join("dist/custom-base").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(custom_output.status.success(), "{}", String::from_utf8_lossy(&custom_output.stderr));
 }
 
 #[test]
@@ -700,6 +960,80 @@ fn fake_linux_elf(machine: u16) -> Vec<u8> {
     bytes[52..54].copy_from_slice(&64_u16.to_le_bytes());
     bytes[54..56].copy_from_slice(&56_u16.to_le_bytes());
     bytes
+}
+
+fn fake_tysel_elf(machine: u16, name: &str, profile: &str, listen: &str) -> Vec<u8> {
+    let manifest = Manifest::parse(&format!(
+        r#"
+[app]
+name = "{name}"
+entry = "src/index.js"
+profile = "{profile}"
+
+[server]
+listen = "{listen}"
+"#
+    ))
+    .unwrap();
+    let tap =
+        tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), Vec::new(), Vec::new());
+    tap.embed_into(&fake_linux_elf(machine)).unwrap()
+}
+
+fn fake_tysel_elf_with_interpreter(
+    machine: u16,
+    name: &str,
+    profile: &str,
+    listen: &str,
+    interpreter: &str,
+) -> Vec<u8> {
+    let mut elf = fake_linux_elf(machine);
+    let mut value = interpreter.as_bytes().to_vec();
+    value.push(0);
+    let string_offset = elf.len() + 56;
+    elf[32..40].copy_from_slice(&64_u64.to_le_bytes());
+    elf[56..58].copy_from_slice(&1_u16.to_le_bytes());
+    elf.resize(string_offset, 0);
+    elf[64..68].copy_from_slice(&3_u32.to_le_bytes());
+    elf[72..80].copy_from_slice(&(string_offset as u64).to_le_bytes());
+    elf[96..104].copy_from_slice(&(value.len() as u64).to_le_bytes());
+    elf.extend_from_slice(&value);
+
+    let manifest = Manifest::parse(&format!(
+        r#"
+[app]
+name = "{name}"
+entry = "src/index.js"
+profile = "{profile}"
+
+[server]
+listen = "{listen}"
+"#
+    ))
+    .unwrap();
+    let tap =
+        tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), Vec::new(), Vec::new());
+    tap.embed_into(&elf).unwrap()
+}
+
+fn fake_release_tysel_elf(machine: u16, name: &str, profile: &str, listen: &str) -> Vec<u8> {
+    let manifest = Manifest::parse(&format!(
+        r#"
+[app]
+name = "{name}"
+entry = "src/index.js"
+profile = "{profile}"
+
+[server]
+listen = "{listen}"
+"#
+    ))
+    .unwrap();
+    let tap =
+        tysel_build::tap_from_app(&manifest, env!("CARGO_PKG_VERSION"), Vec::new(), Vec::new());
+    let mut stub = fake_linux_elf(machine);
+    stub.extend_from_slice(include_bytes!("../../tysel-build/src/runtime-components.json"));
+    tap.embed_into(&stub).unwrap()
 }
 
 fn sidecar(output: &std::path::Path, suffix: &str) -> PathBuf {
