@@ -10,9 +10,36 @@ package_directory="$1"
 version="$2"
 [[ -d "$package_directory" ]] || { echo "npm package directory is missing" >&2; exit 1; }
 dist_tag="$(bash "$(dirname "$0")/npm-dist-tag.sh" "$version")"
+# Publish the newly introduced SDK identity first. If its scope permissions or
+# name are misconfigured, no companion package for this version is published.
+packages=('@tysel/sdk' '@tysel/types' '@tysel/test')
+
+# A publish job queries these identities before and after publication. Force npm
+# to revalidate registry responses so a cached pre-publish 404 cannot make the
+# post-publish visibility check fail spuriously.
+npm_registry_view() {
+  npm view "$@" \
+    --prefer-online \
+    --fetch-retries=3 \
+    --fetch-retry-mintimeout=1000 \
+    --fetch-retry-maxtimeout=10000
+}
+
+archive_for() {
+  local name="$1"
+  local archive_name="tysel-${name#@tysel/}-${version}.tgz"
+  find "$package_directory" -maxdepth 1 -type f -name "$archive_name" -print -quit
+}
+
+integrity_for() {
+  local archive="$1"
+  printf 'sha512-'
+  openssl dgst -sha512 -binary "$archive" | openssl base64 -A
+}
+
 if [[ "${TYSEL_NPM_DRY_RUN:-0}" != 1 ]]; then
-  for name in '@tysel/types' '@tysel/test' 'tysel'; do
-    current_tagged="$(npm view "${name}@${dist_tag}" version 2>/dev/null || true)"
+  for name in "${packages[@]}"; do
+    current_tagged="$(npm_registry_view "${name}@${dist_tag}" version 2>/dev/null || true)"
     if [[ -n "$current_tagged" ]]; then
       precedence="$(bash "$(dirname "$0")/semver-precedence.sh" "$version" "$current_tagged")"
       [[ "$precedence" != older ]] || {
@@ -23,14 +50,8 @@ if [[ "${TYSEL_NPM_DRY_RUN:-0}" != 1 ]]; then
   done
 fi
 
-for name in '@tysel/types' '@tysel/test' 'tysel'; do
-  if [[ "$name" == tysel ]]; then
-    archive_name="tysel-${version}.tgz"
-  else
-    archive_name="tysel-${name#@tysel/}-${version}.tgz"
-  fi
-  archive="$(find "$package_directory" -maxdepth 1 -type f \
-    -name "$archive_name" -print -quit)"
+for name in "${packages[@]}"; do
+  archive="$(archive_for "$name")"
   [[ -n "$archive" ]] || { echo "packed artifact is missing for ${name}@${version}" >&2; exit 1; }
   packed_name="$(tar -xOf "$archive" package/package.json | jq -er '.name')"
   packed_version="$(tar -xOf "$archive" package/package.json | jq -er '.version')"
@@ -39,8 +60,8 @@ for name in '@tysel/types' '@tysel/test' 'tysel'; do
     exit 1
   }
 
-  local_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
-  remote_integrity="$(npm view "${name}@${version}" dist.integrity --json 2>/dev/null \
+  local_integrity="$(integrity_for "$archive")"
+  remote_integrity="$(npm_registry_view "${name}@${version}" dist.integrity --json 2>/dev/null \
     | jq -r 'if type == "string" then . else empty end' || true)"
   if [[ -n "$remote_integrity" ]]; then
     [[ "$remote_integrity" == "$local_integrity" ]] || {
@@ -55,18 +76,34 @@ for name in '@tysel/types' '@tysel/test' 'tysel'; do
       npm publish "$archive" --access public --provenance --tag "$dist_tag"
     fi
   fi
-  if [[ "${TYSEL_NPM_DRY_RUN:-0}" != 1 ]]; then
-    tagged_version=
-    for attempt in {1..12}; do
-      tagged_version="$(npm view "${name}@${dist_tag}" version 2>/dev/null || true)"
-      [[ "$tagged_version" == "$version" ]] && break
-      [[ "$attempt" -lt 12 ]] || break
-      sleep 5
-    done
-    [[ "$tagged_version" == "$version" ]] || {
-      echo "${name} dist-tag ${dist_tag} points to ${tagged_version:-nothing}, not ${version}" >&2
-      echo "refusing to move a release channel implicitly; repair it explicitly after review" >&2
-      exit 1
-    }
-  fi
 done
+
+if [[ "${TYSEL_NPM_DRY_RUN:-0}" != 1 ]]; then
+  npm_ready=false
+  for attempt in {1..90}; do
+    npm_ready=true
+    for name in "${packages[@]}"; do
+      archive="$(archive_for "$name")"
+      local_integrity="$(integrity_for "$archive")"
+      published_version="$(npm_registry_view "${name}@${version}" version 2>/dev/null || true)"
+      tagged_version="$(npm_registry_view "${name}@${dist_tag}" version 2>/dev/null || true)"
+      remote_integrity="$(npm_registry_view "${name}@${version}" dist.integrity --json 2>/dev/null \
+        | jq -r 'if type == "string" then . else empty end' || true)"
+      if [[ -n "$remote_integrity" && "$remote_integrity" != "$local_integrity" ]]; then
+        echo "registry contains different bytes for ${name}@${version}" >&2
+        exit 1
+      fi
+      if [[ "$published_version" != "$version" || "$tagged_version" != "$version" \
+        || "$remote_integrity" != "$local_integrity" ]]; then
+        npm_ready=false
+      fi
+    done
+    [[ "$npm_ready" == true ]] && break
+    [[ "$attempt" -lt 90 ]] || break
+    sleep 10
+  done
+  [[ "$npm_ready" == true ]] || {
+    echo "npm packages or dist-tag did not become visible after 15 minutes" >&2
+    exit 1
+  }
+fi

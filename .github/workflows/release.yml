@@ -216,7 +216,7 @@ jobs:
       - name: Build TypeScript SDK for application fixtures
         run: |
           pnpm --filter @tysel/types build
-          pnpm --filter tysel build
+          pnpm --filter @tysel/sdk build
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: 1.97.1
@@ -274,7 +274,7 @@ jobs:
       - name: Build TypeScript SDK for application fixtures
         run: |
           pnpm --filter @tysel/types build
-          pnpm --filter tysel build
+          pnpm --filter @tysel/sdk build
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: 1.97.1
@@ -590,12 +590,15 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          npm_user="$(npm whoami)"
+          [[ -n "$npm_user" ]]
+          echo "Authenticated to npm as ${npm_user}"
           version="$(bash .github/scripts/check-version-sync.sh)"
           bash .github/scripts/publish-npm-packages.sh target/npm-packages "$version"
 
   publish-rust-sdk:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: publication-preflight
+    needs: publish-npm
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -634,84 +637,5 @@ jobs:
         run: |
           set -euo pipefail
           version="$(bash .github/scripts/check-version-sync.sh)"
-          channel="$(bash .github/scripts/release-channel.sh "$version")"
-          dist_tag="$(bash .github/scripts/npm-dist-tag.sh "$version")"
-          bash .github/scripts/check-published-channel.sh \
-            "$version" "https://github.com/${GITHUB_REPOSITORY}/releases"
-          for attempt in {1..12}; do
-            npm_ready=true
-            for package in '@tysel/types' '@tysel/test' 'tysel'; do
-              if [[ "$(npm view "${package}@${version}" version 2>/dev/null || true)" != "$version" ]] \
-                || [[ "$(npm view "${package}@${dist_tag}" version 2>/dev/null || true)" != "$version" ]]; then
-                npm_ready=false
-                break
-              fi
-            done
-            [[ "$npm_ready" == true ]] && break
-            [[ "$attempt" -lt 12 ]] || {
-              echo "npm packages or dist-tag did not become visible" >&2
-              exit 1
-            }
-            sleep 10
-          done
-          crate_url="https://crates.io/api/v1/crates/tysel-component-sdk/${version}"
-          for attempt in {1..12}; do
-            published_version="$(curl -fsSL \
-              -H 'User-Agent: tysel-release-workflow (https://github.com/wangcch/tysel)' \
-              "$crate_url" | jq -r '.version.num' 2>/dev/null || true)"
-            [[ "$published_version" == "$version" ]] && break
-            [[ "$attempt" -lt 12 ]] || {
-              echo "tysel-component-sdk@${version} is not available on crates.io" >&2
-              exit 1
-            }
-            sleep 5
-          done
-          gh release view "$GITHUB_REF_NAME" --json isDraft \
-            --jq '.isDraft' | grep -Fx true > /dev/null
-
-          if gh release view trust >/dev/null 2>&1; then
-            gh release upload trust \
-              target/publish/trust.json target/publish/trust.json.sig.json --clobber
-          else
-            gh release create trust \
-              target/publish/trust.json target/publish/trust.json.sig.json \
-              --prerelease --latest=false --target "$GITHUB_SHA" \
-              --title "Tysel release trust" \
-              --notes "Authenticated moving trust-policy endpoint for all release channels."
-          fi
-          trust_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/trust"
-          bash .github/scripts/wait-for-published-trust.sh \
-            "$trust_base" \
-            target/publish/trust.json target/publish/trust.json.sig.json \
-            "${RUNNER_TEMP}/published-trust.json" \
-            "${RUNNER_TEMP}/published-trust.json.sig.json"
-
-          if [[ "$channel" == stable ]]; then
-            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
-            channel_tag="$GITHUB_REF_NAME"
-          else
-            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false
-            channel_assets=(
-              target/publish/channel-pointer.json
-              target/publish/channel-pointer.json.sig.json
-              target/publish/canary-version
-              target/publish/install.sh
-              target/publish/install.sh.sha256
-            )
-            if gh release view canary >/dev/null 2>&1; then
-              gh release upload canary "${channel_assets[@]}" --clobber
-            else
-              gh release create canary "${channel_assets[@]}" \
-                --prerelease --latest=false --target "$GITHUB_SHA" \
-                --title "Tysel canary" \
-                --notes "Moving pointer to the latest authenticated Tysel canary release."
-            fi
-            channel_tag=canary
-          fi
-
-          install_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${channel_tag}/install.sh"
-          checksum_url="${install_url}.sha256"
-          curl -fsSL --retry 3 "$install_url" > target/install.sh
-          expected="$(curl -fsSL --retry 3 "$checksum_url" | tr -d '[:space:]')"
-          actual="$(sha256sum target/install.sh | awk '{print $1}')"
-          [[ "$actual" == "$expected" ]]
+          bash .github/scripts/promote-release.sh \
+            "$version" "$GITHUB_REF_NAME" "$GITHUB_SHA" target/publish
