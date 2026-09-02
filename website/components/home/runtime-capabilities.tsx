@@ -115,7 +115,7 @@ return Response.json({
     blurb:
       "Validated JSON tools over bounded stdio. Isolated workers only see brokered secret handles.",
     filename: "src/index.ts",
-    code: `import { defineApp } from "tysel";
+    code: `import { defineApp } from "@tysel/sdk";
 
 export default defineApp({
   tasks: {

@@ -60,7 +60,8 @@ pub(super) fn build(options: Options) -> Result<InitPlan> {
     };
     let has_public_types =
         create_package || package_declares_dependency(&package_path, "@tysel/types");
-    let has_runtime_sdk = create_package || package_declares_dependency(&package_path, "tysel");
+    let has_runtime_sdk =
+        create_package || package_declares_dependency(&package_path, "@tysel/sdk");
     let typed_entry =
         has_public_types && (!options.template.needs_runtime_sdk() || has_runtime_sdk);
     let package_update = if options.add_scripts && package_exists {

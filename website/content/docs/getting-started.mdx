@@ -88,10 +88,11 @@ With `--no-tests`, Init also omits test dependencies, the `test` package script,
 and the `test` step from the generated `verify` task.
 
 The generated project pins the published `@tysel/types` and `@tysel/test`
-packages to the native toolchain version. Tysel runtime and test commands work
-immediately without installing them. If you want editor declarations and the
-additional TypeScript compiler pass, install the generated development
-dependencies with your preferred package manager, for example:
+packages to the native toolchain version. The MCP template also pins
+`@tysel/sdk` for schema-driven handler inference. Tysel runtime and test
+commands work immediately without installing them. If you want editor
+declarations and the additional TypeScript compiler pass, install the generated
+development dependencies with your preferred package manager, for example:
 
 ```sh
 npm install

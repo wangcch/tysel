@@ -112,10 +112,10 @@ to invoke a registered handler from the CLI.
 
 MCP is the main case where `defineApp` adds value: it makes the literal `input`
 schema the source of the handler parameter type. `tysel init --template mcp`
-therefore adds the matching `tysel` SDK dependency.
+therefore adds the matching `@tysel/sdk` dependency.
 
 ```ts
-import { defineApp } from "tysel";
+import { defineApp } from "@tysel/sdk";
 
 export default defineApp({
   tasks: {

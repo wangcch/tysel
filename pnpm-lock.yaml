@@ -60,15 +60,15 @@ importers:
 
   examples/mcp-tool:
     devDependencies:
+      '@tysel/sdk':
+        specifier: workspace:*
+        version: link:../../packages/tysel
       '@tysel/types':
         specifier: workspace:*
         version: link:../../packages/tysel-types
       typescript:
         specifier: 7.0.2
         version: 7.0.2
-      tysel:
-        specifier: workspace:*
-        version: link:../../packages/tysel
 
   examples/postgres-service:
     devDependencies:

@@ -34,7 +34,7 @@ pub(super) const PACKAGE_JSON: &str = r#"{
   "devDependencies": {
     "@tysel/test": "__TYSEL_VERSION__",
     "@tysel/types": "__TYSEL_VERSION__",
-    "tysel": "__TYSEL_VERSION__",
+    "@tysel/sdk": "__TYSEL_VERSION__",
     "typescript": "7.0.2"
   }
 }
@@ -101,7 +101,7 @@ const WORKER_STANDALONE: &str = r#"export default {
 "#;
 
 const MCP_TYPED: &str = r#"import type { TyselEnv } from "__TYSEL_ENV_IMPORT__";
-import { defineApp } from "tysel";
+import { defineApp } from "@tysel/sdk";
 
 export default defineApp<TyselEnv>()({
   async fetch() {
@@ -275,7 +275,7 @@ pub(super) fn generated_package_json(
         package["devDependencies"]
             .as_object_mut()
             .expect("template devDependencies")
-            .remove("tysel");
+            .remove("@tysel/sdk");
     }
     let mut rendered = serde_json::to_string_pretty(&package)?;
     rendered.push('\n');
@@ -446,7 +446,7 @@ mod tests {
                     "skipLibCheck": true,
                     "paths": {
                         "@tysel/types": [workspace.join("packages/tysel-types/src/index.ts")],
-                        "tysel": [workspace.join("packages/tysel/src/index.ts")]
+                        "@tysel/sdk": [workspace.join("packages/tysel/src/index.ts")]
                     }
                 },
                 "files": files,

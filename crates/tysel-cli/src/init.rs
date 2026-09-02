@@ -228,11 +228,11 @@ mod tests {
         let expected = env!("CARGO_PKG_VERSION");
         assert_eq!(package["devDependencies"]["@tysel/types"], expected);
         assert_eq!(package["devDependencies"]["@tysel/test"], expected);
-        assert!(package["devDependencies"].get("tysel").is_none());
+        assert!(package["devDependencies"].get("@tysel/sdk").is_none());
         let mcp_package: serde_json::Value =
             serde_json::from_str(&generated_package_json("app", true, Template::Mcp).unwrap())
                 .unwrap();
-        assert_eq!(mcp_package["devDependencies"]["tysel"], expected);
+        assert_eq!(mcp_package["devDependencies"]["@tysel/sdk"], expected);
         let tsconfig: serde_json::Value = serde_json::from_str(
             &generated_tsconfig(Path::new("src/index.ts"), false, true).unwrap(),
         )
@@ -256,7 +256,7 @@ mod tests {
         assert!(source.contains("async fetch(request: Request): Promise<Response>"));
 
         let mcp = Template::Mcp.source(false, "../tysel-env.js");
-        assert!(!mcp.contains("from \"tysel\""));
+        assert!(!mcp.contains("from \"@tysel/sdk\""));
         assert!(mcp.contains("kind: \"mcp\""));
         assert!(mcp.contains("async handler(input: { value: string })"));
     }
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn typed_mcp_template_uses_schema_driven_inference() {
         let source = Template::Mcp.source(true, "../tysel-env.js");
-        assert!(source.contains("import { defineApp } from \"tysel\""));
+        assert!(source.contains("import { defineApp } from \"@tysel/sdk\""));
         assert!(source.contains("export default defineApp<TyselEnv>()({"));
         assert!(source.contains("lookup: {"));
         assert!(source.contains("kind: \"mcp\""));

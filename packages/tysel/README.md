@@ -1,4 +1,4 @@
-# tysel
+# @tysel/sdk
 
 Typed definition helpers for Tysel applications. This npm package is not the
 Tysel CLI or native runtime; install those through the
@@ -9,7 +9,7 @@ installation, pin it to the native toolchain version:
 
 ```sh
 version="$(tysel --version | awk '{print $2}')"
-npm install --save-dev "tysel@$version" "@tysel/types@$version"
+npm install --save-dev "@tysel/sdk@$version" "@tysel/types@$version"
 ```
 
 Use `defineApp` when an application needs cross-property inference, notably for
@@ -17,7 +17,7 @@ MCP input schemas:
 
 ```ts
 import type { TyselEnv } from "./tysel-env.js";
-import { defineApp } from "tysel";
+import { defineApp } from "@tysel/sdk";
 
 export default defineApp<TyselEnv>()({
   tasks: {

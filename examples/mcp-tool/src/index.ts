@@ -1,4 +1,4 @@
-import { defineApp } from "tysel";
+import { defineApp } from "@tysel/sdk";
 
 export default defineApp({
   async fetch() {

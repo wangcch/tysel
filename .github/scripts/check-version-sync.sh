@@ -25,6 +25,22 @@ if [[ "$sdk_registries" != "crates-io" ]]; then
 fi
 
 version="$rust_versions"
+expected_npm_packages=(
+  "packages/tysel/package.json:@tysel/sdk"
+  "packages/tysel-test/package.json:@tysel/test"
+  "packages/tysel-types/package.json:@tysel/types"
+  "runtime-js/package.json:@tysel/runtime-js"
+)
+for package_entry in "${expected_npm_packages[@]}"; do
+  manifest="${package_entry%%:*}"
+  expected_name="${package_entry#*:}"
+  package_name="$(jq -er '.name' "$manifest")"
+  if [[ "$package_name" != "$expected_name" ]]; then
+    echo "${manifest} name ${package_name} does not match ${expected_name}" >&2
+    exit 1
+  fi
+done
+
 for manifest in \
   packages/tysel/package.json \
   packages/tysel-test/package.json \
