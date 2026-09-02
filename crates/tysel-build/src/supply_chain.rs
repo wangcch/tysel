@@ -161,7 +161,10 @@ fn validate_inventory(inventory: &RuntimeInventory) -> Result<()> {
     let mut previous = None;
     for component in &inventory.components {
         ensure!(!component.license.trim().is_empty(), "{} has no license", component.purl);
-        ensure!(component.purl.starts_with("pkg:cargo/"), "invalid component purl");
+        ensure!(
+            component.purl.starts_with("pkg:cargo/") || component.purl.starts_with("pkg:github/"),
+            "invalid component purl"
+        );
         if let Some(previous) = previous {
             ensure!(previous < component.purl.as_str(), "components are duplicated or unsorted");
         }
@@ -187,6 +190,14 @@ mod tests {
         let inventory = embedded_runtime_inventory().unwrap();
         assert!(inventory.components.iter().any(|component| component.name == "tysel-runtime"));
         assert!(inventory.components.iter().any(|component| component.name == "tokio"));
+        let quickjs = inventory
+            .components
+            .iter()
+            .find(|component| component.name == "quickjs-ng")
+            .expect("vendored QuickJS-NG component");
+        assert_eq!(quickjs.version, "0.16.2");
+        assert_eq!(quickjs.purl, "pkg:github/quickjs-ng/quickjs@0.16.2");
+        assert!(quickjs.source.contains("2c620e4c4d5823537e93d256e86eed71708433b4"));
         assert!(inventory.components.iter().all(|component| !component.license.is_empty()));
     }
 

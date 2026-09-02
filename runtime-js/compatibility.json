@@ -1,12 +1,28 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "runtimeJsVersion": "0.1.1",
   "tap": {
     "minimumSupportedVersion": 1,
     "maximumSupportedVersion": 5
   },
   "componentAbiVersion": "0.4.0",
-  "quickjsAdapter": "rquickjs-0.12/quickjs-ng",
+  "quickjsAdapter": "rquickjs-0.12.2+810b2b6/quickjs-ng-0.16.2+2c620e4",
+  "quickjs": {
+    "releaseStatus": "candidate",
+    "allowedReleaseChannels": ["canary"],
+    "adapter": {
+      "name": "rquickjs",
+      "version": "0.12.2",
+      "repository": "https://github.com/richarddd/rquickjs.git",
+      "revision": "810b2b661ebee5f632e664fc93084f0f21258341"
+    },
+    "engine": {
+      "name": "quickjs-ng",
+      "version": "0.16.2",
+      "repository": "https://github.com/quickjs-ng/quickjs.git",
+      "revision": "2c620e4c4d5823537e93d256e86eed71708433b4"
+    }
+  },
   "webApi": {
     "profile": "tysel-server-web-subset",
     "compatibilitySchemaVersion": 1

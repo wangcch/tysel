@@ -77,7 +77,7 @@ test("compatibility manifest identifies the embedded runtime boundary", () => {
     "utf8",
   );
 
-  assert.equal(manifest.schemaVersion, 2);
+  assert.equal(manifest.schemaVersion, 3);
   assert.equal(manifest.runtimeJsVersion, runtimeJsVersion);
   assert.equal(manifest.runtimeJsVersion, packageJson.version);
   assert.deepEqual(manifest.tap, {
@@ -85,7 +85,26 @@ test("compatibility manifest identifies the embedded runtime boundary", () => {
     maximumSupportedVersion: 5,
   });
   assert.equal(manifest.componentAbiVersion, "0.4.0");
-  assert.equal(manifest.quickjsAdapter, "rquickjs-0.12/quickjs-ng");
+  assert.equal(
+    manifest.quickjsAdapter,
+    "rquickjs-0.12.2+810b2b6/quickjs-ng-0.16.2+2c620e4",
+  );
+  assert.deepEqual(manifest.quickjs, {
+    releaseStatus: "candidate",
+    allowedReleaseChannels: ["canary"],
+    adapter: {
+      name: "rquickjs",
+      version: "0.12.2",
+      repository: "https://github.com/richarddd/rquickjs.git",
+      revision: "810b2b661ebee5f632e664fc93084f0f21258341",
+    },
+    engine: {
+      name: "quickjs-ng",
+      version: "0.16.2",
+      repository: "https://github.com/quickjs-ng/quickjs.git",
+      revision: "2c620e4c4d5823537e93d256e86eed71708433b4",
+    },
+  });
   assert.deepEqual(manifest.webApi, {
     profile: "tysel-server-web-subset",
     compatibilitySchemaVersion: 1,

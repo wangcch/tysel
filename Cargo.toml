@@ -48,7 +48,9 @@ toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util", "process", "signal"] }
-rquickjs = "0.12"
+# Candidate QuickJS-NG 0.16.2 adapter. Keep the immutable revision until the
+# equivalent upstream rquickjs release is available and validated.
+rquickjs = { git = "https://github.com/richarddd/rquickjs.git", rev = "810b2b661ebee5f632e664fc93084f0f21258341" }
 bytes = "1"
 http = "1"
 hyper = { version = "1", features = ["http1", "http2", "server", "client"] }

@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "cf2ea8002a74e01c247284ba254f85549fd71f9ef8083a9266661eed77b3e86a",
+  "cargo_lock_sha256": "37e26e7f015ca194f3428b6b1bdb1036608a2ffd8b6a167c4504620cd4696e8b",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -2228,24 +2228,21 @@
       "version": "0.12.2",
       "license": "MIT",
       "purl": "pkg:cargo/rquickjs-core@0.12.2",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "checksum": "16e4f499ac5b943d97ee6dbc44f23c2c10426f420f7d2f1793d6318911b6608c"
+      "source": "git+https://github.com/richarddd/rquickjs.git?rev=810b2b661ebee5f632e664fc93084f0f21258341#810b2b661ebee5f632e664fc93084f0f21258341"
     },
     {
       "name": "rquickjs-sys",
       "version": "0.12.2",
       "license": "MIT",
       "purl": "pkg:cargo/rquickjs-sys@0.12.2",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "checksum": "a13ac243b86a74120814ef7e9e30ad5a2c1199b7b9963b1cf7c84e4cdc1cad99"
+      "source": "git+https://github.com/richarddd/rquickjs.git?rev=810b2b661ebee5f632e664fc93084f0f21258341#810b2b661ebee5f632e664fc93084f0f21258341"
     },
     {
       "name": "rquickjs",
       "version": "0.12.2",
       "license": "MIT",
       "purl": "pkg:cargo/rquickjs@0.12.2",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "checksum": "4e04e4eedfb060b503b5f0a2644abb890b0b3620d3fb674f9455f230014964e4"
+      "source": "git+https://github.com/richarddd/rquickjs.git?rev=810b2b661ebee5f632e664fc93084f0f21258341#810b2b661ebee5f632e664fc93084f0f21258341"
     },
     {
       "name": "rusqlite",
@@ -3916,6 +3913,13 @@
       "purl": "pkg:cargo/zmij@1.0.23",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+    },
+    {
+      "name": "quickjs-ng",
+      "version": "0.16.2",
+      "license": "MIT",
+      "purl": "pkg:github/quickjs-ng/quickjs@0.16.2",
+      "source": "git+https://github.com/quickjs-ng/quickjs.git?rev=2c620e4c4d5823537e93d256e86eed71708433b4#2c620e4c4d5823537e93d256e86eed71708433b4"
     }
   ]
 }

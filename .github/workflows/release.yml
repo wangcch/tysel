@@ -45,11 +45,13 @@ jobs:
         run: |
           cargo fmt --all -- --check
           bash -n install.sh .github/scripts/*.sh
-          bash .github/scripts/check-version-sync.sh
+          version="$(bash .github/scripts/check-version-sync.sh)"
           bash .github/scripts/test-release-channel.sh
           bash .github/scripts/test-published-trust.sh
           bash .github/scripts/test-types-package.sh
-          cargo run --locked -p tysel-build --bin tysel-supply-chain -- --check
+          channel="$(bash .github/scripts/release-channel.sh "$version")"
+          cargo run --locked -p tysel-build --bin tysel-supply-chain -- \
+            --check --release-channel "$channel"
           cargo audit --deny warnings
           cargo deny check
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772

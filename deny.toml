@@ -41,3 +41,6 @@ external-default-features = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Temporary candidate adapter. Cargo.lock and the runtime supply-chain gate
+# independently pin and verify the exact superproject and QuickJS gitlink revisions.
+allow-git = ["https://github.com/richarddd/rquickjs.git"]

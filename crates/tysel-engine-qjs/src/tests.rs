@@ -24,19 +24,32 @@ use tysel_task::TaskId;
 
 use crate::{
     DurableSession, IncomingHttp, IsolateCancel, IsolatePool, OutgoingHttpBody, QUICKJS_ADAPTER_ID,
-    STREAM_WINDOW, encode_durable_export, eval, eval_cancellable, eval_durable,
-    eval_durable_module, inspect_durable_exports, runtime_compatibility,
+    QUICKJS_ENGINE_VERSION, STREAM_WINDOW, encode_durable_export, eval, eval_cancellable,
+    eval_durable, eval_durable_module, inspect_durable_exports, runtime_compatibility,
 };
 
 #[test]
 fn runtime_compatibility_matches_packaging_contracts() {
     let compatibility = runtime_compatibility().expect("runtime compatibility manifest");
 
-    assert_eq!(compatibility.schema_version, 2);
+    assert_eq!(compatibility.schema_version, 3);
     assert_eq!(compatibility.runtime_js_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(compatibility.quickjs_adapter, QUICKJS_ADAPTER_ID);
+    assert_eq!(compatibility.quickjs.engine.version, QUICKJS_ENGINE_VERSION);
+    assert_eq!(compatibility.quickjs.release_status, "candidate");
+    assert_eq!(compatibility.quickjs.allowed_release_channels, ["canary"]);
     assert_eq!(compatibility.web_api.profile, "tysel-server-web-subset");
     assert_eq!(compatibility.web_api.compatibility_schema_version, 1);
+}
+
+#[test]
+#[allow(unsafe_code)]
+fn quickjs_engine_version_matches_adapter_identity() {
+    let version = unsafe { std::ffi::CStr::from_ptr(rquickjs::qjs::JS_GetVersion()) }
+        .to_str()
+        .expect("QuickJS version is UTF-8");
+    assert_eq!(version, QUICKJS_ENGINE_VERSION);
+    assert!(QUICKJS_ADAPTER_ID.contains("quickjs-ng-0.16.2+2c620e4"));
 }
 
 fn config() -> IsolateConfig {
@@ -1498,6 +1511,51 @@ fn cpu_interrupt_stops_busy_loop() {
         err,
         EngineError::Interrupted(InterruptReason::Timeout | InterruptReason::Cancelled)
     ));
+}
+
+#[test]
+fn native_array_work_obeys_cpu_interrupt() {
+    let started = Instant::now();
+    let err = eval(
+        "Array.prototype.includes.call({ length: 2 ** 32 - 1 }, 42)",
+        IsolateConfig { cpu_ms_per_turn: 10, request_timeout_ms: 1_000, ..config() },
+    )
+    .expect_err("native array work should be interrupted");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(matches!(
+        err,
+        EngineError::Interrupted(InterruptReason::Timeout | InterruptReason::Cancelled)
+    ));
+}
+
+#[test]
+fn host_backed_array_buffer_rejects_resize_and_survives_cleanup() {
+    for _ in 0..32 {
+        let value = eval(
+            r#"(() => {
+                const bytes = new TextEncoder().encode("quickjs-ng-0.16.2");
+                let rejected = false;
+                try {
+                    bytes.buffer.transfer(64);
+                } catch {
+                    rejected = true;
+                }
+                return JSON.stringify({
+                    rejected,
+                    detached: bytes.buffer.byteLength === 0,
+                    text: new TextDecoder().decode(bytes),
+                });
+            })()"#,
+            config(),
+        )
+        .expect("evaluate host-backed ArrayBuffer lifecycle");
+        assert_eq!(
+            value,
+            Value::String(
+                r#"{"rejected":true,"detached":false,"text":"quickjs-ng-0.16.2"}"#.into()
+            )
+        );
+    }
 }
 
 #[test]

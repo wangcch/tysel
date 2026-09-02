@@ -44,7 +44,8 @@ pub use trust::configure as configure_policy;
 /// Versioned identity of the QuickJS adapter used by this compatibility
 /// engine. This changes when the Rust adapter or underlying engine family
 /// changes in a way that requires runtime conformance to be re-established.
-pub const QUICKJS_ADAPTER_ID: &str = "rquickjs-0.12/quickjs-ng";
+pub const QUICKJS_ENGINE_VERSION: &str = env!("TYSEL_QUICKJS_ENGINE_VERSION");
+pub const QUICKJS_ADAPTER_ID: &str = env!("TYSEL_QUICKJS_ADAPTER_ID");
 
 /// Machine-readable compatibility contract embedded into the engine binary.
 pub const RUNTIME_COMPATIBILITY_JSON: &str = include_str!("../../../runtime-js/compatibility.json");
@@ -65,12 +66,31 @@ pub struct WebApiCompatibilityIdentity {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuickJsComponentIdentity {
+    pub name: String,
+    pub version: String,
+    pub repository: String,
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuickJsProvenance {
+    pub release_status: String,
+    pub allowed_release_channels: Vec<String>,
+    pub adapter: QuickJsComponentIdentity,
+    pub engine: QuickJsComponentIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeCompatibility {
     pub schema_version: u32,
     pub runtime_js_version: String,
     pub tap: TapCompatibility,
     pub component_abi_version: String,
     pub quickjs_adapter: String,
+    pub quickjs: QuickJsProvenance,
     pub web_api: WebApiCompatibilityIdentity,
 }
 
