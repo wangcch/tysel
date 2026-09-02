@@ -13,8 +13,10 @@ Supported production application targets:
 | `linux-x64` | Linux | x86-64 |
 | `linux-arm64` | Linux | arm64 |
 
-Tysel does not cross-compile application executables. Build on the target
-operating system and architecture.
+Builds default to the host target. A managed Tysel installation can build these
+Linux artifacts from another supported macOS or Linux host by selecting
+`--target linux-x64` or `--target linux-arm64`; it authenticates and caches the
+same-version official target runtime.
 
 ## Build admission
 
@@ -25,7 +27,7 @@ tysel doctor --install
 tysel config validate
 tysel task verify
 tysel inspect
-tysel build --release --output dist/APP
+tysel build --release --target linux-x64 --output dist/APP
 ```
 
 Admit the release only when every item passes:

@@ -12,7 +12,7 @@ registry. The commands and record fields below are an operator-owned contract.
 | Stage | Required input | Required output |
 | --- | --- | --- |
 | Validate | Source and complete deployment manifest | Passing checks and tests |
-| Build | Validated source on the target Linux architecture | Release executable plus five verified sidecars |
+| Build | Validated source plus the selected supported Linux target | Release executable plus five verified sidecars |
 | Package | Admitted executable and matching manifest | OCI image containing that executable |
 | Publish | Versioned image | Registry image or OCI index digest |
 | Promote | Admission evidence and registry digest | Platform change pinned to the admitted digest |
@@ -25,6 +25,7 @@ digest from test to production.
 ```sh
 tysel task verify --manifest tysel.container.toml
 tysel build --release \
+  --target linux-x64 \
   --manifest tysel.container.toml \
   --output dist/hello-service
 

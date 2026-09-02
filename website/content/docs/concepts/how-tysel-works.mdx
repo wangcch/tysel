@@ -27,9 +27,10 @@ TypeScript source
 ```
 
 `tysel build` performs this packaging on the current host. The generated file
-does not need Node.js, V8, npm, or `node_modules` at runtime. Cross-compilation
-is not currently implemented, so Linux artifacts should be built on Linux and
-macOS artifacts on macOS.
+does not need Node.js, V8, npm, or `node_modules` at runtime. This is verified
+cross-target packaging, not native runtime cross-compilation: when `--target`
+differs from the host, Tysel authenticates the same-version official target
+runtime and embeds the application package into that stub.
 
 ## Runtime ownership
 

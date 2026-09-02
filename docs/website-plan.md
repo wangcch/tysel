@@ -45,7 +45,8 @@ independent from the product release version and channel.
   does not claim arbitrary TypeScript AOT compilation to machine code.
 - The developer toolchain installs `tysel`, `tysel-service`, and `tysel-worker`. A built
   application is still delivered as one executable.
-- `tysel build --target` does not currently cross-compile. The target must match the host.
+- `tysel build --target` packages for a supported Linux/macOS x64/arm64 target
+  using a verified same-version official runtime.
 - Container packaging on a non-Linux host requires an existing Linux executable.
 - Linux is the production security gate for the isolated profile. macOS is a supported
   development platform, not an equivalent sandbox claim.
@@ -450,7 +451,7 @@ Reference.
 - Reproducible builds
 - CI guide
 
-The target guide states that cross-compilation is not implemented. Container guides
+The target guide documents verified cross-target packaging. Container guides
 distinguish building on Linux from supplying a Linux ELF on another host.
 
 ### Install and manage

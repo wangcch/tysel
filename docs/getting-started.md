@@ -99,11 +99,21 @@ The release task runs the generated verification workflow before
 `tysel build --release`. The target machine needs only the executable; it
 does not need Node.js or `node_modules`.
 
-Application builds target the host operating system and architecture.
-Cross-compilation is not implemented.
+By default the executable targets the host. A managed installation can package
+for another supported Linux or macOS x64/arm64 target by authenticating and
+caching the same-version official runtime:
+
+```sh
+tysel build --release --target linux-arm64 \
+  --output dist/hello-tysel-linux-arm64
+```
+
+Use `--offline` after that target runtime has been verified and cached.
 
 For a container, build with a complete manifest whose listener is
-`0.0.0.0:3000`. See [Container image](guides/container-image.md).
+`0.0.0.0:3000`. A macOS host can first build a Linux executable with `--target`
+and pass it to `tysel image --binary`. See
+[Container image](guides/container-image.md).
 
 ## Use in CI
 

@@ -8,8 +8,10 @@ Choose the artifact boundary before writing platform configuration.
 | Docker or another OCI runtime | OCI image plus the external release sidecars | [Container image](../guides/container-image.md) |
 | One-shot Wasm Component | Release executable and five sidecars | [Component tasks](component-tasks.md) |
 
-Application executables support `linux-x64` and `linux-arm64`. Tysel does not
-cross-compile them, so the build host must match the deployment target.
+Production application executables support `linux-x64` and `linux-arm64`.
+The build host does not need to match: `tysel build --target` packages with a
+verified same-version official target runtime. Tysel does not compile its
+native runtime for arbitrary target triples.
 
 ## Platform boundary
 

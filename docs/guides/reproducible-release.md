@@ -2,16 +2,18 @@
 
 ## Build the artifact set
 
-Build on the production operating system and architecture:
+Build for the production operating system and architecture:
 
 ```sh
 tysel doctor --install
 tysel task verify
 tysel inspect
-tysel build --release --output dist/orders
+tysel build --release --target linux-arm64 --output dist/orders
 ```
 
-Tysel does not cross-compile application executables.
+When the requested target differs from the host, Tysel authenticates and caches
+the same-version official runtime stub before packaging. Use `--offline` only
+after that target runtime has been verified and cached.
 
 | File | Admission purpose |
 | --- | --- |
@@ -167,7 +169,7 @@ not promise byte-identical application binaries from arbitrary build hosts.
 | Executable or sidecar digest mismatch | Quarantine the complete set and rebuild. |
 | Compatibility report mismatch | Rebuild with one admitted Tysel release. |
 | Missing SBOM or license inventory | Reject admission and restore the immutable complete set. |
-| Signed target differs from deployment target | Rebuild on the intended platform and architecture. |
+| Signed target differs from deployment target | Rebuild for the intended platform and architecture. |
 | Trust policy expired | Publish a new authenticated forward-valid policy. |
 | Signing key revoked | Stop deployments, rotate offline, then rebuild or re-sign retained verified artifacts under policy. |
 

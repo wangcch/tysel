@@ -13,10 +13,11 @@ tysel build [ENTRY] [OPTIONS]
 
 | Option | Meaning |
 | --- | --- |
-| <code>{"--target <triple>"}</code> | Validate the requested target. The current implementation only builds the host target. |
+| <code>{"--target <target>"}</code> | Build for `linux-x64`, `linux-arm64`, `darwin-x64`, or `darwin-arm64`. Defaults to the host. |
 | <code>{"--profile <profile>"}</code> | Override the manifest execution profile. |
 | `--release` | Build optimized output and emit release sidecars. |
-| <code>{"--stub <path>"}</code> | Use an explicit runtime stub. |
+| <code>{"--stub <path>"}</code> | Use an explicit runtime stub. For a cross-target build it must byte-match the verified official runtime. |
+| `--offline` | Require an already verified target runtime from the managed cache; never access the network. |
 | <code>{"-o, --output <path>"}</code> | Select the executable path. |
 | <code>{"--manifest <file>"}</code> | Select one manifest. |
 
@@ -31,7 +32,13 @@ one-shot JSON task rather than an HTTP server. See
 
 ```sh
 tysel build --release --output dist/orders
+tysel build --release --target linux-arm64 --output dist/orders-linux-arm64
 ```
+
+Cross-target builds require a managed installation and trust policy. Tysel
+authenticates the release trust policy, manifest, archive signature, target,
+version, and file hashes before caching the runtime under the managed root at
+`build-targets/` (by default `~/.tysel/build-targets/`).
 
 ## `tysel image`
 

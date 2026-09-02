@@ -142,11 +142,14 @@ runtime-only layout when those files are release admission inputs.
 
 ## Package an existing executable
 
-Build the complete artifact set in a Linux release job:
+Build the complete artifact set for the deployment architecture. This can run
+in a Linux release job or on another supported host using a verified target
+runtime:
 
 ```sh
 tysel task verify --manifest tysel.container.toml
 tysel build --release \
+  --target linux-x64 \
   --manifest tysel.container.toml \
   --output dist/hello-service
 ```
@@ -290,7 +293,7 @@ or source tree.
 | Error | Fix |
 | --- | --- |
 | Service must listen on `0.0.0.0` or `[::]` | Build with a container manifest whose `[server].listen` uses an unspecified address and non-zero port. |
-| Linux executable required | Run the build on Linux, or pass a matching Linux ELF with `--binary`. |
+| Linux executable required | Run `tysel build --target linux-x64` or `--target linux-arm64`, then pass that output with `--binary`. |
 | Executable has no TAP metadata or differs from the selected manifest | Rebuild it with the same complete container manifest passed to `tysel image`. |
 | Component profile is rejected | Package the one-shot executable using [Component tasks](../operations/component-tasks.md). |
 | Release sidecar verification fails | Rebuild the artifact with `tysel build --release`; do not copy an incomplete or modified evidence set. |
@@ -298,6 +301,7 @@ or source tree.
 | Container builder cannot start | Set `--builder` or `DOCKER`, or add `--context-only` and build the context elsewhere. |
 | Container starts but is unreachable | Compare the embedded listener, `EXPOSE`, published port, and proxy target. |
 | Executable fails in the runtime image | Confirm its ELF interpreter and native libraries are compatible with the selected base image. |
+| Image architecture is wrong | Match the Tysel build target, Docker `--platform`, and deployment nodes. |
 
 See [Build and image commands](../reference/cli/delivery.md),
 [Reproducible release](reproducible-release.md), and

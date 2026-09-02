@@ -10,10 +10,12 @@ service image contract with a listener and exposed port.
 
 ## Build contract
 
-Build the packaged Linux executable on the target architecture:
+Build the packaged executable for the target architecture. The host may differ
+when a verified same-version official target runtime is available:
 
 ```sh
 tysel build --release \
+  --target linux-x64 \
   --manifest tysel.toml \
   --output dist/task
 ```

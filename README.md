@@ -78,7 +78,7 @@ version pinning, authenticated upgrades, rollback, and Windows via WSL.
 
 | Choose Tysel when you need | Know this before adopting |
 | --- | --- |
-| One executable instead of a JavaScript environment | Builds currently target the host platform |
+| One executable instead of a JavaScript environment | Builds target the host or a verified Linux/macOS x64/arm64 runtime |
 | Web-standard APIs for services and tasks | Tysel is not a general Node.js compatibility layer |
 | Explicit host-resource grants | Native addons, subprocesses, and dynamic libraries are outside the contract |
 | Durable work that survives restarts | Linux is the production isolation target |
@@ -119,7 +119,7 @@ command.
 | `service` profile | Trusted first-party application code |
 | `isolated` profile | Separate worker process; Linux is the production security gate |
 | `component` profile | Experimental Wasm Component tasks with restricted WASI |
-| Cross-compilation | Not currently implemented |
+| Native runtime cross-compilation | Not provided; `build --target` instead packages with a verified same-version official runtime |
 
 See [execution profiles](docs/concepts/execution-profiles.md) and
 [how Tysel works](docs/concepts/how-tysel-works.md) for the complete runtime

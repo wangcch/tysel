@@ -63,8 +63,9 @@ Tysel is Web-API-first, not a general Node.js compatibility layer. Node
 builtins, native addons, subprocesses, dynamic libraries, and ambient host
 access are outside the application contract. The `service` profile is for
 trusted first-party code. The `isolated` profile uses a separate worker
-process; Linux is its production security target. Cross-compilation is not
-currently implemented.
+process; Linux is its production security target. Tysel does not cross-compile
+its native runtime, but `build --target` can package with a verified
+same-version official Linux or macOS x64/arm64 runtime.
 
 Read [how Tysel works](/docs/concepts/how-tysel-works), browse the
 [JavaScript API reference](/reference/javascript), and

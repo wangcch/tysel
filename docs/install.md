@@ -83,6 +83,7 @@ The default layout is:
 ```text
 ~/.tysel/
   versions/vVERSION/bin/{tysel,tysel-service,tysel-worker}
+  build-targets/vVERSION/TARGET/bin/{tysel,tysel-service,tysel-worker}
   bin -> versions/vVERSION/bin
   state.json
   trust.json
@@ -96,6 +97,8 @@ before activation. A healthy managed installation uses its installed verifier
 before executing the downloaded toolchain. Reinstalling a damaged managed
 version replaces it with the verified staging tree. A failed install restores
 the previous link, state, trust policy, version tree, and shell profile content.
+`build-targets` is created lazily when `tysel build --target` needs another
+platform; each cached toolchain remains versioned and signature-verifiable.
 
 ## Diagnose
 
