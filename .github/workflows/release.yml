@@ -19,6 +19,7 @@ env:
   CARGO_PROFILE_TEST_DEBUG: 0
   FUZZ_TARGET: x86_64-unknown-linux-gnu
   FUZZ_TOOLCHAIN: nightly-2026-08-15
+  TYSEL_TOOLCHAIN_IMAGE: ghcr.io/wangcch/tysel-toolchain
 
 jobs:
   policy:
@@ -570,9 +571,114 @@ jobs:
           bash .github/scripts/check-published-channel.sh \
             "$version" "https://github.com/${GITHUB_REPOSITORY}/releases"
 
-  publish-npm:
+  publish-toolchain-platform:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: publication-preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+            platform: linux/arm64
+            suffix: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-release
+          path: target/publish
+      - name: Verify the signed archive and prepare the image context
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          archive="target/publish/tysel-${version}-${{ matrix.target }}.tar.gz"
+          expected_sha256="$(tr -d '[:space:]' < "${archive}.sha256")"
+          actual_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          [[ "$actual_sha256" == "$expected_sha256" ]]
+          mkdir -p target/toolchain-archive
+          tar -xzf "$archive" -C target/toolchain-archive
+          bash .github/scripts/prepare-toolchain-image.sh \
+            "target/toolchain-archive/tysel-${version}-${{ matrix.target }}/bin" \
+            target/toolchain-image "$version" "${{ matrix.target }}" "$GITHUB_SHA"
+      - name: Build, test, and publish the platform image
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          source_date_epoch="$(git log -1 --pretty=%ct)"
+          image="${TYSEL_TOOLCHAIN_IMAGE}:${version}-${{ matrix.suffix }}"
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build \
+            --file .github/docker/toolchain.Dockerfile \
+            --platform "${{ matrix.platform }}" \
+            --build-arg "TYSEL_VERSION=${version}" \
+            --build-arg "TYSEL_SOURCE_COMMIT=${GITHUB_SHA}" \
+            --build-arg "TYSEL_SOURCE_URL=https://github.com/${GITHUB_REPOSITORY}" \
+            --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}" \
+            --tag "$image" \
+            target/toolchain-image
+          for binary in tysel tysel-service tysel-worker; do
+            docker run --rm --entrypoint "$binary" "$image" --build-info-json \
+              | jq -e --arg binary "$binary" --arg version "$version" \
+                '.schemaVersion == 1 and .binary == $binary and .version == $version' \
+                > /dev/null
+          done
+          docker push "$image"
+
+  publish-toolchain-image:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish-toolchain-platform
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Publish and verify the multi-platform image
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          image="$TYSEL_TOOLCHAIN_IMAGE"
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create \
+            --tag "${image}:${version}" \
+            "${image}:${version}-amd64" \
+            "${image}:${version}-arm64"
+          docker buildx imagetools inspect --raw "${image}:${version}" \
+            > target/toolchain-image-index.json
+          jq -e \
+            '[.manifests[].platform | {os, architecture}] | sort_by(.architecture)
+              == [{os: "linux", architecture: "amd64"},
+                  {os: "linux", architecture: "arm64"}]' \
+            target/toolchain-image-index.json > /dev/null
+          inspection="$(docker buildx imagetools inspect "${image}:${version}")"
+          digest="$(awk '$1 == "Digest:" {print $2; exit}' <<< "$inspection")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'Published `%s@%s` for linux/amd64 and linux/arm64.\n' \
+            "$image" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          docker logout ghcr.io
+          if ! docker buildx imagetools inspect "${image}:${version}" > /dev/null; then
+            echo "${image} is not anonymously readable" >&2
+            echo "Confirm that the package is linked to this public repository and is Public" >&2
+            exit 1
+          fi
+
+  publish-npm:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish-toolchain-image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -623,7 +729,7 @@ jobs:
 
   promote-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [stage-release, publish-npm, publish-rust-sdk]
+    needs: [stage-release, publish-npm, publish-rust-sdk, publish-toolchain-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write

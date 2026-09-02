@@ -169,6 +169,12 @@ jobs:
         run: cargo run --locked -p tysel-build --bin tysel-supply-chain -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace --all-targets
+      - name: Build and probe the documented container example
+        env:
+          TYSEL_TOOLCHAIN_BIN_DIR: target/debug
+        run: |
+          cargo build --locked -p tysel-cli -p tysel-runtime -p tysel-isolate
+          bash .github/scripts/test-container-example.sh
 
   rust-msrv:
     needs: changes

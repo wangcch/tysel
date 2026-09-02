@@ -1,0 +1,35 @@
+schema_version = 1
+
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "0.0.0.0:3000"
+http1 = true
+http2 = false
+websocket = false
+
+[permissions]
+
+[limits]
+memory_mb = 64
+cpu_ms_per_turn = 50
+request_timeout_ms = 30000
+max_in_flight = 256
+
+[durable]
+store = "sqlite"
+path = "./data/tysel.db"
+
+[observability]
+logs = "json"
+
+[tasks.verify]
+description = "Check the application"
+steps = [["check"]]
+
+[tasks.release]
+depends = ["verify"]
+steps = [["build", "--release"]]

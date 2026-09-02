@@ -1,0 +1,7 @@
+ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
+FROM ${RUNTIME_IMAGE}
+WORKDIR /app
+COPY --chown=65532:65532 dist/hello-service /app/tysel-app
+USER 65532:65532
+EXPOSE 3000
+ENTRYPOINT ["/app/tysel-app"]
