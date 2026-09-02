@@ -418,7 +418,7 @@ redis = ["cache:read-write"]
 }
 
 #[test]
-fn build_rejects_a_cross_compile_target() {
+fn build_rejects_an_unsupported_target() {
     let dir = temp_js_app("build-target");
     let stub = dir.join("tysel-service");
     fs::write(&stub, b"stub-runtime").unwrap();
@@ -438,7 +438,7 @@ fn build_rejects_a_cross_compile_target() {
         .expect("run tysel build");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("cross-compilation is not implemented"), "{stderr}");
+    assert!(stderr.contains("unsupported build target linux-riscv64"), "{stderr}");
 }
 
 #[test]

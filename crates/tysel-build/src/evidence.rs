@@ -9,9 +9,11 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use tysel_package::{Tap, TapCompatibilityReport, bundle_hash, compatibility_report};
 
+#[cfg(test)]
+use crate::supply_chain::embedded_runtime_inventory;
 use crate::supply_chain::{
-    CycloneDxBom, LicenseInventory, embedded_runtime_inventory_bytes, inventory_digest,
-    release_supply_chain,
+    CycloneDxBom, LicenseInventory, RuntimeInventory, embedded_runtime_inventory_bytes,
+    release_supply_chain_for_inventory, validate_inventory,
 };
 
 pub const RELEASE_EVIDENCE_VERSION: u32 = 2;
@@ -67,7 +69,29 @@ pub struct ReleaseSidecars {
 }
 
 pub fn write_release_evidence(output: impl AsRef<Path>, target: &str) -> Result<ReleaseSidecars> {
-    let output = output.as_ref();
+    write_release_evidence_inner(output.as_ref(), target, false)
+}
+
+/// Write evidence for a runtime stub that the caller has already authenticated
+/// against an official release manifest. This permits a target runtime from the
+/// same Tysel release to carry an inventory that differs from the build host.
+///
+/// The function validates the artifact's embedded inventory, but cannot prove
+/// that the caller authenticated the stub or that `target` describes it. Using
+/// it without that external verification produces evidence that must not be
+/// treated as trusted release evidence.
+pub fn write_release_evidence_for_verified_runtime(
+    output: impl AsRef<Path>,
+    target: &str,
+) -> Result<ReleaseSidecars> {
+    write_release_evidence_inner(output.as_ref(), target, true)
+}
+
+fn write_release_evidence_inner(
+    output: &Path,
+    target: &str,
+    verified_target_runtime: bool,
+) -> Result<ReleaseSidecars> {
     let sidecars = ReleaseSidecars {
         checksum: sidecar_path(output, ".sha256"),
         compatibility: sidecar_path(output, ".compat.json"),
@@ -81,12 +105,18 @@ pub fn write_release_evidence(output: impl AsRef<Path>, target: &str) -> Result<
     let tap = Tap::from_path(output).with_context(|| {
         format!("release artifact {} contains an invalid TAP", output.display())
     })?;
-    ensure_release_runtime_identity(&artifact)?;
+    let (runtime_inventory, runtime_inventory_bytes) = runtime_inventory(&artifact)?;
+    if !verified_target_runtime {
+        ensure!(
+            runtime_inventory_bytes == embedded_runtime_inventory_bytes(),
+            "release runtime stub does not embed the current locked runtime inventory"
+        );
+    }
     let tap_payload = tap.encode().context("failed to encode embedded TAP for release evidence")?;
     let compatibility = compatibility_report(&tap_payload);
     ensure!(compatibility.compatible, "release TAP is not compatible with this runtime");
     let digest = bundle_hash(&artifact);
-    let (sbom, licenses) = release_supply_chain(&tap, &digest)?;
+    let (sbom, licenses) = release_supply_chain_for_inventory(&tap, &digest, runtime_inventory)?;
     let sbom_bytes = json_bytes(&sbom)?;
     let license_bytes = json_bytes(&licenses)?;
     let index = ReleaseEvidenceIndex {
@@ -101,7 +131,7 @@ pub fn write_release_evidence(output: impl AsRef<Path>, target: &str) -> Result<
         execution_profile: tap.manifest.execution_profile.clone(),
         compatibility: compatibility.clone(),
         supply_chain: ReleaseSupplyChainEvidence {
-            runtime_inventory_sha256: inventory_digest(),
+            runtime_inventory_sha256: bundle_hash(runtime_inventory_bytes),
             sbom: document_evidence("cyclonedx-1.5", &sbom_bytes),
             licenses: document_evidence("spdx-license-inventory", &license_bytes),
         },
@@ -140,7 +170,7 @@ pub fn verify_release_evidence(output: impl AsRef<Path>) -> Result<ReleaseEviden
     ensure!(index.artifact.kind == "tysel-single-executable", "unexpected artifact kind");
     ensure!(!index.artifact.target.is_empty(), "release target is empty");
     let tap = Tap::from_path(output).context("release artifact contains an invalid TAP")?;
-    ensure_release_runtime_identity(&artifact)?;
+    let (runtime_inventory, runtime_inventory_bytes) = runtime_inventory(&artifact)?;
     ensure!(
         tap.manifest.application_id == index.application_id,
         "application identity does not match evidence"
@@ -167,7 +197,8 @@ pub fn verify_release_evidence(output: impl AsRef<Path>) -> Result<ReleaseEviden
     let license_bytes = verify_document(output, ".licenses.json", &index.supply_chain.licenses)?;
     let sbom: CycloneDxBom = serde_json::from_slice(&sbom_bytes)?;
     let licenses: LicenseInventory = serde_json::from_slice(&license_bytes)?;
-    let (expected_sbom, expected_licenses) = release_supply_chain(&tap, &index.artifact.sha256)?;
+    let (expected_sbom, expected_licenses) =
+        release_supply_chain_for_inventory(&tap, &index.artifact.sha256, runtime_inventory)?;
     ensure!(sbom == expected_sbom, "SBOM does not match the embedded TAP and runtime inventory");
     ensure!(
         licenses == expected_licenses,
@@ -198,7 +229,7 @@ pub fn verify_release_evidence(output: impl AsRef<Path>) -> Result<ReleaseEviden
         "SBOM and license inventory components differ"
     );
     ensure!(
-        index.supply_chain.runtime_inventory_sha256 == inventory_digest(),
+        index.supply_chain.runtime_inventory_sha256 == bundle_hash(runtime_inventory_bytes),
         "embedded runtime inventory does not match evidence"
     );
     Ok(index)
@@ -232,7 +263,7 @@ fn document_evidence(kind: &str, contents: &[u8]) -> ReleaseDocumentEvidence {
     }
 }
 
-fn ensure_release_runtime_identity(artifact: &[u8]) -> Result<()> {
+fn runtime_inventory(artifact: &[u8]) -> Result<(RuntimeInventory, &[u8])> {
     ensure!(artifact.len() >= 16, "release artifact contains no TAP footer");
     let footer = artifact.len() - 16;
     ensure!(&artifact[footer + 8..] == b"TYSELEND", "release artifact contains no TAP footer");
@@ -243,12 +274,32 @@ fn ensure_release_runtime_identity(artifact: &[u8]) -> Result<()> {
         usize::try_from(payload_len).context("TAP payload length is not addressable")?;
     ensure!(payload_len <= footer, "TAP payload length exceeds release artifact");
     let stub = &artifact[..footer - payload_len];
-    let inventory = embedded_runtime_inventory_bytes();
+    const PREFIX: &[u8] = b"{\n  \"inventory_version\":";
     ensure!(
-        stub.windows(inventory.len()).any(|window| window == inventory),
-        "release runtime stub does not embed the current locked runtime inventory"
+        stub.len() >= PREFIX.len(),
+        "release runtime stub does not embed a valid runtime inventory"
     );
-    Ok(())
+    let mut found = None;
+    for offset in 0..=stub.len() - PREFIX.len() {
+        if &stub[offset..offset + PREFIX.len()] != PREFIX {
+            continue;
+        }
+        let candidate = &stub[offset..];
+        let mut values = serde_json::Deserializer::from_slice(candidate).into_iter();
+        let Some(Ok(inventory)) = values.next() else {
+            continue;
+        };
+        let mut consumed = values.byte_offset();
+        while candidate.get(consumed).is_some_and(u8::is_ascii_whitespace) {
+            consumed += 1;
+        }
+        if validate_inventory(&inventory).is_err() {
+            continue;
+        }
+        ensure!(found.is_none(), "release runtime stub embeds multiple runtime inventories");
+        found = Some((inventory, &candidate[..consumed]));
+    }
+    found.context("release runtime stub does not embed a valid runtime inventory")
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
@@ -416,6 +467,27 @@ mod tests {
     }
 
     #[test]
+    fn release_evidence_uses_the_runtime_inventory_embedded_in_the_stub() {
+        let root = temp_root("target-runtime-inventory");
+        fs::create_dir_all(&root).unwrap();
+        let output = root.join("release-app");
+        let mut inventory = embedded_runtime_inventory().unwrap();
+        inventory.cargo_lock_sha256 = "ab".repeat(32);
+        let mut inventory_bytes = serde_json::to_vec_pretty(&inventory).unwrap();
+        inventory_bytes.push(b'\n');
+        let mut stub = b"target-release-binary".to_vec();
+        stub.extend_from_slice(&inventory_bytes);
+        fs::write(&output, tap().embed_into(&stub).unwrap()).unwrap();
+
+        assert!(write_release_evidence(&output, "linux-arm64").is_err());
+        let sidecars = write_release_evidence_for_verified_runtime(&output, "linux-arm64").unwrap();
+        let evidence: ReleaseEvidenceIndex = read_json(&sidecars.evidence).unwrap();
+        assert_eq!(evidence.artifact.target, "linux-arm64");
+        assert_eq!(evidence.supply_chain.runtime_inventory_sha256, bundle_hash(&inventory_bytes));
+        assert_eq!(verify_release_evidence(&output).unwrap(), evidence);
+    }
+
+    #[test]
     fn verification_rejects_tampered_supply_chain_evidence() {
         let root = temp_root("tampered-sbom");
         fs::create_dir_all(&root).unwrap();
@@ -466,7 +538,7 @@ mod tests {
         fs::write(&output, tap().embed_into(b"stale-runtime-binary").unwrap()).unwrap();
 
         let error = write_release_evidence(&output, "linux-x64").unwrap_err();
-        assert!(error.to_string().contains("current locked runtime inventory"));
+        assert!(error.to_string().contains("valid runtime inventory"));
         assert!(!sidecar_path(&output, ".evidence.json").exists());
     }
 

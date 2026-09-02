@@ -96,11 +96,12 @@ pub fn embedded_runtime_inventory() -> Result<RuntimeInventory> {
     Ok(inventory)
 }
 
-pub(crate) fn release_supply_chain(
+pub(crate) fn release_supply_chain_for_inventory(
     tap: &Tap,
     artifact_sha256: &str,
+    inventory: RuntimeInventory,
 ) -> Result<(CycloneDxBom, LicenseInventory)> {
-    let inventory = embedded_runtime_inventory()?;
+    validate_inventory(&inventory)?;
     let application = BomComponent {
         component_type: "application".into(),
         bom_ref: format!("tysel-application:{artifact_sha256}"),
@@ -153,7 +154,7 @@ pub(crate) fn release_supply_chain(
     ))
 }
 
-fn validate_inventory(inventory: &RuntimeInventory) -> Result<()> {
+pub(crate) fn validate_inventory(inventory: &RuntimeInventory) -> Result<()> {
     ensure!(inventory.inventory_version == SUPPLY_CHAIN_VERSION, "unsupported inventory version");
     ensure!(inventory.cargo_lock_sha256.len() == 64, "invalid Cargo.lock digest");
     ensure!(!inventory.roots.is_empty(), "runtime inventory has no roots");

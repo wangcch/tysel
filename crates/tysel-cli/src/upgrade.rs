@@ -19,8 +19,8 @@ use crate::platform;
 use crate::release;
 
 const DEFAULT_DOWNLOAD_BASE: &str = "https://github.com/wangcch/tysel/releases";
-const MAX_METADATA_BYTES: usize = 4 * 1024 * 1024;
-const MAX_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
+pub(crate) const MAX_METADATA_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -289,7 +289,7 @@ fn upgrade(
     )
 }
 
-fn resolve_trust_policy(
+pub(crate) fn resolve_trust_policy(
     client: &reqwest::blocking::Client,
     current: &Path,
     staging: &Path,
@@ -366,7 +366,7 @@ fn rollback(
     )
 }
 
-fn resolve_manifest(
+pub(crate) fn resolve_manifest(
     client: &reqwest::blocking::Client,
     trust: &Path,
     staging: &Path,
@@ -439,7 +439,7 @@ fn resolve_manifest(
     Ok((manifest, manifest_path))
 }
 
-fn release_client() -> Result<reqwest::blocking::Client> {
+pub(crate) fn release_client() -> Result<reqwest::blocking::Client> {
     Ok(reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(120))
@@ -448,7 +448,7 @@ fn release_client() -> Result<reqwest::blocking::Client> {
         .build()?)
 }
 
-fn download_to(
+pub(crate) fn download_to(
     client: &reqwest::blocking::Client,
     url: &str,
     destination: &Path,
@@ -465,7 +465,7 @@ fn download_to(
     Ok(())
 }
 
-fn extract_archive(
+pub(crate) fn extract_archive(
     archive: &Path,
     staging: &Path,
     version: &str,
@@ -564,14 +564,14 @@ fn validate_active_install(layout: &ManagedLayout, state: &InstallState) -> Resu
     )
 }
 
-fn validate_trust(path: &Path) -> Result<()> {
+pub(crate) fn validate_trust(path: &Path) -> Result<()> {
     let bytes = fs::read(path).context("managed trust.json is missing")?;
     anyhow::ensure!(bytes.len() <= 1024 * 1024, "managed trust policy is oversized");
     let policy: tysel_build::TrustPolicy = serde_json::from_slice(&bytes)?;
     tysel_build::validate_trust_policy(&policy)
 }
 
-fn managed_root() -> Result<PathBuf> {
+pub(crate) fn managed_root() -> Result<PathBuf> {
     let executable =
         fs::canonicalize(env::current_exe().context("resolve running tysel executable")?)
             .context("canonicalize running tysel executable")?;
@@ -755,14 +755,14 @@ fn emit(options: &Options, report: UpgradeReport) -> Result<()> {
     Ok(())
 }
 
-fn now_unix() -> Result<u64> {
+pub(crate) fn now_unix() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
-struct UpgradeLock(PathBuf);
+pub(crate) struct UpgradeLock(PathBuf);
 
 impl UpgradeLock {
-    fn acquire(path: PathBuf, timeout: Duration) -> Result<Self> {
+    pub(crate) fn acquire(path: PathBuf, timeout: Duration) -> Result<Self> {
         let candidate =
             path.with_file_name(format!(".upgrade-lock-{}-{}", std::process::id(), now_unix()?));
         let mut candidate_file = OpenOptions::new()
@@ -791,7 +791,7 @@ impl UpgradeLock {
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     let _ = fs::remove_file(&candidate);
-                    anyhow::bail!("another upgrade holds {}", path.display())
+                    anyhow::bail!("another managed operation holds {}", path.display())
                 }
                 Err(error) => {
                     let _ = fs::remove_file(&candidate);

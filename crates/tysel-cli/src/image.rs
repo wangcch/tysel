@@ -95,12 +95,15 @@ pub fn run(options: Options) -> Result<()> {
     } else {
         super::build::run(
             options.manifest.clone(),
-            options.entry.clone(),
-            options.stub.clone(),
-            Some(app_output.clone()),
-            None,
-            None,
-            true,
+            super::build::Options {
+                entry: options.entry.clone(),
+                stub: options.stub.clone(),
+                offline: false,
+                output: Some(app_output.clone()),
+                target: None,
+                profile: None,
+                release: true,
+            },
         )?;
         validate_linux_executable(&app_output, enforce_default_glibc)?
     };

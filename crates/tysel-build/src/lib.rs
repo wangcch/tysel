@@ -20,7 +20,7 @@ use tysel_package::{PackageManifest, PackagedAot, PackagedComponent, Tap, identi
 pub use evidence::{
     RELEASE_EVIDENCE_VERSION, ReleaseArtifactEvidence, ReleaseDocumentEvidence,
     ReleaseEvidenceIndex, ReleaseSidecars, ReleaseSupplyChainEvidence, verify_release_evidence,
-    write_release_evidence,
+    write_release_evidence, write_release_evidence_for_verified_runtime,
 };
 pub use reproducibility::{
     REPRODUCIBLE_BUILD_EVIDENCE_VERSION, ReproducibleArtifact, ReproducibleBuild,

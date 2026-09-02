@@ -6,26 +6,29 @@ use tysel_manifest::Manifest;
 
 use crate::check::{Typecheck, typecheck};
 
-pub fn run(
-    manifest_path: PathBuf,
-    entry: Option<PathBuf>,
-    stub: Option<PathBuf>,
-    output: Option<PathBuf>,
-    target: Option<String>,
-    profile: Option<String>,
-    release: bool,
-) -> Result<()> {
+pub struct Options {
+    pub entry: Option<PathBuf>,
+    pub stub: Option<PathBuf>,
+    pub offline: bool,
+    pub output: Option<PathBuf>,
+    pub target: Option<String>,
+    pub profile: Option<String>,
+    pub release: bool,
+}
+
+pub fn run(manifest_path: PathBuf, options: Options) -> Result<()> {
+    let Options { entry, stub, offline, output, target, profile, release } = options;
     let manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let host = Target::current();
-    if let Some(requested) = target.as_deref()
-        && !host.accepts(requested)
-    {
-        return Err(anyhow!(
-            "cross-compilation is not implemented; this host is {} (omit --target)",
-            host.canonical()
-        ));
-    }
+    let target = target
+        .as_deref()
+        .map(|requested| {
+            Target::parse(requested)
+                .with_context(|| format!("unsupported build target {requested}"))
+        })
+        .transpose()?
+        .unwrap_or(host);
     if let Some(requested) = profile.as_deref()
         && requested != manifest.app.profile
     {
@@ -71,15 +74,22 @@ pub fn run(
             bundle_len,
         )
     };
-    let stub = resolve_stub(stub, release)?;
+    let stub = if target == host {
+        resolve_stub(stub, release)?
+    } else {
+        let official = crate::cross_target::resolve(target, offline)?;
+        resolve_cross_target_stub(stub, official, target)?
+    };
     let output = output.unwrap_or_else(|| PathBuf::from("dist").join(&manifest.app.name));
     tysel_build::embed(&stub, &output, &tap)
         .with_context(|| format!("failed to write {}", output.display()))?;
     let release_sidecars = if release {
-        Some(
-            tysel_build::write_release_evidence(&output, host.canonical())
-                .context("failed to write release evidence")?,
-        )
+        let evidence = if target == host {
+            tysel_build::write_release_evidence(&output, target.canonical())
+        } else {
+            tysel_build::write_release_evidence_for_verified_runtime(&output, target.canonical())
+        };
+        Some(evidence.context("failed to write release evidence")?)
     } else {
         None
     };
@@ -89,7 +99,7 @@ pub fn run(
     println!("Capabilities     {}", capability_summary(&manifest));
     println!("Runtime          {}", manifest.app.profile);
     println!("Executable       {}", format_bytes(executable));
-    println!("Target           {}", host.canonical());
+    println!("Target           {}", target.canonical());
     println!("Output           {}", output.display());
     if let Some(sidecars) = release_sidecars {
         println!("Checksum         {}", sidecars.checksum.display());
@@ -99,6 +109,23 @@ pub fn run(
         println!("Evidence         {}", sidecars.evidence.display());
     }
     Ok(())
+}
+
+fn resolve_cross_target_stub(
+    requested: Option<PathBuf>,
+    official: PathBuf,
+    target: Target,
+) -> Result<PathBuf> {
+    let Some(requested) = requested else {
+        return Ok(official);
+    };
+    anyhow::ensure!(requested.is_file(), "runtime stub not found at {}", requested.display());
+    anyhow::ensure!(
+        crate::integrity::hash_file(&requested)? == crate::integrity::hash_file(&official)?,
+        "--stub does not match the verified Tysel {} runtime for {target}",
+        env!("CARGO_PKG_VERSION")
+    );
+    Ok(requested)
 }
 
 fn capability_summary(manifest: &Manifest) -> String {
@@ -238,5 +265,33 @@ mod tests {
         assert_eq!(format_bytes(200), "200 B");
         assert_eq!(format_bytes(184 * 1024), "184 KB");
         assert_eq!(format_bytes(14 * 1024 * 1024), "14.0 MB");
+    }
+
+    #[test]
+    fn cross_target_stub_must_match_the_verified_official_runtime() {
+        let root =
+            std::env::temp_dir().join(format!("tysel-cross-target-stub-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let official = root.join("official-service");
+        let requested = root.join("requested-service");
+        std::fs::write(&official, b"official-runtime").unwrap();
+        std::fs::write(&requested, b"different-runtime").unwrap();
+
+        let error = resolve_cross_target_stub(
+            Some(requested.clone()),
+            official.clone(),
+            Target::LinuxArm64,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("does not match the verified Tysel"));
+
+        std::fs::write(&requested, b"official-runtime").unwrap();
+        assert_eq!(
+            resolve_cross_target_stub(Some(requested.clone()), official, Target::LinuxArm64)
+                .unwrap(),
+            requested
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

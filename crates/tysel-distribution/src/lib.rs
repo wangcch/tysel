@@ -38,6 +38,12 @@ impl std::fmt::Display for Target {
 }
 
 impl Target {
+    pub fn parse(value: &str) -> Option<Self> {
+        [Self::LinuxX64, Self::LinuxArm64, Self::DarwinX64, Self::DarwinArm64]
+            .into_iter()
+            .find(|target| target.accepts(value))
+    }
+
     pub const fn from_canonical(value: &str) -> Option<Self> {
         match value.as_bytes() {
             b"linux-x64" => Some(Self::LinuxX64),
@@ -156,11 +162,13 @@ mod tests {
             assert_eq!(Target::from_canonical(target.canonical()), Some(target));
             for alias in target.aliases() {
                 assert!(target.accepts(alias), "{} should accept {alias}", target.canonical());
+                assert_eq!(Target::parse(alias), Some(target));
             }
             assert!(!target.accepts("linux-riscv64"));
         }
         assert!(!Target::Unsupported.accepts("unsupported"));
         assert_eq!(Target::from_canonical("linux-amd64"), None);
+        assert_eq!(Target::parse("linux-riscv64"), None);
     }
 
     #[test]

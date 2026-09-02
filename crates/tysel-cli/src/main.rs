@@ -16,6 +16,7 @@ mod bench;
 mod build;
 mod check;
 mod compat;
+mod cross_target;
 mod dev;
 mod doctor;
 mod image;
@@ -229,6 +230,9 @@ enum Commands {
         release: bool,
         #[arg(long)]
         stub: Option<PathBuf>,
+        /// Require a previously verified target runtime; never access the network.
+        #[arg(long)]
+        offline: bool,
         #[arg(short, long)]
         output: Option<PathBuf>,
         #[arg(long)]
@@ -448,9 +452,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 .context("tokio runtime")?;
             runtime.block_on(dev::run_queue(project.manifest_path, entry, name, message_id, input))
         }
-        Commands::Build { entry, stub, output, manifest, target, profile, release } => {
+        Commands::Build { entry, stub, offline, output, manifest, target, profile, release } => {
             let project = context(manifest.as_deref())?;
-            build::run(project.manifest_path, entry, stub, output, target, profile, release)
+            build::run(
+                project.manifest_path,
+                build::Options { entry, stub, offline, output, target, profile, release },
+            )
         }
         Commands::Release { command } => {
             switch_to_selected_dir(project_dir.as_deref())?;
