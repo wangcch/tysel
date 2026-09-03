@@ -1,0 +1,142 @@
+---
+title: "Why Tysel Is Not Another Node.js Runtime"
+description: "Tysel runs TypeScript, but it makes a different production trade: a bounded application contract instead of a general-purpose JavaScript environment."
+author: "Tysel"
+date: "2026-09-03T12:00:00Z"
+cover: "/blog/why-tysel-is-not-another-nodejs-runtime/hero.jpg"
+coverAlt: "A large open ring contrasted with a compact bounded unit along one lime execution line"
+tags:
+  - architecture
+  - typescript
+  - runtime
+---
+
+> The important question is not whether Tysel can replace Node.js. It is which production contract your workload actually needs.
+
+Calling Tysel a “Node.js alternative” is understandable. At the surface, the overlap is real: both run JavaScript applications, serve HTTP, call remote systems, and can be delivered without installing a separate runtime on the target machine.
+
+That last sentence matters. Modern Node.js has a stable [Permission Model](https://nodejs.org/api/permissions.html) for restricting filesystem, network, child-process, worker, native-addon, WASI, FFI, and inspector access. It also has [Single Executable Applications](https://nodejs.org/api/single-executable-applications.html), which can embed a script in the Node.js binary. [Bun can compile](https://bun.sh/docs/bundler/executables) a TypeScript or JavaScript entry point, its dependencies, and the Bun runtime into a standalone executable. Deno has long made I/O permissions explicit through its [runtime security model](https://docs.deno.com/runtime/fundamentals/security/).
+
+Tysel is not differentiated by pretending those features do not exist. Its distinction is the production contract that connects application code, authority, execution profile, recovery, and release evidence.
+
+Tysel is a deliberately narrower runtime for services, workers, MCP tools, plugins, and durable agents. It takes TypeScript as developer input, validates a project contract, bundles the application ahead of delivery, and packages it with a native Rust host into one executable.
+
+Application JavaScript still runs inside an embedded QuickJS isolate. Tysel does **not** compile TypeScript into native machine code. “Native” describes the host and the delivered artifact, not a new JavaScript execution model.
+
+## A different unit of production
+
+A conventional Node.js deployment is usually an assembly:
+
+- a Node.js version;
+- application source or a bundle;
+- production dependencies;
+- package-manager and startup conventions;
+- filesystem and environment assumptions;
+- a container image or host prepared to hold all of them.
+
+That model is flexible, mature, and appropriate for a very large range of applications. Its strength is that the environment can do almost anything a server process needs to do.
+
+Tysel starts with the opposite question: what if a production unit should contain only the application, its validated configuration, and the runtime required to execute that contract?
+
+`tysel build` emits one executable containing the application bundle, manifest, source map, compatibility metadata, and native runtime. The target machine does not need Node.js, npm, V8, or `node_modules`. Release builds also produce checksums, compatibility results, a runtime-focused SBOM, a runtime license inventory, and an evidence index as separate audit sidecars.
+
+The output is smaller as an operational concept, even when the executable itself is not tiny: one artifact to start, one authority model to inspect, and one runtime version bound to the application. Node.js SEA, Bun's compiled executables, and `deno compile` already solve substantial parts of runtime installation. Tysel's claim is wider than the file format: validation, compatibility, packaging, authority, and release evidence pass through one build contract.
+
+## The host owns authority
+
+In a general-purpose server runtime, code commonly reaches the filesystem, process environment, network, child processes, and native extensions through ambient APIs. Containers and operating-system policy can reduce that authority, but the application contract itself does not necessarily enumerate it.
+
+Tysel routes networking, secrets, databases, filesystem handles, limits, and durable scheduling through the native host. Authority can come from a named manifest grant, the selected execution profile, or deployment-owned configuration. Application code does not gain a host operation merely because a package expects an ambient Node.js API.
+
+For manifest-controlled resources, effective authority is narrower than the request:
+
+```text
+manifest request
+  ∩ deployment policy
+  ∩ execution profile
+  ∩ runtime support
+  = effective capability
+```
+
+The distinction matters for agentic software. An agent may choose actions dynamically, consume untrusted content, call models, and remain alive far longer than one HTTP request. Its application code should not inherit every credential and filesystem path that happens to exist in the process environment.
+
+Tysel makes those effects reviewable before the program starts. A fetch hostname, a secret name, a database grant, or a filesystem root is part of a versioned contract rather than an invisible assumption.
+
+Read [Deny by Default: Why Agents Need Explicit Capabilities](/blog/capability-by-default) for the complete model.
+
+## Compatibility is intentionally bounded
+
+Tysel supports TypeScript, npm packages that fit its compatibility contract, Fetch-style HTTP, and a focused set of Web-standard globals. It does not promise the full Node.js API surface.
+
+Node.js built-ins, native addons, subprocesses, dynamic libraries, and arbitrary ambient operating-system access are outside the Tysel application model. Some npm packages work after bundling; others depend on Node-specific behavior and are classified as incompatible or unknown. Compatibility analysis is an admission signal, not a substitute for application tests.
+
+This is not a temporary omission disguised as a feature. A narrow compatibility surface is what allows the runtime to reason about the application boundary.
+
+The practical workflow is therefore explicit:
+
+```sh
+tysel check
+tysel compat --strict --deny-unknown
+tysel inspect
+```
+
+`check` validates the project and capability use. `compat` classifies imports and dependencies. `inspect` prints the effective permissions and limits. Compatibility becomes something the release process can examine instead of something discovered only after deployment.
+
+## QuickJS is an implementation choice, not the product
+
+QuickJS-ng gives Tysel an embeddable JavaScript engine with a compact integration surface. That choice helps the runtime package isolates into a native host without bringing a general-purpose Node.js environment with it.
+
+But replacing V8 with QuickJS is not, by itself, the value proposition. A bare embedded engine would not provide capability manifests, release evidence, execution profiles, durable history, host-managed secrets, or build admission.
+
+Tysel is the contract around the engine:
+
+- reported TypeScript-check state and bundling;
+- compatibility analysis;
+- a capability-controlled host;
+- bounded execution profiles;
+- durable operations and recovery;
+- a verifiable release artifact set.
+
+Engine choice supports that contract. It does not define it.
+
+## Where Tysel fits
+
+Tysel is worth evaluating when the workload benefits from a small and explicit production boundary:
+
+- a TypeScript API or worker delivered as one executable;
+- an MCP server whose outbound hosts and secret names should be reviewable;
+- a scheduled or queue-driven service with bounded concurrency and resource limits;
+- a durable agent that sleeps, waits for approval, retries, and resumes;
+- a plugin or generated function that should run under a reduced execution profile.
+
+It is a weaker fit when the application depends on broad Node.js compatibility, native addons, child processes, runtime code generation, or an ecosystem framework that assumes unrestricted access to Node internals. It is also not a browser runtime, a desktop application framework, or a substitute for operating-system and network hardening.
+
+## Similar features, different contracts
+
+The useful comparison is not a checklist where only Tysel is allowed to have modern features. Node.js, Bun, and Deno already cover substantial parts of this territory; Tysel composes them differently:
+
+- **Restricted I/O.** Node.js has a stable opt-in Permission Model, and Deno denies most I/O until granted by flags or prompts. Tysel puts capability requests in a versioned manifest, then reduces them by deployment policy, profile, and runtime support.
+- **Single executable.** Node.js SEA embeds a script and assets, Bun compiles an application bundle with its runtime, and [`deno compile`](https://docs.deno.com/runtime/reference/cli/compile/) embeds the program and runtime. Tysel embeds a validated application package in its native host and emits audit sidecars with release builds.
+- **Threat model.** Node's permission model guards trusted code, and Deno's native libraries require separate care. Tysel's `service` profile is also process-trusted; Linux `isolated` adds a worker boundary but withholds host capabilities.
+- **Higher-level resources.** General-purpose runtimes expose broad runtime APIs. Tysel gives host resources explicit authority sources across manifest grants, execution profiles, and deployment configuration.
+- **Release record.** General-purpose runtimes leave evidence and admission policy to each project. A Tysel release build emits compatibility, runtime supply-chain, checksum, and evidence sidecars.
+
+This comparison is not a security ranking. Node.js explicitly documents its Permission Model as a “seat belt” for trusted code rather than a malicious-code sandbox. Deno documents that native libraries run as machine code in-process. Tysel's own `service` profile also shares a process with the host and is intended for trusted first-party code.
+
+The narrower Tysel distinction is composition: packaging, capability requests, execution profile, durable recovery, and release evidence are parts of one application model. Whether that composition is valuable depends on the workload.
+
+## The narrower promise
+
+Tysel is not trying to win a contest for the largest JavaScript surface. It is trying to make one route from TypeScript to production easier to inspect:
+
+```text
+write TypeScript
+declare authority
+verify compatibility
+ship one executable
+recover durable work
+```
+
+If your application needs the flexibility of Node.js, use Node.js. If your service or agent benefits from a smaller compatibility surface, explicit authority, and a release unit that already contains its runtime, Tysel is a different—and potentially useful—answer.
+
+Start with [How Tysel works](/docs/concepts/how-tysel-works), then build the [hello service](/docs/getting-started).

@@ -1,0 +1,184 @@
+---
+title: "Deny by Default: Why Agents Need Explicit Capabilities"
+description: "Agentic software can choose actions at runtime. Tysel makes the resources behind those actions explicit, bounded, and reviewable before execution."
+author: "Tysel"
+date: "2026-09-03T11:00:00Z"
+cover: "/blog/capability-by-default/hero.jpg"
+coverAlt: "A lime path passing through the only open aperture in a large white capability boundary"
+tags:
+  - security
+  - agents
+  - capabilities
+---
+
+> An agent should receive the authority required for its task—not every resource available to its process.
+
+Traditional application security often begins with identity: authenticate the caller, authorize the request, and protect the perimeter around the service. Agentic software adds another question inside that perimeter: what is the program itself allowed to do after it starts deciding which action comes next?
+
+That matters because an agent is an effect amplifier. It may read untrusted instructions, select tools dynamically, call a model, retry after failure, wait for a human, and continue hours later. A prompt injection or ordinary programming error becomes more consequential when the process can reach every credential, hostname, database, and file that deployment happened to expose.
+
+Tysel treats host authority as an explicit application contract. Manifest-controlled resources are unavailable unless they are requested, and requesting them is still only one layer of the authority decision.
+
+This article uses “capability” to mean a host operation exposed through Tysel, not a claim that all Tysel code is sandboxed. The `service` profile is for trusted first-party code and shares a process with the native host. The Linux `isolated` profile adds a worker boundary for less-trusted JavaScript, but deliberately denies the host-facing capabilities discussed below. Capability restriction and process isolation are separate layers.
+
+## Denial is the empty configuration
+
+A new Tysel project can contain an empty permissions table:
+
+```toml
+[permissions]
+```
+
+That application receives no outbound hostnames, secret names, Postgres grants, Redis grants, or filesystem roots. Those capabilities do not appear merely because an environment variable exists or a library attempts to use them.
+
+Not every host facility is represented by a named `[permissions]` grant. Embedded SQLite is governed by the trusted execution profile, and the durable store and inbound listener are host-managed infrastructure. The important boundary is that each facility has an explicit authority source: a manifest grant, an execution profile, or host deployment configuration.
+
+A service that needs a narrow set of resources might request:
+
+```toml
+[permissions]
+fetch = ["api.example.com"]
+secrets = ["API_TOKEN"]
+postgres = ["main:read-only"]
+fs_read = ["./prompts"]
+fs_write = ["./data/output"]
+```
+
+Each field describes a resource selector, not a broad category:
+
+- `fetch` contains hostnames rather than arbitrary URL prefixes;
+- redirects are checked again against the allowlist;
+- `secrets` contains names, not secret values;
+- database grants are named and can be read-only;
+- filesystem access is limited to pinned roots;
+- read access does not imply write access.
+
+Unknown fields, empty entries, and duplicate entries are rejected while loading the manifest. The configuration is versioned and can be reviewed beside the application code.
+
+## A request is not authority
+
+The manifest is one layer of the decision:
+
+```text
+manifest request
+  ∩ deployment policy
+  ∩ execution profile
+  ∩ runtime support
+  = effective capability
+```
+
+This prevents a code change from granting itself more authority than its environment permits. Adding a filesystem root to the manifest cannot override a profile that denies filesystem access. Importing a Wasm Component interface cannot bypass a deployment policy that withholds that capability. Asking for a capability the runtime does not implement does not make it exist.
+
+The `service` profile supports the complete host capability surface for trusted first-party code, while still requiring manifest grants. The `isolated` profile runs JavaScript in a separate worker process and denies host-facing network, database, filesystem, LLM, and WebSocket capabilities even when the manifest lists them. On Linux, that worker also applies Landlock, seccomp, resource limits, and best-effort cgroup enforcement.
+
+The experimental `component` profile has a separate intersection: guest imports, manifest roots, and deployment policy must agree. Its current application capability surface is intentionally much smaller.
+
+Profiles are reductions of authority, not convenience presets.
+
+## Secrets should be references
+
+Putting a secret name in a manifest does not put the value in the artifact. Connection URLs and secret values remain deployment-owned.
+
+For a declared secret such as `API_TOKEN`, JavaScript asks the host for an opaque reference. The application can pass that handle to a host capability without receiving the plaintext environment value. The declaration does not create the secret, populate it, or authorize any undeclared name.
+
+This distinction reduces accidental exposure through logs, thrown errors, serialization, or model context. It does not eliminate operator responsibilities: environment variables and provider credentials still need protection, rotation, and infrastructure policy.
+
+## Types narrow the developer experience
+
+After changing manifest permissions, `tysel types` generates a manifest-scoped TypeScript environment:
+
+```sh
+tysel types
+tysel types --check
+```
+
+The generated `TyselEnv` exposes only the capabilities declared for that project. This makes missing permissions visible during development and CI.
+
+Types are guidance, not the security boundary. Generated declarations do not grant authority, and a hostname represented in a type still requires runtime allowlist enforcement. The native host remains authoritative.
+
+That separation is useful: developers get early feedback without confusing compile-time ergonomics with runtime security.
+
+## Inspect the result, not just the source
+
+The repository's `durable-agent` example requests one secret and uses the default SQLite durable store. Running the checked-in tool against that manifest produces:
+
+```text
+$ tysel inspect --manifest examples/durable-agent/tysel.toml
+Application: durable-agent
+Profile: service
+Entry: src/index.ts
+Listen: 127.0.0.1:3000
+Logs: json
+
+Capabilities
+  Secrets
+    OPENAI_API_KEY
+  SQLite
+    ./data/tysel.db
+
+Denied
+  Raw TCP
+  Child Process
+  FFI
+  Dynamic Library
+  Environment
+```
+
+That output is more useful in review than the phrase “sandboxed agent.” It shows the selected profile, manifest-granted resources such as the named secret, profile-governed facilities such as embedded SQLite, and operations that remain outside the application contract. It does not claim that the process itself is hostile-code-safe.
+
+## Capability design changes review
+
+Consider an agent that reads a support case, calls an LLM, looks up an order, and writes a proposed response. A traditional review may focus on prompt construction and business logic. A capability review can ask concrete operational questions:
+
+- Which model endpoint may it contact?
+- Which secret name does that provider require?
+- Is the order database grant read-only?
+- Which directory may hold generated drafts?
+- Does the workload need to share a process with the host?
+- What request, response, memory, deadline, and concurrency limits apply?
+
+Those questions can be answered without tracing every possible branch through the agent. The manifest describes the maximum requested effect surface; the profile and deployment reduce it further.
+
+`tysel inspect` makes the effective result visible:
+
+```sh
+tysel check
+tysel inspect
+```
+
+Run both in CI after permission changes. Then test denials as deliberately as successful calls: an undeclared redirect target, a filesystem traversal, a mutation through a read-only grant, and a missing secret should fail closed.
+
+## Capabilities do not replace isolation
+
+A capability model and a process sandbox answer different questions.
+
+Capabilities restrict which host operations the runtime will perform for application code. Process isolation restricts what code can reach outside those runtime APIs. Tysel's `service` profile is capability-restricted but process-trusted; it is intended for first-party code. The Linux `isolated` profile adds a worker boundary for plugins and generated code, while deliberately withholding host-facing capabilities.
+
+Neither replaces infrastructure controls. Production operators still need non-root identities, outbound network policy, TLS termination, host patching, secret management, and protection for databases and durable stores.
+
+Defense in depth works when the layers are named accurately.
+
+## Capabilities do not solve confused intent
+
+Explicit permission limits the blast radius of a mistake; it cannot prove that an action matches a user's intent.
+
+If an agent is allowed to send email, a prompt injection may still persuade it to send the wrong email. The capability boundary can restrict the provider, secret, and surrounding resources, but product logic must still handle confirmation, policy checks, recipient validation, audit, and human approval.
+
+Durable workflows are useful here because approval can become a persisted boundary rather than an in-memory pause. But recovery semantics and authorization semantics remain separate concerns.
+
+## A better default for long-lived software
+
+The practical goal is not to make agents harmless. It is to make their maximum authority explicit enough to inspect, reduce, test, and operate.
+
+For every new capability:
+
+1. start with an empty permission set;
+2. add the narrowest resource selector;
+3. choose the least-authoritative execution profile that can run the workload;
+4. keep credentials outside the manifest and artifact;
+5. run `tysel check`, `tysel types --check`, and `tysel inspect`;
+6. test the denial path in the deployment environment.
+
+An agent may decide what to do next. Its runtime should still decide what it is allowed to touch.
+
+Continue with the [security model](/docs/security), [capability matrix](/docs/capabilities), and [manifest permissions reference](/reference/manifest/permissions).
