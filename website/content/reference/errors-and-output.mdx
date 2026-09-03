@@ -25,20 +25,46 @@ The option is global and can appear before or after the command:
 tysel --error-format json check
 ```
 
-Fatal errors are one JSON object on stderr:
+Fatal errors are one JSON object on stderr. Build failures also include a
+`diagnostics` array with original-source positions when Oxc supplies a span:
 
 ```json
 {
   "error": {
     "code": "TYSEL_CLI_ERROR",
     "message": "manifest validation failed: ..."
-  }
+  },
+  "diagnostics": [{
+    "code": "TYSEL_PARSE_ERROR",
+    "message": "...",
+    "severity": "error",
+    "phase": "parse",
+    "file": "src/index.ts",
+    "start": { "line": 4, "column": 7, "byteOffset": 52 },
+    "end": { "line": 4, "column": 8, "byteOffset": 53 }
+  }]
 }
 ```
 
 `code` is currently the generic `TYSEL_CLI_ERROR`; use `message` for a human
 diagnostic, not as a stable programmatic discriminator. The process exits with
 status `1` for this fatal path.
+
+## Development diagnostic stream
+
+`tysel --error-format json dev` writes one JSON object per diagnostic update to
+stderr while the server continues running. A failed reload publishes a
+non-empty array; the next successful reload publishes an empty array so an
+editor can clear stale diagnostics. `generation` increases for each reload
+attempt, and `schemaVersion` is currently `1`.
+
+Unhandled handler failures publish a separate `runtimeDiagnostic` event
+containing one source-mapped diagnostic and hexadecimal `requestId`. It is an
+occurrence, not a replacement for the current build-diagnostic snapshot.
+Runtime stacks are bounded to 64 KiB and pass through a bounded 64-entry
+queue. If that queue overflows, Tysel emits `TYSEL_DIAGNOSTICS_DROPPED` after
+output resumes. Lines and columns are one-based; `byteOffset` is a zero-based
+UTF-8 offset when supplied by the compiler.
 
 ## Command reports
 

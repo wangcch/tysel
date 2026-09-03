@@ -12,7 +12,7 @@ tysel [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--error-format <human|json>` | `human` | Format fatal CLI errors written to stderr. |
+| `--error-format <human|json>` | `human` | Format stderr errors; JSON mode also emits the `dev` diagnostic stream. |
 | `-C, --project <directory>` | Current directory | Discover and run from another project directory. `--project-dir` is an alias. |
 | `-h, --help` | — | Print help. |
 | `-V, --version` | — | Print the installed version. |

@@ -123,9 +123,11 @@ Differences in working directory, injected secrets, Postgres URLs, OTLP
 configuration, proxy behavior, or operating-system permissions often explain
 “works in dev” failures.
 
-For CLI automation, use `--error-format json`. Fatal setup errors are one
-`TYSEL_CLI_ERROR` object on stderr and exit `1`; command reports go to stdout
-and may coexist with a non-zero policy result. Parse the streams separately.
+For CLI and editor automation, use `tysel --error-format json dev`. Build and
+runtime diagnostic updates are newline-delimited JSON on stderr; successful
+reloads publish an empty diagnostic array to clear stale errors. Fatal setup
+errors remain one `TYSEL_CLI_ERROR` object and exit `1`. Command reports go to
+stdout, so parse the streams separately.
 
 See [Errors and machine output](/reference/errors-and-output),
 [Concurrency and backpressure](/docs/guides/concurrency-backpressure), and
