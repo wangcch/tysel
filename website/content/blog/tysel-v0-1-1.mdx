@@ -1,0 +1,145 @@
+---
+title: "Tysel v0.1.1 Is Now Available: Write TypeScript. Ship a Binary."
+description: "A runtime for services and AI agents that combines one executable, explicit capabilities, and durable work into a narrower production contract."
+author: "Tysel"
+date: 2026-09-02
+cover: "/blog/tysel-v0-1-1/hero.jpg"
+coverAlt: "The Tysel v0.1 release line set as a deliberately cropped editorial poster"
+readingMinutes: 8
+tags:
+  - release
+  - typescript
+  - runtime
+---
+
+> A deliberately narrow production runtime for TypeScript services and agents.
+
+I like developer tools that know what they are—and are equally clear about what they are not.
+
+Tysel v0.1.1 is now publicly available. It is still pre-1.0: ready to install, evaluate, and influence, but not yet promising API stability across minor releases.
+
+Tysel is a TypeScript runtime for services and AI agents. “Native” describes the host and the deliverable: TypeScript is checked and bundled at build time, application JavaScript runs inside an embedded QuickJS isolate, and a Rust host owns networking, storage, secrets, limits, and scheduling. Tysel does not AOT-compile TypeScript into machine code.
+
+Its pitch is direct: **write TypeScript, ship a binary.** But a single binary is not the differentiator by itself. Tysel combines three things into one production model: a self-contained executable, a deny-by-default capability contract, and durable work that can recover after restarts.
+
+## One runtime file, a verifiable release
+
+Most JavaScript deployments are assemblies. The source may be straightforward, but the production unit is a combination of runtime versions, dependencies, scripts, image layers, permissions, and conventions that live outside the application itself.
+
+Tysel compresses that surface into a native artifact:
+
+![Tysel builds TypeScript source and a manifest into one native executable](/blog/tysel-v0-1-1/pipeline.svg)
+
+The target machine does not need Node.js, V8, npm, or `node_modules`. Development can still use TypeScript, npm packages, and editor declarations; the claim is about removing production runtime dependencies, not making the JavaScript toolchain disappear from development.
+
+Running the application requires one executable. The build also emits checksums, compatibility reports, an SBOM, a license inventory, and evidence as separate sidecars for audit and reproduction. They travel with the release without pretending every piece of release paperwork lives inside the binary.
+
+This is an appealing model for small HTTP services, queue and cron workers, MCP tools, isolated plugins, and agents—workloads where a full general-purpose JavaScript environment often brings more ambient surface than the application actually needs.
+
+## Reference size and cold start
+
+A single file is not automatically a small file, so Tysel puts numbers behind the packaging story. The release harness requires its reference `hello-service` to produce a **package no larger than 20 MiB** with **cold-start p50 no slower than 15 ms**. That is not a size guarantee for arbitrary user applications; bundles, dependencies, and enabled capabilities still affect the result.
+
+Tysel 0.1.1 publishes raw `hello-service` evidence from Ubuntu 24.04.4 alongside the release:
+
+| Release evidence | Linux arm64 | Linux x64 |
+| --- | ---: | ---: |
+| Single executable | 15.98 MiB | 19.77 MiB |
+| Cold-start p50 | 4.85 ms | 6.60 ms |
+| Idle memory, PSS | 6.81 MiB | 7.36 MiB |
+
+Cold start uses 11 measured process launches after two warm-ups and stops when the service reports readiness. It is a startup measurement, not HTTP request latency or throughput. Each evidence file records the artifact SHA-256, source commit, system, and command; the raw [arm64 evidence](https://github.com/wangcch/tysel/releases/download/v0.1.1/benchmark-evidence-linux-arm64.json) and [x64 evidence](https://github.com/wangcch/tysel/releases/download/v0.1.1/benchmark-evidence-linux-x64.json) are available directly from the release.
+
+Build time varies with application size and TypeScript checking. As a development-machine reference, three `tysel build --release` runs of the default `hello-service`—using the official Tysel 0.1.1 macOS arm64 toolchain on an Apple M5 Pro—took **0.24, 0.33, and 0.16 seconds**. Those runs included the TypeScript check, bundling, capability analysis, executable packaging, and release-evidence generation, and produced an executable of about 12.6 MiB. The example bundle is only 143 bytes, and three runs are not a large-project benchmark; the result only shows that packaging this small application with an installed toolchain can complete in under half a second. It does not include compiling Tysel itself from Rust.
+
+These numbers belong to named systems, a named release, and a small example application—not every configuration or workload. The supported conclusion is deliberately narrow: the v0.1.1 reference service remains in the tens of MiB and reaches readiness in milliseconds in the recorded Linux environments.
+
+## Capabilities are declared, not assumed
+
+Tysel is deny-by-default. Network destinations, secret names, databases, filesystem roots, and resource limits must be requested in a versioned TOML or JSON manifest.
+
+```toml
+[permissions]
+fetch = ["api.example.com"]
+secrets = ["API_TOKEN"]
+```
+
+The manifest does not get the final word. Effective authority is the intersection of the application grants, deployment policy, execution profile, and runtime support. Adding a permission cannot punch through a stricter deployment or profile.
+
+That model is useful for ordinary services and becomes even more valuable for agentic software. An agent may need to call a model, read a secret, reach one API, or write to a particular store. Those requirements should be visible as a reviewable contract, not hidden in whatever happens to be available in the process environment.
+
+Tysel's native host owns sockets, storage connections, secret resolution, filesystem handles, limits, and durable scheduling. Application JavaScript reaches them through bounded runtime APIs. In other words, the host remains in charge of authority.
+
+Capability restriction is not the same as an equally strong sandbox in every profile. The `service` profile is for trusted first-party code and shares a process with the native host. The `isolated` profile moves execution into a separate worker and adds Landlock, seccomp, and resource limits on Linux. macOS isolation is a development check rather than the production security gate, and operators remain responsible for OS hardening and infrastructure egress policy.
+
+## Durable work is a runtime primitive
+
+Consider an order-approval agent: load an order, call a model to create a draft, sleep for ten minutes, and wait for a human approval signal. AI agents and long-running workflows spend a surprising amount of time not running—and a process can restart after the model call but before approval arrives.
+
+Tysel gives durable handlers explicit boundaries for steps, effects, sleep, retries, replay-safe time and randomness, and external signals:
+
+```ts
+const draft = await ctx.effect("create-draft", () => createDraft(order));
+await ctx.sleep("10m");
+const decision = await ctx.waitForSignal("approval");
+```
+
+When the task resumes, completed boundaries return their persisted results and execution continues against that history. A completed model call or external write does not have to run again simply because the service restarted.
+
+The semantics are intentionally narrower than “exactly once.” External providers should still receive idempotency keys, the durable store remains operational state that must be protected, and deployed code must preserve the names and order of existing durable boundaries for in-flight tasks. The default SQLite store should not be driven by multiple independent schedulers. Tysel provides a clear recovery model; it is not claiming to replace a distributed workflow platform.
+
+## This is not Node.js in a smaller jacket
+
+Tysel is Web-API-first: Fetch-style HTTP handlers, `Request`, `Response`, streams, Web Crypto, and a bounded `globalThis.tysel` host API. It is not designed as a general Node.js compatibility layer.
+
+Native addons, subprocesses, dynamic libraries, Node built-ins, and ambient operating-system access sit outside the application contract. `tysel compat` helps teams identify dependency risks before adopting them, but it is an early report rather than a substitute for tests.
+
+If the only requirement is compiling JavaScript or TypeScript into one file, Bun and Deno also provide paths for that. If broad Node compatibility is the main requirement, Node.js, Bun, or Deno will usually be a better fit. Tysel's distinction is the combination of binary delivery, explicit host grants, and durable workflow primitives in one deliberately narrow contract.
+
+There are three execution profiles to match that intent:
+
+- `service` for trusted first-party code in an in-process QuickJS isolate;
+- `isolated` for a separate worker process, with the production sandbox gate on Linux;
+- experimental `component` tasks for bounded Rust or Go Wasm Components.
+
+## From zero to an executable
+
+The published toolchain currently supports Linux and macOS on x64 and arm64. Windows users can run it through WSL.
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh
+tysel doctor --install
+
+tysel init hello-tysel --yes
+cd hello-tysel
+tysel task verify
+tysel dev
+```
+
+When the service is ready to ship:
+
+```sh
+tysel task release
+./dist/hello-tysel
+```
+
+The file in `dist/` is the application and its runtime. Builds currently target the host platform, so Linux artifacts should be built on Linux and macOS artifacts on macOS; cross-compilation is not implemented yet.
+
+## Who should try Tysel now?
+
+Tysel is pre-1.0, so APIs may change between minor releases. It is ready to evaluate, experiment with, and influence—not something to adopt without testing its exact compatibility and operational contract.
+
+It deserves a serious look if you are building:
+
+- a TypeScript API or worker that should deploy as one executable;
+- an MCP tool or plugin whose network, secret, file, and database access must be bounded;
+- an agent that calls models, pauses for approval, sleeps, retries, and resumes after restarts;
+- a release pipeline that values checksums, SBOMs, compatibility reports, and reproducible benchmark evidence.
+
+Tysel is not trying to make the JavaScript runtime universe bigger. It is trying to make a particular route to production smaller, clearer, and easier to trust.
+
+That is a trade worth exploring.
+
+Get started at [tysel.dev](https://tysel.dev).<br />
+Read the source on [GitHub](https://github.com/wangcch/tysel).<br />
+Build your first service with the [Getting Started guide](https://tysel.dev/docs/getting-started/).

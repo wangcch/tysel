@@ -2,6 +2,8 @@ import { loader } from "fumadocs-core/source";
 import { llms } from "fumadocs-core/source/llms";
 import { lucideIconsPlugin } from "fumadocs-core/source/lucide-icons";
 import {
+  blogContentRoute,
+  blogRoute,
   docsContentRoute,
   docsImageRoute,
   docsRoute,
@@ -9,8 +11,9 @@ import {
   referenceImageRoute,
   referenceRoute,
 } from "./shared";
-import { defineDocs } from "fumadocs-mdx/macro";
+import { defineCollections, defineDocs } from "fumadocs-mdx/macro";
 import { metaSchema, pageSchema } from "fumadocs-core/source/schema";
+import { z } from "zod";
 
 const docs = defineDocs({
   dir: "content/docs",
@@ -38,6 +41,23 @@ const reference = defineDocs({
   },
 });
 
+const blogPosts = defineCollections({
+  type: "doc",
+  dir: "content/blog",
+  schema: pageSchema.extend({
+    author: z.string(),
+    date: z.union([z.string(), z.date()]),
+    cover: z.string().optional(),
+    coverAlt: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    readingMinutes: z.number().int().positive().optional(),
+    updatedAt: z.union([z.string(), z.date()]).optional(),
+  }),
+  postprocess: {
+    includeProcessedMarkdown: true,
+  },
+});
+
 export const source = loader({
   baseUrl: docsRoute,
   source: docs.toFumadocsSource(),
@@ -50,9 +70,15 @@ export const referenceSource = loader({
   plugins: [lucideIconsPlugin()],
 });
 
-export type AnySourcePage =
-  | ReturnType<typeof source.getPages>[number]
-  | ReturnType<typeof referenceSource.getPages>[number];
+export const blog = loader({
+  baseUrl: blogRoute,
+  source: blogPosts.toFumadocsSource(),
+});
+
+export type DocsPage = ReturnType<typeof source.getPages>[number];
+export type ReferencePage = ReturnType<typeof referenceSource.getPages>[number];
+export type BlogPage = ReturnType<typeof blog.getPages>[number];
+export type AnySourcePage = DocsPage | ReferencePage;
 
 export function getPageImageUrl(page: AnySourcePage) {
   const isReference = page.url.startsWith(referenceRoute);
@@ -65,7 +91,15 @@ export function getPageImageUrl(page: AnySourcePage) {
   };
 }
 
-export function getPageMarkdownUrl(page: AnySourcePage) {
+export function getPageMarkdownUrl(page: AnySourcePage | BlogPage) {
+  if (page.url.startsWith(blogRoute)) {
+    const segments = [...page.slugs, "content.md"];
+    return {
+      segments,
+      url: "/" + [page.locale, ...blogContentRoute.split("/"), ...segments].filter(Boolean).join("/"),
+    };
+  }
+
   const isReference = page.url.startsWith(referenceRoute);
   const contentRoute = isReference ? referenceContentRoute : docsContentRoute;
   const segments = [...page.slugs, "content.md"];
@@ -76,14 +110,31 @@ export function getPageMarkdownUrl(page: AnySourcePage) {
   };
 }
 
-export async function getLLMText(page: AnySourcePage) {
-  const processed = await page.data.getText("processed");
-  return `# ${page.data.title} (${page.url})\n\n${processed}`;
+/** Strip YAML frontmatter so RSS / LLM feeds get readable Markdown body. */
+function stripFrontmatter(source: string): string {
+  if (!source.startsWith("---")) return source.trim();
+  const end = source.indexOf("\n---", 3);
+  if (end === -1) return source.trim();
+  return source.slice(end + 4).replace(/^\r?\n+/, "").trim();
+}
+
+/**
+ * Prefer filesystem source over `processed` Markdown.
+ * Processed output currently escapes emphasis markers and replaces images with
+ * internal placeholders (`__img0`), which breaks RSS and LLM feeds.
+ */
+export async function getLLMText(page: AnySourcePage | BlogPage) {
+  const raw = await page.data.getText("raw");
+  return `# ${page.data.title} (${page.url})\n\n${stripFrontmatter(raw)}`;
 }
 
 export { llms };
 
-export function getPageSourcePath(page: AnySourcePage) {
+export function getPageSourcePath(page: AnySourcePage | BlogPage) {
+  if (page.url.startsWith(blogRoute)) {
+    return `website/content/blog/${page.path}`;
+  }
+
   return page.url.startsWith(referenceRoute)
     ? `website/content/reference/${page.path}`
     : `website/content/docs/${page.path}`;

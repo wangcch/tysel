@@ -133,6 +133,18 @@ html > body[data-scroll-locked] {
   animation: home-fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Blog article media: scoped so Docs/Reference prose stay untouched. */
+.blog-prose :where(img):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  border: 1px solid var(--color-fd-border);
+  margin-inline: 0;
+}
+
+.blog-prose :where(table):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .home-fade-up,
   .home-fade-up-delay,
