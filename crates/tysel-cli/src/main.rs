@@ -218,6 +218,12 @@ enum Commands {
         /// Emit a stable machine-readable report.
         #[arg(long)]
         json: bool,
+        /// List discovered tests without running their bodies.
+        #[arg(long)]
+        list: bool,
+        /// Run tests whose name contains this text, or the test with this discovery ID.
+        #[arg(short = 't', long)]
+        filter: Option<String>,
     },
     /// Bundle the app and emit a single native executable.
     Build {
@@ -541,9 +547,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let project = context(manifest.as_deref())?;
             task::run(&project, name.as_deref(), list)
         }
-        Commands::Test { paths, manifest, timeout_ms, json } => {
+        Commands::Test { paths, manifest, timeout_ms, json, list, filter } => {
             let project = context(manifest.as_deref())?;
-            test_runner::run(&project.manifest_path, &paths, timeout_ms, json)
+            test_runner::run(
+                &project.manifest_path,
+                &paths,
+                timeout_ms,
+                json,
+                list,
+                filter.as_deref(),
+            )
         }
         Commands::Image {
             entry,

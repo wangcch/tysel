@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -5,6 +6,7 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value as JsonValue, json};
+use sha2::{Digest, Sha256};
 use tysel_engine::{IsolateConfig, Value};
 use tysel_manifest::Manifest;
 use tysel_package::SourceMap;
@@ -13,10 +15,16 @@ static RUNNER_ID: AtomicU64 = AtomicU64::new(0);
 
 const HARNESS: &str = r#"
 const __tysel_tests = [];
+const __tysel_capture_test_locations = globalThis.__tysel_task_name === "__tysel_test_list__";
+function __tysel_registration_stack() {
+  if (!__tysel_capture_test_locations) return "";
+  const matches = String(new Error().stack || "").match(/app\.js:\d+:\d+/g) || [];
+  return matches.slice(0, 8).join("\n");
+}
 globalThis.test = function test(name, body) {
   if (typeof name !== "string" || !name) throw new TypeError("test name must be a non-empty string");
   if (typeof body !== "function") throw new TypeError("test body must be a function");
-  __tysel_tests.push({ name, body });
+  __tysel_tests.push({ name, body, stack: __tysel_registration_stack() });
 };
 globalThis.__tysel_test_register = globalThis.test;
 function __tysel_format(value) {
@@ -47,7 +55,7 @@ export default {
       description: "Discover Tysel tests",
       input: {},
       handler() {
-        return __tysel_tests.map((item) => item.name);
+        return __tysel_tests.map((item) => ({ name: item.name, stack: item.stack }));
       },
     },
     __tysel_test_run__: {
@@ -81,6 +89,8 @@ pub fn run(
     requested: &[PathBuf],
     timeout_ms: u64,
     json_output: bool,
+    list_only: bool,
+    filter: Option<&str>,
 ) -> Result<()> {
     if timeout_ms == 0 {
         return Err(anyhow!("--timeout-ms must be greater than zero"));
@@ -103,7 +113,23 @@ pub fn run(
 
     let mut reports = Vec::new();
     for file in &files {
-        reports.push(run_file(file, &manifest, timeout_ms)?);
+        reports.push(run_file(file, root, &manifest, timeout_ms, list_only, filter)?);
+    }
+    let discovered = reports.iter().map(|report| count(&report["discovered"])).sum::<u64>();
+    if filter.is_some() && discovered == 0 {
+        return Err(anyhow!("test filter matched no tests"));
+    }
+    if list_only {
+        let report = json!({
+            "schemaVersion": 1,
+            "files": reports,
+        });
+        if json_output {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            print_list(&report);
+        }
+        return Ok(());
     }
     let passed = reports.iter().map(|report| count(&report["passed"])).sum::<u64>();
     let failed = reports.iter().map(|report| count(&report["failed"])).sum::<u64>();
@@ -187,7 +213,14 @@ fn is_test_file(path: &Path) -> bool {
     [".test.ts", ".test.mts", ".test.js", ".test.mjs"].iter().any(|suffix| name.ends_with(suffix))
 }
 
-fn run_file(path: &Path, manifest: &Manifest, timeout_ms: u64) -> Result<JsonValue> {
+fn run_file(
+    path: &Path,
+    root: &Path,
+    manifest: &Manifest,
+    timeout_ms: u64,
+    list_only: bool,
+    filter: Option<&str>,
+) -> Result<JsonValue> {
     let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let runner_path = temporary_runner_path(path);
     let temporary = TemporaryFile(runner_path.clone());
@@ -224,16 +257,43 @@ fn run_file(path: &Path, manifest: &Manifest, timeout_ms: u64) -> Result<JsonVal
         );
         anyhow!("discover tests in {}: {message}", path.display())
     })?;
-    let names = engine_value_to_json(names)
+    let registrations = engine_value_to_json(names)
         .as_array()
         .cloned()
         .ok_or_else(|| anyhow!("test discovery returned a non-array"))?;
-    if names.len() > 1024 {
+    if registrations.len() > 1024 {
         return Err(anyhow!("test file registers more than 1024 tests"));
     }
-    let mut tests = Vec::with_capacity(names.len());
-    for (index, name) in names.iter().enumerate() {
-        let name = name.as_str().unwrap_or("unnamed test").to_owned();
+    let relative_path =
+        path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+    let mut tests = Vec::with_capacity(registrations.len());
+    let mut duplicate_names = HashMap::<String, u64>::new();
+    for (index, registration) in registrations.iter().enumerate() {
+        let name = registration["name"].as_str().unwrap_or("unnamed test").to_owned();
+        let duplicate_index = duplicate_names.entry(name.clone()).or_default();
+        let id = test_id(&relative_path, &name, *duplicate_index);
+        *duplicate_index += 1;
+        if filter.is_some_and(|filter| id != filter && !name.contains(filter)) {
+            continue;
+        }
+        let location = registration["stack"].as_str().and_then(|stack| {
+            source_location(
+                stack,
+                &source_map,
+                &runner_path,
+                path,
+                source_start_line,
+                source.lines().count() as u32,
+            )
+        });
+        if list_only {
+            let mut item = json!({ "id": id, "name": name });
+            if let Some(location) = location {
+                item["location"] = location;
+            }
+            tests.push(item);
+            continue;
+        }
         let input = serde_json::to_string(&json!({ "index": index }))?;
         let result = tysel_engine_qjs::invoke_task_module(
             &bundle,
@@ -272,17 +332,66 @@ fn run_file(path: &Path, manifest: &Manifest, timeout_ms: u64) -> Result<JsonVal
                 source.lines().count() as u32,
             ));
         }
+        result["id"] = JsonValue::String(id);
+        if let Some(location) = location {
+            result["location"] = location;
+        }
         tests.push(result);
+    }
+    if list_only {
+        drop(temporary);
+        return Ok(json!({
+            "path": path.display().to_string(),
+            "discovered": tests.len(),
+            "tests": tests,
+        }));
     }
     let passed = tests.iter().filter(|test| test["status"] == "passed").count();
     let failed = tests.len().saturating_sub(passed);
     drop(temporary);
     Ok(json!({
         "path": path.display().to_string(),
+        "discovered": tests.len(),
         "passed": passed,
         "failed": failed,
         "tests": tests,
     }))
+}
+
+fn test_id(relative_path: &str, name: &str, duplicate_index: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(relative_path.as_bytes());
+    hasher.update([0]);
+    hasher.update(name.as_bytes());
+    hasher.update([0]);
+    hasher.update(duplicate_index.to_le_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    format!("{relative_path}#{}", &digest[..16])
+}
+
+fn source_location(
+    stack: &str,
+    map: &SourceMap,
+    runner_path: &Path,
+    test_path: &Path,
+    source_start_line: u32,
+    source_line_count: u32,
+) -> Option<JsonValue> {
+    let stack =
+        symbolicate_stack(stack, map, runner_path, test_path, source_start_line, source_line_count);
+    let marker = format!("{}:", test_path.display());
+    for line in stack.lines() {
+        let Some((_, coordinates)) = line.split_once(&marker) else { continue };
+        let Some((line_number, rest)) = parse_number(coordinates) else { continue };
+        let Some(rest) = rest.strip_prefix(':') else { continue };
+        let Some((column, _)) = parse_number(rest) else { continue };
+        return Some(json!({
+            "path": test_path.display().to_string(),
+            "line": line_number,
+            "column": column,
+        }));
+    }
+    None
 }
 
 fn deadline_ms(timeout_ms: u64) -> Result<u64> {
@@ -391,4 +500,34 @@ fn print_human(report: &JsonValue) {
         }
     }
     println!("\n{} passed, {} failed", report["passed"], report["failed"]);
+}
+
+fn print_list(report: &JsonValue) {
+    for file in report["files"].as_array().into_iter().flatten() {
+        println!("{}", file["path"].as_str().unwrap_or("test"));
+        for test in file["tests"].as_array().into_iter().flatten() {
+            println!(
+                "  {}  {}",
+                test["id"].as_str().unwrap_or("unknown"),
+                test["name"].as_str().unwrap_or("unnamed test")
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_id;
+
+    #[test]
+    fn test_ids_use_a_fixed_width_deterministic_digest() {
+        assert_eq!(
+            test_id("tests/example.test.ts", "selected case", 0),
+            "tests/example.test.ts#59678f4caf58769b"
+        );
+        assert_ne!(
+            test_id("tests/example.test.ts", "selected case", 0),
+            test_id("tests/example.test.ts", "selected case", 1)
+        );
+    }
 }

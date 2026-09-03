@@ -989,6 +989,65 @@ test("continues after a timeout", () => {
 }
 
 #[test]
+fn test_command_lists_and_filters_discovered_tests() {
+    let dir = temp_app("test-list-filter");
+    write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
+    fs::create_dir_all(dir.join("tests")).unwrap();
+    fs::write(
+        dir.join("tests/example.test.ts"),
+        r#"test("selected case", () => {
+  assert.equal(2 + 2, 4);
+});
+
+test("excluded failure", () => {
+  assert(false, "this test must not run");
+});
+"#,
+    )
+    .unwrap();
+    let manifest = dir.join("tysel.toml");
+
+    let listed = Command::new(cli_exe())
+        .args(["test", "--list", "--json", "--manifest", manifest.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(listed.status.success(), "{}", String::from_utf8_lossy(&listed.stderr));
+    let discovery: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(discovery["schemaVersion"], 1);
+    assert_eq!(discovery["files"][0]["discovered"], 2);
+    let selected_id = discovery["files"][0]["tests"][0]["id"].as_str().unwrap().to_owned();
+    assert!(selected_id.starts_with("tests/example.test.ts#"), "{selected_id}");
+    assert_eq!(discovery["files"][0]["tests"][0]["name"], "selected case");
+    assert_eq!(discovery["files"][0]["tests"][0]["location"]["line"], 1);
+
+    let filtered = Command::new(cli_exe())
+        .args(["test", "--json", "--filter", "selected", "--manifest", manifest.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(filtered.status.success(), "{}", String::from_utf8_lossy(&filtered.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&filtered.stdout).unwrap();
+    assert_eq!(report["passed"], 1);
+    assert_eq!(report["failed"], 0);
+    assert_eq!(report["files"][0]["tests"][0]["id"], selected_id);
+
+    let exact = Command::new(cli_exe())
+        .args([
+            "test",
+            "--json",
+            "--filter",
+            &selected_id,
+            "--manifest",
+            manifest.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(exact.status.success(), "{}", String::from_utf8_lossy(&exact.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&exact.stdout).unwrap();
+    assert_eq!(report["passed"], 1);
+    assert_eq!(report["failed"], 0);
+}
+
+#[test]
 fn test_command_enforces_manifest_capabilities() {
     let dir = temp_app("test-capabilities");
     write_js_app(&dir, "export default { async fetch() { return new Response(\"ok\"); } };\n");
