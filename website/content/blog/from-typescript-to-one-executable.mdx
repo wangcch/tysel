@@ -1,0 +1,231 @@
+---
+title: "From TypeScript to One Executable"
+description: "A step-by-step look at how Tysel validates, bundles, packages, and records a TypeScript application for delivery."
+author: "Tysel"
+date: "2026-09-03T10:00:00Z"
+cover: "/blog/from-typescript-to-one-executable/hero.jpg"
+coverAlt: "Five broad source planes converging through a lime build seam into one solid executable block"
+tags:
+  - build
+  - typescript
+  - delivery
+---
+
+> “One executable” is the end of the build, not the beginning of the explanation.
+
+Tysel's shortest promise is easy to remember: write TypeScript, ship a binary. The useful engineering question is what happens between those two points—and what the final artifact does and does not contain.
+
+Tysel does not turn TypeScript directly into native machine instructions. It checks and bundles the application into JavaScript, embeds that package in a native runtime, and executes the bundle inside QuickJS isolates. The Rust host owns sockets, storage, secrets, limits, execution profiles, and durable scheduling.
+
+The result is native as a production artifact: one operating-system executable containing the application and the runtime required to run it.
+
+## The inputs
+
+A Tysel project begins with three kinds of input:
+
+```text
+TypeScript source
+project dependencies
+tysel.toml or tysel.json
+```
+
+The manifest is the only Tysel project configuration file. `package.json` and `tsconfig.json` may support development, but they cannot replace or override it. The manifest selects the application entry point, execution profile, listener, requested permissions, resource limits, durable store, observability intent, and project tasks.
+
+A minimal HTTP service can request no host capabilities at all:
+
+```toml
+schema_version = 1
+
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+
+[permissions]
+
+[limits]
+memory_mb = 64
+cpu_ms_per_turn = 50
+request_timeout_ms = 30000
+max_in_flight = 256
+```
+
+Unknown manifest fields are errors. Relative paths resolve from the discovered project root, and attempts to escape that root are rejected.
+
+## Step 1: validate the contract
+
+Before packaging, Tysel validates the manifest and checks whether the project matches the selected runtime contract:
+
+```sh
+tysel check
+tysel compat --strict --deny-unknown
+tysel inspect
+```
+
+These commands answer related but different questions:
+
+- Is the manifest structurally valid?
+- Does the TypeScript project check successfully?
+- Can the dependency graph fit the supported compatibility surface?
+- Which capabilities and limits will be effective?
+- Does application capability use agree with the manifest?
+
+Node.js built-ins, native addons, subprocesses, and dynamic libraries are outside the application contract. Detecting those assumptions before a production build is more useful than discovering them on the target host.
+
+`tysel types --check` can additionally verify that the manifest-scoped TypeScript environment is current. Types provide developer feedback; runtime enforcement remains authoritative.
+
+## Step 2: report the type-check state and bundle TypeScript
+
+When the project contains `tsconfig.tysel.json` or `tsconfig.json` and a local TypeScript compiler, the build runs that compiler with `--noEmit` and stops on a type error. If either is unavailable, the build reports the type check as skipped and continues. Release pipelines that require a successful type check should treat that reported state as an admission decision rather than assuming that bundling proves type correctness.
+
+The build then produces a JavaScript bundle and source map from the TypeScript entry point. Development can still use npm packages, editor tooling, and TypeScript declarations. The production claim is narrower: those tools do not need to exist on the machine that runs the packaged application.
+
+Bundling also creates a clear compatibility boundary. A dependency that resolves to supported JavaScript can be included. A package that expects Node-specific globals or native behavior must be classified rather than silently assumed to work.
+
+The bundle is application code—not the entire runtime. QuickJS and the host capabilities live in the native executable stub.
+
+## Step 3: create the application package
+
+Conceptually, Tysel assembles:
+
+```text
+JavaScript bundle
+source map
+validated manifest
+compatibility metadata
+```
+
+into an application package. That package binds the code to the contract that was checked during the build. It records which entry point, profile, listener, capability requests, and limits belong to this application.
+
+The source map remains useful for diagnostics, but the target does not need the original TypeScript tree to start the service. Current source maps include `sourcesContent`, so source text is present inside the packaged artifact. Teams that treat application source as sensitive should account for that when inspecting and distributing executables.
+
+## Step 4: select and authenticate the runtime
+
+For a host build, Tysel uses the matching local runtime stub. For a supported cross target, it can package for:
+
+- `linux-x64`;
+- `linux-arm64`;
+- `darwin-x64`;
+- `darwin-arm64`.
+
+```sh
+tysel build --release \
+  --target linux-arm64 \
+  --output dist/orders-linux-arm64
+```
+
+This is verified cross-target packaging, not native runtime cross-compilation. When the target differs from the host, Tysel authenticates the same-version official runtime, target, release manifest, archive signature, and file hashes before placing that runtime in its managed cache.
+
+`--offline` refuses network access and requires an already verified cached target runtime. An explicit `--stub` used for a cross-target build must byte-match the verified official runtime.
+
+Those restrictions prevent a convenient cross-target flag from becoming an unreviewed runtime substitution mechanism.
+
+## Step 5: embed the package
+
+The native runtime and application package are combined into the executable selected by `--output`:
+
+```text
+native Tysel runtime
+        +
+embedded application package
+        =
+one executable
+```
+
+At startup, the host reads the embedded package, enforces its profile and limits, creates the required QuickJS isolate or worker boundary, and exposes only the admitted runtime capabilities.
+
+The target machine does not need Node.js, V8, npm, or `node_modules`. It still needs an operating system and architecture compatible with the selected artifact, plus any system libraries required by that executable. “One executable” does not mean “runs on every kernel and architecture.”
+
+## Step 6: emit the release record
+
+With `--release`, the executable is only one member of the artifact set:
+
+| File | Purpose |
+| --- | --- |
+| executable | Native runtime with the embedded application |
+| `.sha256` | Executable digest |
+| `.compat.json` | Runtime and package compatibility decision |
+| `.sbom.cdx.json` | CycloneDX 1.5 document for the application artifact and embedded runtime inventory |
+| `.licenses.json` | Runtime component license inventory |
+| `.evidence.json` | Index binding the artifact and sidecars together |
+
+These sidecars are intentionally separate. Running the service requires the executable; auditing and admitting the release requires the complete set. Store them together under the executable digest, and do not regenerate or edit one file independently.
+
+The runtime inventory enumerates the native components embedded by Tysel. Bundled npm dependencies are not currently listed as individual SBOM components, so application dependency locking, review, and license policy remain project responsibilities.
+
+This is why “single binary” should not be interpreted as “hide every piece of release information inside one opaque file.” Runtime delivery and release evidence have different consumers.
+
+## What one build actually prints
+
+Running the checked-in `hello-service` through the repository's release builder while preparing this article produced the following summary on `darwin-arm64`:
+
+```text
+Type check       passed
+Bundle           143 B
+Capabilities     sqlite
+Runtime          service
+Executable       12.6 MB
+Target           darwin-arm64
+```
+
+The output directory contained:
+
+```text
+hello-service
+hello-service.sha256
+hello-service.compat.json
+hello-service.sbom.cdx.json
+hello-service.licenses.json
+hello-service.evidence.json
+```
+
+This is a concrete build observation, not a size promise. It used the already-built local Tysel toolchain and the tiny reference application. A different application, target, dependency graph, or runtime release can produce a different executable size.
+
+The checksum file contained the SHA-256 of the executable, and an independent SHA-256 calculation matched it. The evidence JSON separately recorded the canonical target, artifact size, and artifact digest. Those checks establish that the sidecars describe the emitted file; they do not establish byte-for-byte reproducibility across uncontrolled build hosts.
+
+## What is reproducible
+
+Tysel records the source commit, target, application identity, compatibility decision, runtime inventory, artifact hash, SBOM, licenses, and build relationship. Operators can sign and verify that set against a deployment-owned trust policy.
+
+That evidence proves that one artifact and its sidecars belong together. It does not promise that arbitrary build hosts will produce byte-identical executables. Toolchain version, operating system, dependency state, source revision, and target still need to be controlled by the release pipeline.
+
+A practical release sequence is:
+
+```sh
+tysel doctor --install
+tysel task verify
+tysel inspect
+tysel build --release --target linux-arm64 --output dist/orders
+tysel release sign dist/orders --key /secure/offline-release.key
+tysel release verify dist/orders --trust deploy/trust.json
+```
+
+Signing keys and trust policy are deployment concerns. Secret values, database URLs, and credentials do not belong in the artifact evidence.
+
+## Containers remain optional
+
+A single executable can run directly under a service manager, or it can become the payload of a minimal container image. `tysel image` creates a non-root Linux container context and can copy verified release sidecars for admission without putting them inside the runtime image.
+
+Containers still provide useful distribution, filesystem, identity, and orchestration boundaries. The Tysel artifact reduces what the container must assemble; it does not make container or host policy irrelevant.
+
+## The build contract
+
+The complete path is therefore:
+
+```text
+source and manifest
+  → validation
+  → reported TypeScript-check state and bundle
+  → compatibility decision
+  → application package
+  → authenticated runtime selection
+  → one native executable
+  → release evidence and optional signature
+```
+
+The value is not merely that the last file can be copied. It is that the code, requested authority, runtime, target, and release evidence travel through one checked build contract.
+
+Follow the [reproducible release guide](/docs/guides/reproducible-release) or review the complete [`tysel build` reference](/reference/cli/delivery#tysel-build).

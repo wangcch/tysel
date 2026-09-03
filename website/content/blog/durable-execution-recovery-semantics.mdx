@@ -1,0 +1,197 @@
+---
+title: "Durable Execution: What Recovery Actually Means"
+description: "Tysel resumes workflows by replaying persisted boundaries—not by freezing a JavaScript process or promising impossible exactly-once effects."
+author: "Tysel"
+date: "2026-09-03T09:00:00Z"
+cover: "/blog/durable-execution-recovery-semantics/hero.jpg"
+coverAlt: "A white execution path with three recorded lime checkpoints replaying across a gap to a violet pending checkpoint"
+tags:
+  - durable-execution
+  - recovery
+  - agents
+---
+
+> Recovery is replay against recorded history, not continuation of a frozen JavaScript heap.
+
+Long-lived work fails differently from a request handler. A process may restart while an agent waits for approval. A machine may disappear during backoff. A queue worker may finish an external call and crash before it records local success. A deployment may replace every in-memory timer.
+
+Keeping a promise alive in one JavaScript process is not durable execution. Tysel makes selected boundaries persistent so a handler can start again, consume its history, and continue after the last completed boundary.
+
+That model is powerful, but only when its guarantees are stated precisely.
+
+## An ordinary async function with explicit boundaries
+
+A durable handler is written as an async function:
+
+```ts
+import type { DurableContext, TyselApp } from "@tysel/types";
+
+const approvalFlow = async (
+  ctx: DurableContext,
+  input: { orderId: string },
+) => {
+  const order = await ctx.effect("load-order", () => loadOrder(input.orderId));
+  const draft = await ctx.effect("create-draft", () => createDraft(order));
+
+  await ctx.sleep("10m");
+  const decision = await ctx.waitForSignal<{ approved: boolean }>("approval");
+
+  return { draft, approved: decision.approved };
+};
+
+export default {
+  durable: { approvalFlow },
+} satisfies TyselApp;
+```
+
+The syntax looks familiar, but calls on `ctx` are not ordinary helper functions. They define the history that makes replay possible.
+
+| Boundary | Persisted meaning |
+| --- | --- |
+| `step` | Record a computation result |
+| `effect` | Record the outcome of an external side effect |
+| `sleep` | Persist a wake-up time and suspend |
+| `waitForSignal` | Suspend until a named JSON signal is stored |
+| `retry` | Record bounded attempts and delays |
+| `now` | Return replay-safe time |
+| `random` | Return replay-safe randomness |
+
+Inputs, boundary results, signals, and handler results must be JSON serializable. Durable boundaries are awaited sequentially, and payloads are bounded.
+
+## What happens on suspension
+
+When a handler reaches `sleep` or `waitForSignal`, Tysel persists the suspension. The JavaScript isolate does not need to remain occupied while a timer runs or a human decides.
+
+The control API returns a task ID and a completed or suspended status:
+
+```ts
+const status = tysel.durable.start("approvalFlow", { orderId: "ord_123" });
+
+tysel.durable.sendSignal(status.taskId, "approval", {
+  approved: true,
+});
+```
+
+Signals are appended to durable history. A restart can reconstruct which handler is waiting, which boundaries completed, and whether the required signal has arrived.
+
+This is a better fit for approvals, delayed retries, orchestration, and agent plans than a process-local promise or timer.
+
+## Replay begins at the beginning
+
+After a restart, Tysel invokes the handler from its first line against persisted history. It does not deserialize a suspended JavaScript stack.
+
+For every completed named boundary, the runtime returns the recorded result instead of executing the operation again. Once recorded history has been consumed, new code runs normally.
+
+Consider the earlier workflow after `create-draft` completed and the task suspended for approval:
+
+```text
+start handler
+  → load-order: return recorded result
+  → create-draft: return recorded result
+  → sleep: return recorded completion
+  → approval: consume persisted signal
+  → execute new code
+```
+
+This is why boundary names and order are part of the deployed workflow contract. They are not cosmetic log labels.
+
+## Determinism lives between boundaries
+
+Replay re-runs ordinary JavaScript between persisted operations. That code must reach the same sequence of durable boundaries for the same input and history.
+
+Ambient time, unrecorded randomness, mutable global state, and unordered concurrency can make the replay path diverge. Durable code should therefore:
+
+- use `ctx.now()` instead of ambient wall-clock time;
+- use `ctx.random()` instead of unrecorded randomness;
+- put external reads and writes inside recorded boundaries;
+- await durable boundaries sequentially;
+- keep existing boundary names stable;
+- avoid changing the order of boundaries used by in-flight tasks.
+
+Pure transformations between boundaries are safe when they remain deterministic. A database read that influences branching is not pure just because it uses `SELECT`; it belongs inside a recorded `effect` boundary. Use `step` for deterministic computation whose result should become part of history, and `effect` for interaction with an external system, including a read whose returned value affects later execution.
+
+## What an effect guarantees
+
+`ctx.effect` records the outcome of an external side effect. After that outcome is committed to durable history, replay returns it without intentionally calling the external system again.
+
+That prevents a completed recorded effect from being repeated during normal recovery. It does **not** create a distributed transaction with an arbitrary API.
+
+There is an unavoidable failure window:
+
+```text
+external service commits action
+          ↓
+process fails before local history commits outcome
+```
+
+After recovery, Tysel cannot know whether the external system committed unless that system provides a way to identify or query the operation. Retrying blindly may duplicate the effect.
+
+Use a stable provider idempotency key derived from the durable task and boundary. When possible, query the external result using that key before creating a new action. Exactly-once behavior across two independent systems requires cooperation from both sides; a runtime cannot manufacture it unilaterally.
+
+This distinction is especially important for payments, messages, provisioning, and model-driven tool calls.
+
+## Signals are history, not callbacks
+
+A signal can arrive before or after the handler reaches `waitForSignal`. Because the signal is persisted, delivery does not depend on an in-memory listener existing at that moment.
+
+Signal names and payload shape are part of the workflow contract. Validate authorization before appending a signal: possession of a task ID should not automatically grant permission to approve, cancel, or mutate the workflow.
+
+Human approval therefore has at least three layers:
+
+1. product logic determines that approval is required;
+2. an authenticated control path validates who may send the decision;
+3. durable history records the resulting signal for replay.
+
+Durability preserves a decision. It does not decide whether the sender was authorized.
+
+## Storage is production state
+
+SQLite is the default durable store:
+
+```toml
+[durable]
+store = "sqlite"
+path = "./data/tysel.db"
+```
+
+The runtime can also use a Postgres-backed durable store when configured by the host environment. The version-1 manifest currently uses `sqlite` for manifest-backed configuration; operators supply Postgres through deployment configuration.
+
+Whichever store is selected, treat it as sensitive operational state:
+
+- back it up and test restoration;
+- use an explicit working directory for relative paths;
+- protect it with the same care as application data;
+- monitor failed resumes, signal handling, and scheduler health;
+- do not run independent schedulers against the same SQLite file.
+
+Restart recovery is only as reliable as the persistence and deployment practices around the event history.
+
+## Changing a deployed workflow
+
+Code changes become replay changes for every in-flight task. Renaming `create-draft`, inserting a new boundary before it, or changing a branch condition may cause new code to expect a history shape that existing tasks do not have.
+
+Safe evolution begins with an inventory:
+
+- Which handler versions have in-flight instances?
+- Which boundary names and sequence have they already recorded?
+- Can new code consume the old history deterministically?
+- Should a new workflow name be introduced instead of mutating the old one?
+- How will old instances drain or migrate?
+
+Tysel provides the replay mechanism; application owners still need a workflow versioning policy.
+
+## The recovery contract
+
+Tysel durable execution promises a specific model:
+
+- completed durable boundaries are persisted;
+- sleeping and signal-waiting work can release the isolate;
+- a handler restarts from the beginning after interruption;
+- recorded boundary results are replayed rather than intentionally repeated;
+- new execution continues after recorded history is consumed.
+
+It does not promise a frozen heap, arbitrary nondeterministic replay, an atomic transaction with every provider, or authorization for incoming signals.
+
+Those limits do not weaken the model. They make it possible to reason about what recovery will actually do. Exact boundary identity, signal ordering, retry limits, and storage coordination are part of the evolving Durable API contract and should be verified in the current reference before deployment.
+
+Build the complete example in [Durable execution](/docs/concepts/durable-execution), then use the [Durable API reference](/reference/runtime/durable) when designing stable boundaries.
