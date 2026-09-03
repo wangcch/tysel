@@ -67,9 +67,13 @@ Run the suite with:
 
 ```sh
 tysel test
+tysel test --filter "health endpoint"
+tysel test --list --json
 tysel test tests/health.test.ts --timeout-ms 10000 --json
 ```
 
 The default path is `tests/` and the default per-test timeout is `5000`
-milliseconds. See [`tysel test`](../cli/development.md#tysel-test) for CLI
-output and exit behavior.
+milliseconds. `--filter` selects tests by a name substring or an exact ID from
+`--list --json`. Listing discovers registered tests without running their
+bodies. See [`tysel test`](../cli/development.md#tysel-test) for CLI output and
+exit behavior.
