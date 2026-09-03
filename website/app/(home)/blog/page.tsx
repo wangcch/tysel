@@ -37,6 +37,9 @@ export default async function BlogIndexPage() {
   const featuredMinutes = featured
     ? await getReadingMinutes(featured)
     : null;
+  const restWithMinutes = await Promise.all(
+    rest.map(async (post) => ({ post, minutes: await getReadingMinutes(post) })),
+  );
 
   return (
     <div>
@@ -112,23 +115,45 @@ export default async function BlogIndexPage() {
               Earlier
             </p>
             <ul className="mt-6 divide-y divide-fd-border border-y border-fd-border">
-              {rest.map((post) => (
+              {restWithMinutes.map(({ post, minutes }) => (
                 <li key={post.url}>
                   <Link
                     href={post.url}
-                    className="group flex flex-col gap-2 py-6 transition-colors sm:flex-row sm:items-baseline sm:justify-between sm:gap-8"
+                    className="group flex items-stretch gap-5 py-6 sm:gap-7"
                   >
-                    <div className="min-w-0">
-                      <h2 className="text-lg font-medium tracking-tight transition-colors group-hover:text-tysel-blue">
+                    {/* Thumbnail — stretches to match row height */}
+                    {post.data.cover ? (
+                      <div className="hidden w-[160px] shrink-0 overflow-hidden border border-fd-border bg-fd-muted sm:block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={post.data.cover}
+                          alt={post.data.coverAlt ?? post.data.title}
+                          width={320}
+                          height={180}
+                          className="h-full w-full object-cover transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+                        />
+                      </div>
+                    ) : (
+                      <div className="hidden w-[160px] shrink-0 border border-fd-border bg-fd-muted sm:block" />
+                    )}
+
+                    {/* Text */}
+                    <div className="min-w-0 flex-1 py-0.5">
+                      <p className="font-mono text-xs text-fd-muted-foreground">
+                        {formatBlogDate(post)} · {minutes} min read
+                      </p>
+                      <h2 className="mt-2 text-base font-medium tracking-tight leading-snug transition-colors group-hover:text-tysel-blue sm:text-lg">
                         {post.data.title}
                       </h2>
-                      <p className="mt-2 max-w-2xl text-sm leading-6 text-fd-muted-foreground">
+                      <p className="mt-2 line-clamp-2 text-sm leading-6 text-fd-muted-foreground">
                         {post.data.description}
                       </p>
                     </div>
-                    <p className="shrink-0 font-mono text-xs text-fd-muted-foreground">
-                      {formatBlogDate(post)}
-                    </p>
+
+                    {/* Hover arrow */}
+                    <span className="hidden shrink-0 self-center font-mono text-xs text-fd-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 sm:block">
+                      →
+                    </span>
                   </Link>
                 </li>
               ))}
