@@ -1,3 +1,4 @@
+import { getBlogPosts } from "@/lib/blog";
 import { referenceSource, source } from "@/lib/source";
 
 export const revalidate = false;
@@ -10,11 +11,16 @@ const selectedUrls = new Set([
   "/docs/operations/deployment",
   "/docs/operations/production",
   "/reference",
+  "/blog/tysel-v0-1-1",
 ]);
 
 export function GET() {
   const order = [...selectedUrls];
-  const pages = [...source.getPages(), ...referenceSource.getPages()]
+  const pages = [
+    ...source.getPages(),
+    ...referenceSource.getPages(),
+    ...getBlogPosts(),
+  ]
     .filter((page) => selectedUrls.has(page.url))
     .sort((left, right) => order.indexOf(left.url) - order.indexOf(right.url));
 

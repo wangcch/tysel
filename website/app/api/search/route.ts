@@ -1,9 +1,13 @@
-import { referenceSource, source } from "@/lib/source";
+import { blog, referenceSource, source } from "@/lib/source";
 import { createFromSource } from "fumadocs-core/search/server";
 
 const searchSource = {
   getPages() {
-    return [...source.getPages(), ...referenceSource.getPages()];
+    return [
+      ...source.getPages(),
+      ...referenceSource.getPages(),
+      ...blog.getPages(),
+    ];
   },
   getPageTree() {
     return {
@@ -11,6 +15,16 @@ const searchSource = {
       children: [
         ...source.getPageTree().children,
         ...referenceSource.getPageTree().children,
+        {
+          type: "folder" as const,
+          name: "Blog",
+          root: true,
+          children: blog.getPages().map((page) => ({
+            type: "page" as const,
+            name: page.data.title,
+            url: page.url,
+          })),
+        },
       ],
     };
   },

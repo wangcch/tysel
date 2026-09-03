@@ -37,9 +37,11 @@ GitHub Release.
 | Path | Source |
 | --- | --- |
 | `/` | Product homepage (bun.sh-density layout) |
+| `/blog` | Product blog (MDX under `content/blog/`) |
 | `/docs` | Migrated from `docs/` |
 | `/examples` | Example gallery |
 | `/benchmarks` | Admission results from CI evidence (checked-in default is unpublished) |
+| `/rss.xml` | Blog RSS feed |
 
 Brand logos sync from the repo root on `predev` / `prebuild`:
 
