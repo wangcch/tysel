@@ -7,6 +7,7 @@ const columns = [
     title: "Product",
     links: [
       { href: "/docs", label: "Docs" },
+      { href: "/blog", label: "Blog" },
       { href: "/reference", label: "Reference" },
       { href: "/examples", label: "Examples" },
       { href: "/benchmarks", label: "Benchmarks" },
@@ -16,6 +17,8 @@ const columns = [
     title: "Source",
     links: [
       { href: githubUrl, label: "GitHub", external: true },
+      // Native <a>: next/link client navigation breaks static /rss.xml.
+      { href: "/rss.xml", label: "RSS", native: true },
       {
         href: `${githubUrl}/blob/main/LICENSE`,
         label: "Apache-2.0",
@@ -49,19 +52,33 @@ export function SiteFooter() {
                 {column.title}
               </p>
               <ul className="mt-3 space-y-2">
-                {column.links.map((link) => (
-                  <li key={link.href}>
-                    <Link
-                      href={link.href}
-                      {...("external" in link && link.external
-                        ? { target: "_blank", rel: "noreferrer" }
-                        : {})}
-                      className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
-                    >
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
+                {column.links.map((link) => {
+                  const className =
+                    "text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground";
+                  const useNative =
+                    ("external" in link && link.external) ||
+                    ("native" in link && link.native);
+
+                  return (
+                    <li key={link.href}>
+                      {useNative ? (
+                        <a
+                          href={link.href}
+                          {...("external" in link && link.external
+                            ? { target: "_blank", rel: "noreferrer" }
+                            : {})}
+                          className={className}
+                        >
+                          {link.label}
+                        </a>
+                      ) : (
+                        <Link href={link.href} className={className}>
+                          {link.label}
+                        </Link>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}

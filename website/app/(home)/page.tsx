@@ -5,6 +5,7 @@ import { FiveMinutes } from "@/components/home/five-minutes";
 import { InstallPanel } from "@/components/home/install-panel";
 import { RuntimeCapabilities } from "@/components/home/runtime-capabilities";
 import { StructuredData } from "@/components/seo/structured-data";
+import { formatBlogDate, getFeaturedBlogPost } from "@/lib/blog";
 import { absoluteUrl, canonicalUrl, githubUrl } from "@/lib/shared";
 
 const description =
@@ -100,6 +101,8 @@ const contracts = [
 ];
 
 export default function HomePage() {
+  const featuredPost = getFeaturedBlogPost();
+
   return (
     <main>
       <StructuredData data={jsonLd} />
@@ -255,6 +258,62 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {featuredPost ? (
+        <section className="border-b border-fd-border">
+          <div className="mx-auto max-w-6xl px-6 py-20">
+            <div className="flex items-end justify-between gap-6">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-fd-muted-foreground">
+                  From the blog
+                </p>
+                <h2 className="font-heading mt-3 max-w-2xl text-3xl font-medium tracking-tight text-balance">
+                  Why Tysel ships a narrower production contract.
+                </h2>
+              </div>
+              <Link
+                href="/blog"
+                className="hidden shrink-0 text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground sm:inline"
+              >
+                All posts →
+              </Link>
+            </div>
+            <Link
+              href={featuredPost.url}
+              className="group mt-10 grid gap-8 border border-fd-border transition-colors hover:bg-fd-accent/40 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]"
+            >
+              {featuredPost.data.cover ? (
+                <div className="overflow-hidden bg-fd-muted">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={featuredPost.data.cover}
+                    alt={
+                      featuredPost.data.coverAlt ?? featuredPost.data.title
+                    }
+                    width={1600}
+                    height={900}
+                    className="aspect-[16/9] w-full object-cover transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+                  />
+                </div>
+              ) : null}
+              <div className="flex flex-col justify-center px-6 py-6 lg:pr-8">
+                <p className="font-mono text-xs text-tysel-blue">
+                  Release · {formatBlogDate(featuredPost)}
+                </p>
+                <h3 className="font-heading mt-3 text-xl font-medium tracking-tight text-balance sm:text-2xl">
+                  {featuredPost.data.title}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">
+                  {featuredPost.data.description}
+                </p>
+                <span className="mt-6 text-sm font-medium">
+                  Read the announcement →
+                </span>
+              </div>
+            </Link>
+          </div>
+        </section>
+      ) : null}
 
       <section>
         <div className="relative overflow-hidden">

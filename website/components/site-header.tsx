@@ -16,6 +16,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const links = [
   { href: "/", label: "Home" },
   { href: "/docs", label: "Docs" },
+  { href: "/blog", label: "Blog" },
   { href: "/reference", label: "Reference" },
   { href: "/examples", label: "Examples" },
   { href: "/benchmarks", label: "Benchmarks" },
@@ -63,7 +64,7 @@ export function SiteHeader() {
           <Wordmark className="h-6" />
         </Link>
 
-        <nav className="hidden shrink-0 items-center gap-0.5 sm:flex">
+        <nav className="hidden shrink-0 items-center gap-0.5 lg:flex">
           {links.map((link) => (
             <Link
               key={link.href}
@@ -99,13 +100,13 @@ export function SiteHeader() {
             </Link>
             <Link
               href="/docs/getting-started"
-              className="hidden shrink-0 items-center whitespace-nowrap bg-fd-foreground px-3 py-1.5 text-sm font-medium text-fd-background sm:inline-flex"
+              className="hidden shrink-0 items-center whitespace-nowrap bg-fd-foreground px-3 py-1.5 text-sm font-medium text-fd-background lg:inline-flex"
             >
               Get started
             </Link>
             <button
               type="button"
-              className="inline-flex size-8 items-center justify-center text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground sm:hidden"
+              className="inline-flex size-8 items-center justify-center text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground lg:hidden"
               aria-expanded={open}
               aria-controls={menuId}
               aria-label={open ? "Close menu" : "Open menu"}
@@ -121,7 +122,7 @@ export function SiteHeader() {
         <nav
           id={menuId}
           className={cn(
-            "border-t border-fd-border py-3 sm:hidden",
+            "border-t border-fd-border py-3 lg:hidden",
             docsChrome ? "px-4" : "px-6",
           )}
         >
