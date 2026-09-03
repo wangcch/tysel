@@ -48,7 +48,7 @@ export function SiteHeader() {
     pathname.startsWith("/docs") || pathname.startsWith("/reference");
 
   return (
-    <header className="sticky top-0 z-50 border-b border-fd-border bg-fd-background/80 backdrop-blur-sm">
+    <header className="sticky top-0 z-40 border-b border-fd-border bg-fd-background/80 backdrop-blur-sm">
       <div
         className={cn(
           "mx-auto flex h-14 w-full items-center gap-3 transition-[max-width,padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",

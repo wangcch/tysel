@@ -69,6 +69,16 @@ header [data-search-full] {
   border-radius: 0;
 }
 
+/*
+ * Fumadocs search dialog/overlay default to z-50. SiteHeader used to share that
+ * layer, so on mobile (dialog at top-4) the sticky header covered the input.
+ * Keep header at z-40 and pin the dialog above it.
+ */
+[data-radix-dialog-overlay],
+[role="dialog"] {
+  z-index: 100;
+}
+
 /* Fumadocs prose hardcodes 5px; it does not read --radius-*. */
 .prose :where(code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
   border-radius: 0;
