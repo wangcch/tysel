@@ -2,6 +2,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
@@ -15,11 +18,16 @@ use tysel_package::SourceMap;
 #[cfg(unix)]
 use tysel_runtime::ModuleTaskService;
 use tysel_runtime::{
-    AppIsolate, DurablePlane, HttpLimits, SharedPool, handle_stream, spawn_app_isolate,
+    AppIsolate, DurablePlane, HttpLimits, RuntimeDiagnostic, SharedPool, handle_stream,
+    spawn_app_isolate,
 };
 use tysel_task_rpc::TaskOutcome;
 
+use crate::{ErrorFormat, structured_diagnostics};
+
 const IGNORED_DIRS: &[&str] = &["node_modules", "target", "dist", ".git", "data"];
+const RUNTIME_DIAGNOSTIC_QUEUE: usize = 64;
+const MAX_DIAGNOSTIC_STACK_BYTES: usize = 64 * 1024;
 
 struct Watch {
     rx: mpsc::UnboundedReceiver<notify::Result<Event>>,
@@ -58,11 +66,15 @@ struct TaskSpec {
     secret_names: Vec<String>,
 }
 
-pub async fn run(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<()> {
+pub async fn run(
+    manifest_path: PathBuf,
+    entry: Option<PathBuf>,
+    error_format: ErrorFormat,
+) -> Result<()> {
     if component_entry(&manifest_path, entry.as_deref())?.is_some() {
         anyhow::bail!("Wasm Components are one-shot tasks; use `tysel run` instead of `tysel dev`");
     }
-    serve(manifest_path, entry, true).await
+    serve(manifest_path, entry, true, error_format).await
 }
 
 /// Serve JavaScript without reload, or execute a Component once over stdio.
@@ -81,7 +93,7 @@ pub async fn run_once(manifest_path: PathBuf, entry: Option<PathBuf>) -> Result<
         tysel_runtime::run_component_tap_with_policy(&tap, &policy)?;
         return Ok(());
     }
-    serve(manifest_path, entry, false).await
+    serve(manifest_path, entry, false, ErrorFormat::Human).await
 }
 
 fn component_entry(
@@ -196,7 +208,12 @@ pub async fn run_queue(
     }
 }
 
-async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> Result<()> {
+async fn serve(
+    manifest_path: PathBuf,
+    entry: Option<PathBuf>,
+    reload: bool,
+    error_format: ErrorFormat,
+) -> Result<()> {
     let loaded = load(&manifest_path, entry.as_deref())?;
     let pool = SharedPool::with_server_limits(
         loaded.isolate,
@@ -207,6 +224,9 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
         loaded.http2,
         Some(loaded.source_map),
     );
+    if error_format == ErrorFormat::Json {
+        attach_runtime_diagnostics(&pool)?;
+    }
     let listener =
         TcpListener::bind(loaded.addr).await.with_context(|| format!("bind {}", loaded.addr))?;
     let mut task_generation = 1u64;
@@ -219,7 +239,9 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
     print!("{}", listen_announcement(bound));
     io::stdout().flush()?;
     if reload {
+        report_diagnostics_clear(error_format, 0);
         let mut changes = watch(manifest_path.parent().unwrap_or(Path::new(".")))?;
+        let mut diagnostic_generation = 0u64;
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => break,
@@ -228,14 +250,19 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                     shutdown_task_service(task_service).await?;
                     return Err(error);
                 }
-                _ = wait_change(&mut changes.rx) => match load(&manifest_path, entry.as_deref()) {
+                _ = wait_change(&mut changes.rx) => {
+                    diagnostic_generation = diagnostic_generation.saturating_add(1);
+                    match load(&manifest_path, entry.as_deref()) {
                     Ok(next) => {
                         task_generation = task_generation.saturating_add(1);
                         match start_task_service(next.task.clone(), task_generation).await {
                             Ok(next_tasks) => {
                                 match start_dev_durable(next.durable.clone()).await {
                                     Ok(next_durable) => {
-                                        eprintln!("tysel reload");
+                                        report_diagnostics_clear(error_format, diagnostic_generation);
+                                        if error_format == ErrorFormat::Human {
+                                            eprintln!("tysel reload");
+                                        }
                                         pool.replace_with_server_limits(
                                             next.isolate,
                                             HttpLimits {
@@ -253,14 +280,14 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
                                         task_service = next_tasks;
                                         durable = next_durable;
                                     }
-                                    Err(err) => eprintln!("error: {err:#}"),
+                                    Err(err) => report_dev_error(error_format, diagnostic_generation, &err),
                                 }
                             }
-                            Err(err) => eprintln!("error: {err:#}"),
+                            Err(err) => report_dev_error(error_format, diagnostic_generation, &err),
                         }
                     }
-                    Err(err) => eprintln!("error: {err:#}"),
-                },
+                    Err(err) => report_dev_error(error_format, diagnostic_generation, &err),
+                }},
                 accepted = listener.accept() => {
                     let (stream, _) = accepted.context("accept")?;
                     handle_stream(stream, pool.clone());
@@ -288,6 +315,141 @@ async fn serve(manifest_path: PathBuf, entry: Option<PathBuf>, reload: bool) -> 
     shutdown_durable(durable.take()).await?;
     shutdown_task_service(task_service).await?;
     Ok(())
+}
+
+fn attach_runtime_diagnostics(pool: &SharedPool) -> Result<()> {
+    let (diagnostic_tx, diagnostic_rx) = sync_channel(RUNTIME_DIAGNOSTIC_QUEUE);
+    let diagnostic_overflow = Arc::new(AtomicBool::new(false));
+    let writer_overflow = Arc::clone(&diagnostic_overflow);
+    thread::Builder::new()
+        .name("tysel-diagnostics".into())
+        .spawn(move || {
+            while let Ok(diagnostic) = diagnostic_rx.recv() {
+                report_runtime_diagnostic(diagnostic);
+                if writer_overflow.swap(false, Ordering::Relaxed) {
+                    report_diagnostic_overflow();
+                }
+            }
+        })
+        .context("spawn runtime diagnostic writer")?;
+    pool.set_diagnostic_sink(Some(Arc::new(move |diagnostic| {
+        enqueue_runtime_diagnostic(&diagnostic_tx, &diagnostic_overflow, diagnostic);
+    })));
+    Ok(())
+}
+
+fn enqueue_runtime_diagnostic(
+    sender: &SyncSender<RuntimeDiagnostic>,
+    overflow: &AtomicBool,
+    mut diagnostic: RuntimeDiagnostic,
+) {
+    truncate_diagnostic_owned(&mut diagnostic.message);
+    if matches!(sender.try_send(diagnostic), Err(TrySendError::Full(_))) {
+        overflow.store(true, Ordering::Relaxed);
+    }
+}
+
+fn report_dev_error(format: ErrorFormat, generation: u64, error: &anyhow::Error) {
+    match format {
+        ErrorFormat::Human => eprintln!("error: {error:#}"),
+        ErrorFormat::Json => {
+            let diagnostics = structured_diagnostics(error)
+                .map(|diagnostics| serde_json::json!(diagnostics.diagnostics()))
+                .unwrap_or_else(|| {
+                    serde_json::json!([{
+                        "code": "TYSEL_DEV_ERROR",
+                        "message": format!("{error:#}"),
+                        "severity": "error",
+                        "phase": "dev"
+                    }])
+                });
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "schemaVersion": 1,
+                    "event": "diagnostics",
+                    "generation": generation,
+                    "diagnostics": diagnostics
+                })
+            );
+        }
+    }
+}
+
+fn report_diagnostics_clear(format: ErrorFormat, generation: u64) {
+    if format == ErrorFormat::Json {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "schemaVersion": 1,
+                "event": "diagnostics",
+                "generation": generation,
+                "diagnostics": []
+            })
+        );
+    }
+}
+
+fn report_runtime_diagnostic(diagnostic: RuntimeDiagnostic) {
+    let stack = truncate_diagnostic(&diagnostic.message);
+    let message = stack.lines().next().unwrap_or("runtime error");
+    let mut value = serde_json::json!({
+        "code": diagnostic.code,
+        "message": message,
+        "severity": "error",
+        "phase": "runtime",
+        "stack": stack,
+        "requestId": format!("{:016x}", diagnostic.request_id),
+    });
+    if let Some(source) = diagnostic.source {
+        value["file"] = serde_json::json!(source.file);
+        value["start"] = serde_json::json!({
+            "line": source.line,
+            "column": source.column,
+        });
+        value["end"] = value["start"].clone();
+    }
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "schemaVersion": 1,
+            "event": "runtimeDiagnostic",
+            "diagnostic": value
+        })
+    );
+}
+
+fn report_diagnostic_overflow() {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "schemaVersion": 1,
+            "event": "runtimeDiagnostic",
+            "diagnostic": {
+                "code": "TYSEL_DIAGNOSTICS_DROPPED",
+                "message": "runtime diagnostics exceeded the bounded output queue",
+                "severity": "warning",
+                "phase": "runtime"
+            }
+        })
+    );
+}
+
+fn truncate_diagnostic(message: &str) -> &str {
+    if message.len() <= MAX_DIAGNOSTIC_STACK_BYTES {
+        return message;
+    }
+    let mut end = MAX_DIAGNOSTIC_STACK_BYTES;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    &message[..end]
+}
+
+fn truncate_diagnostic_owned(message: &mut String) {
+    if message.len() > MAX_DIAGNOSTIC_STACK_BYTES {
+        *message = truncate_diagnostic(message).to_owned();
+    }
 }
 
 fn listen_announcement(bound: std::net::SocketAddr) -> String {
@@ -585,5 +747,33 @@ mod tests {
         assert!(!is_watched(Path::new("/app/README.md")));
         assert!(!is_watched(Path::new("/app/node_modules/pkg/.env")));
         assert!(!is_watched(Path::new("/app/node_modules/pkg/index.js")));
+    }
+
+    #[test]
+    fn runtime_diagnostic_stack_limit_preserves_utf8() {
+        let mut message = "王".repeat(MAX_DIAGNOSTIC_STACK_BYTES);
+        let original_capacity = message.capacity();
+        truncate_diagnostic_owned(&mut message);
+        assert!(message.len() <= MAX_DIAGNOSTIC_STACK_BYTES);
+        assert!(message.is_char_boundary(message.len()));
+        assert!(message.capacity() < original_capacity);
+    }
+
+    #[test]
+    fn runtime_diagnostic_enqueue_is_bounded_and_reports_overflow() {
+        let (sender, receiver) = sync_channel(1);
+        let overflow = AtomicBool::new(false);
+        let diagnostic = || RuntimeDiagnostic {
+            code: "RUNTIME_ERROR",
+            message: "failure".into(),
+            request_id: 1,
+            source: None,
+        };
+
+        enqueue_runtime_diagnostic(&sender, &overflow, diagnostic());
+        enqueue_runtime_diagnostic(&sender, &overflow, diagnostic());
+
+        assert!(overflow.load(Ordering::Relaxed));
+        assert_eq!(receiver.try_iter().count(), 1);
     }
 }

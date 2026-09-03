@@ -10,6 +10,13 @@ pub struct OriginalPosition {
     pub content: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginalLocation {
+    pub source: String,
+    pub line: u32,
+    pub column: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct SourceMap {
     pub file: Option<String>,
@@ -59,13 +66,7 @@ impl SourceMap {
     pub fn original_position(&self, line: u32, column: u32) -> Option<OriginalPosition> {
         let gen_line = line.saturating_sub(1);
         let gen_column = column.saturating_sub(1);
-        let mapping = self
-            .mappings
-            .iter()
-            .filter(|mapping| {
-                mapping.generated_line == gen_line && mapping.generated_column <= gen_column
-            })
-            .max_by_key(|mapping| mapping.generated_column)?;
+        let mapping = self.lookup_mapping(gen_line, gen_column)?;
         let source = self.sources.get(mapping.source_index as usize)?.clone();
         let content = self.sources_content.get(mapping.source_index as usize).cloned().flatten();
         Some(OriginalPosition {
@@ -90,11 +91,21 @@ impl SourceMap {
                 let Some((generated_column, _)) = parse_stack_number(rest) else {
                     return line.to_owned();
                 };
-                let Some(position) = self.original_position(generated_line, generated_column)
-                else {
+                let Some(mapping) = self.lookup_mapping(
+                    generated_line.saturating_sub(1),
+                    generated_column.saturating_sub(1),
+                ) else {
                     return line.to_owned();
                 };
-                let original = format!("{}:{}:{}", position.source, position.line, position.column);
+                let Some(source) = self.sources.get(mapping.source_index as usize) else {
+                    return line.to_owned();
+                };
+                let original = format!(
+                    "{}:{}:{}",
+                    source,
+                    mapping.original_line + 1,
+                    mapping.original_column + 1
+                );
                 let token_len = "app.js:".len()
                     + generated_line.to_string().len()
                     + 1
@@ -103,6 +114,37 @@ impl SourceMap {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Return the first original source position referenced by a generated stack.
+    pub fn first_original_position(&self, stack: &str) -> Option<OriginalLocation> {
+        stack.lines().find_map(|line| {
+            let marker = line.find("app.js:")?;
+            let coordinates = &line[marker + "app.js:".len()..];
+            let (generated_line, rest) = parse_stack_number(coordinates)?;
+            let rest = rest.strip_prefix(':')?;
+            let (generated_column, _) = parse_stack_number(rest)?;
+            let mapping = self.lookup_mapping(
+                generated_line.saturating_sub(1),
+                generated_column.saturating_sub(1),
+            )?;
+            Some(OriginalLocation {
+                source: self.sources.get(mapping.source_index as usize)?.clone(),
+                line: mapping.original_line + 1,
+                column: mapping.original_column + 1,
+            })
+        })
+    }
+
+    fn lookup_mapping(&self, generated_line: u32, generated_column: u32) -> Option<&Mapping> {
+        let line_start =
+            self.mappings.partition_point(|mapping| mapping.generated_line < generated_line);
+        let line_end =
+            self.mappings.partition_point(|mapping| mapping.generated_line <= generated_line);
+        let line = self.mappings.get(line_start..line_end)?;
+        let column_end =
+            line.partition_point(|mapping| mapping.generated_column <= generated_column);
+        column_end.checked_sub(1).and_then(|index| line.get(index))
     }
 }
 

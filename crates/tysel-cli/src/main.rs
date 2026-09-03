@@ -39,7 +39,7 @@ mod upgrade;
     arg_required_else_help = true
 )]
 struct Cli {
-    /// Format fatal CLI errors for humans or automation.
+    /// Format stderr errors and development diagnostics for humans or automation.
     #[arg(long, global = true, value_enum, default_value_t = ErrorFormat::Human)]
     error_format: ErrorFormat,
     /// Discover a Tysel project as if invoked from this directory; doctor also accepts a manifest.
@@ -49,8 +49,8 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum ErrorFormat {
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ErrorFormat {
     Human,
     Json,
 }
@@ -390,15 +390,18 @@ fn main() -> ExitCode {
         Err(err) => {
             match error_format {
                 ErrorFormat::Human => eprintln!("error: {err:#}"),
-                ErrorFormat::Json => eprintln!(
-                    "{}",
-                    serde_json::json!({
+                ErrorFormat::Json => {
+                    let mut output = serde_json::json!({
                         "error": {
                             "code": "TYSEL_CLI_ERROR",
                             "message": format!("{err:#}"),
                         }
-                    })
-                ),
+                    });
+                    if let Some(diagnostics) = structured_diagnostics(&err) {
+                        output["diagnostics"] = serde_json::json!(diagnostics.diagnostics());
+                    }
+                    eprintln!("{output}");
+                }
             }
             ExitCode::from(1)
         }
@@ -406,6 +409,7 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    let error_format = cli.error_format;
     let invocation_dir = std::env::current_dir().context("resolve current directory")?;
     let project_dir = cli
         .project_dir
@@ -432,7 +436,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 .enable_all()
                 .build()
                 .context("tokio runtime")?;
-            runtime.block_on(dev::run(project.manifest_path, entry))
+            runtime.block_on(dev::run(project.manifest_path, entry, error_format))
         }
         Commands::Run { entry, manifest } => {
             let project = context(manifest.as_deref())?;
@@ -605,6 +609,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
     };
     result?;
     Ok(ExitCode::SUCCESS)
+}
+
+pub(crate) fn structured_diagnostics(
+    error: &anyhow::Error,
+) -> Option<&tysel_build::BuildDiagnostics> {
+    error.chain().find_map(|cause| cause.downcast_ref())
 }
 
 fn switch_to_selected_dir(path: Option<&Path>) -> Result<()> {

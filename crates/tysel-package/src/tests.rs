@@ -133,6 +133,29 @@ fn source_map_writer_roundtrips_line_mappings() {
 }
 
 #[test]
+fn source_map_looks_up_multiple_columns_on_one_line() {
+    let mut writer = SourceMapWriter::new();
+    writer.add(2, 0, 0, 4);
+    writer.add(8, 0, 1, 3);
+    let json = writer
+        .into_json("app.js", vec!["src/index.ts".into()], vec!["abcd\nefgh\n".into()])
+        .expect("json");
+    let map = SourceMap::parse(&json).expect("parse");
+
+    assert!(map.original_position(1, 2).is_none());
+
+    let first = map.original_position(1, 3).expect("first exact column");
+    assert_eq!((first.line, first.column), (1, 5));
+    let between = map.original_position(1, 8).expect("between columns");
+    assert_eq!((between.line, between.column), (1, 5));
+
+    let second = map.original_position(1, 9).expect("second exact column");
+    assert_eq!((second.line, second.column), (2, 4));
+    let after = map.original_position(1, u32::MAX).expect("after final column");
+    assert_eq!((after.line, after.column), (2, 4));
+}
+
+#[test]
 fn bundle_hash_mismatch_is_rejected() {
     let mut tap = sample_tap();
     tap.manifest.bundle_hash = "deadbeef".into();

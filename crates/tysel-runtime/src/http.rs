@@ -152,6 +152,37 @@ struct PoolState {
     http1: bool,
     http2: bool,
     source_map: Option<Arc<SourceMap>>,
+    diagnostic_sink: Option<RuntimeDiagnosticSink>,
+}
+
+struct PoolSnapshot {
+    isolate: AppIsolate,
+    limits: HttpLimits,
+    websocket: bool,
+    admission: Arc<Admission>,
+    diagnostics: RuntimeDiagnostics,
+}
+
+struct RuntimeDiagnostics {
+    source_map: Option<Arc<SourceMap>>,
+    sink: Option<RuntimeDiagnosticSink>,
+}
+
+pub type RuntimeDiagnosticSink = Arc<dyn Fn(RuntimeDiagnostic) + Send + Sync>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDiagnostic {
+    pub code: &'static str,
+    pub message: String,
+    pub request_id: u64,
+    pub source: Option<RuntimeDiagnosticSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDiagnosticSource {
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -294,8 +325,13 @@ impl SharedPool {
                 http1,
                 http2,
                 source_map,
+                diagnostic_sink: None,
             })),
         }
+    }
+
+    pub fn set_diagnostic_sink(&self, diagnostic_sink: Option<RuntimeDiagnosticSink>) {
+        self.inner.write().expect("pool lock").diagnostic_sink = diagnostic_sink;
     }
 
     pub fn replace(&self, pool: impl Into<AppIsolate>, max_request_bytes: usize) {
@@ -361,6 +397,7 @@ impl SharedPool {
         let previous = {
             let mut guard = self.inner.write().expect("pool lock");
             let admission = guard.admission.clone();
+            let diagnostic_sink = guard.diagnostic_sink.clone();
             admission.set_limit(limits.max_in_flight);
             std::mem::replace(
                 &mut *guard,
@@ -374,6 +411,7 @@ impl SharedPool {
                     http1,
                     http2,
                     source_map,
+                    diagnostic_sink,
                 },
             )
         };
@@ -385,21 +423,22 @@ impl SharedPool {
         (guard.isolate.clone(), guard.max_request_bytes, guard.websocket, guard.source_map.clone())
     }
 
-    fn current_with_admission(
-        &self,
-    ) -> (AppIsolate, HttpLimits, bool, Option<Arc<SourceMap>>, Arc<Admission>) {
+    fn current_with_admission(&self) -> PoolSnapshot {
         let guard = self.inner.read().expect("pool lock");
-        (
-            guard.isolate.clone(),
-            HttpLimits {
+        PoolSnapshot {
+            isolate: guard.isolate.clone(),
+            limits: HttpLimits {
                 max_request_bytes: guard.max_request_bytes,
                 max_response_bytes: guard.max_response_bytes,
                 max_in_flight: guard.max_in_flight,
             },
-            guard.websocket,
-            guard.source_map.clone(),
-            guard.admission.clone(),
-        )
+            websocket: guard.websocket,
+            admission: guard.admission.clone(),
+            diagnostics: RuntimeDiagnostics {
+                source_map: guard.source_map.clone(),
+                sink: guard.diagnostic_sink.clone(),
+            },
+        }
     }
 
     pub fn max_in_flight(&self) -> u32 {
@@ -519,17 +558,16 @@ pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
                 let path = request.uri().path().to_owned();
                 let started = Instant::now();
                 let request_id = tysel_observability::next_request_id();
-                let (isolate, limits, websocket, source_map, admission) =
-                    pool.current_with_admission();
-                let response = match admission.try_acquire() {
+                let current = pool.current_with_admission();
+                let response = match current.admission.try_acquire() {
                     Some(permit) => {
                         dispatch(
-                            isolate,
+                            current.isolate,
                             request,
-                            limits,
-                            websocket,
+                            current.limits,
+                            current.websocket,
                             request_id,
-                            source_map.as_deref(),
+                            current.diagnostics,
                             permit,
                         )
                         .await
@@ -601,7 +639,7 @@ async fn dispatch(
     limits: HttpLimits,
     websocket: bool,
     request_id: u64,
-    source_map: Option<&SourceMap>,
+    diagnostics: RuntimeDiagnostics,
     permit: AdmissionPermit,
 ) -> Response<HttpBody> {
     let mut permit = Some(permit);
@@ -622,9 +660,28 @@ async fn dispatch(
             ),
             Err(err) => {
                 let message = err.to_string();
-                let message = source_map
+                let source = diagnostics
+                    .source_map
+                    .as_deref()
+                    .and_then(|source_map| source_map.first_original_position(&message))
+                    .map(|position| RuntimeDiagnosticSource {
+                        file: position.source,
+                        line: position.line,
+                        column: position.column,
+                    });
+                let message = diagnostics
+                    .source_map
+                    .as_deref()
                     .map(|source_map| source_map.symbolicate_stack(&message))
                     .unwrap_or(message);
+                if let Some(diagnostic_sink) = diagnostics.sink.as_ref() {
+                    diagnostic_sink(RuntimeDiagnostic {
+                        code: "RUNTIME_ERROR",
+                        message: message.clone(),
+                        request_id,
+                        source,
+                    });
+                }
                 json_error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "RUNTIME_ERROR",

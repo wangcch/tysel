@@ -166,7 +166,12 @@ fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type).parse();
     if !parsed.diagnostics.is_empty() {
-        return Err(anyhow!(transpile::format_diagnostics("parse", path, &parsed.diagnostics)));
+        return Err(anyhow!(transpile::format_diagnostics(
+            "parse",
+            path,
+            source,
+            &parsed.diagnostics,
+        )));
     }
     let mut specifiers = Vec::new();
     let mut seen = HashSet::new();
@@ -184,6 +189,7 @@ fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
         return Err(anyhow!(transpile::format_diagnostics(
             "semantic",
             path,
+            source,
             &semantic.diagnostics
         )));
     }
@@ -220,7 +226,12 @@ fn rewrite_esm(
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, javascript, source_type).parse();
     if !parsed.diagnostics.is_empty() {
-        return Err(anyhow!(transpile::format_diagnostics("parse", path, &parsed.diagnostics)));
+        return Err(anyhow!(transpile::format_diagnostics(
+            "parse",
+            path,
+            javascript,
+            &parsed.diagnostics,
+        )));
     }
     if !parsed.module_record.dynamic_imports.is_empty() {
         anyhow::bail!("dynamic import is not supported");

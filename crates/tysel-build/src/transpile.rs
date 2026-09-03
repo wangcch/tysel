@@ -47,20 +47,30 @@ fn emit_javascript(
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type).parse();
     if !parsed.diagnostics.is_empty() {
-        return Err(anyhow!(format_diagnostics("parse", path, &parsed.diagnostics)));
+        return Err(anyhow!(format_diagnostics("parse", path, source, &parsed.diagnostics)));
     }
     let mut program = parsed.program;
     if source_type.is_typescript() {
         let semantic = SemanticBuilder::new().build(&program);
         if !semantic.diagnostics.is_empty() {
-            return Err(anyhow!(format_diagnostics("semantic", path, &semantic.diagnostics)));
+            return Err(anyhow!(format_diagnostics(
+                "semantic",
+                path,
+                source,
+                &semantic.diagnostics,
+            )));
         }
         let scoping = semantic.semantic.into_scoping();
         let options = TransformOptions::default();
         let transformed =
             Transformer::new(&allocator, path, &options).build_with_scoping(scoping, &mut program);
         if !transformed.diagnostics.is_empty() {
-            return Err(anyhow!(format_diagnostics("transform", path, &transformed.diagnostics)));
+            return Err(anyhow!(format_diagnostics(
+                "transform",
+                path,
+                source,
+                &transformed.diagnostics,
+            )));
         }
     }
 
@@ -79,8 +89,8 @@ fn emit_javascript(
 pub(crate) fn format_diagnostics(
     stage: &str,
     path: &Path,
+    source: &str,
     errors: &[oxc::diagnostics::OxcDiagnostic],
-) -> String {
-    let details = errors.iter().map(|err| err.to_string()).collect::<Vec<_>>().join("; ");
-    format!("{stage} failed for {}: {details}", path.display())
+) -> crate::BuildDiagnostics {
+    crate::diagnostic::from_oxc(stage, path, source, errors)
 }

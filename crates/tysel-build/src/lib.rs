@@ -4,6 +4,7 @@
 //! the ESM bundle, embedded manifest, and source map.
 
 mod bundle;
+mod diagnostic;
 mod evidence;
 mod reproducibility;
 mod signing;
@@ -17,6 +18,7 @@ use tysel_engine_wasm::{COMPONENT_ABI_VERSION, ComponentEngineConfig, WasmCompon
 use tysel_manifest::Manifest;
 use tysel_package::{PackageManifest, PackagedAot, PackagedComponent, Tap, identity_source_map};
 
+pub use diagnostic::{BuildDiagnostic, BuildDiagnostics, DiagnosticPosition, DiagnosticSeverity};
 pub use evidence::{
     RELEASE_EVIDENCE_VERSION, ReleaseArtifactEvidence, ReleaseDocumentEvidence,
     ReleaseEvidenceIndex, ReleaseSidecars, ReleaseSupplyChainEvidence, verify_release_evidence,

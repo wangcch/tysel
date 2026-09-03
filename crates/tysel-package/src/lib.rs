@@ -6,7 +6,9 @@
 mod sourcemap;
 mod tap;
 
-pub use sourcemap::{OriginalPosition, SourceMap, SourceMapWriter, identity_source_map};
+pub use sourcemap::{
+    OriginalLocation, OriginalPosition, SourceMap, SourceMapWriter, identity_source_map,
+};
 pub use tap::{
     COMPONENT_ABI_VERSION, MAX_AOT_ARTIFACTS_PER_COMPONENT, MAX_PACKAGED_COMPONENTS,
     MAX_TAP_PAYLOAD_BYTES, MIN_SUPPORTED_TAP_VERSION, PackageError, PackageManifest, PackagedAot,

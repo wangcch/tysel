@@ -1097,6 +1097,43 @@ fn fatal_cli_errors_support_json_output() {
 }
 
 #[test]
+fn build_errors_include_structured_source_diagnostics() {
+    let dir = temp_app("json-build-diagnostic");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "diagnostic-service"
+entry = "src/index.ts"
+profile = "service"
+"#,
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "export default {\n").unwrap();
+
+    let output = Command::new(cli_exe())
+        .args([
+            "--error-format",
+            "json",
+            "check",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    let diagnostic = &error["diagnostics"][0];
+    assert_eq!(diagnostic["phase"], "parse");
+    assert_eq!(diagnostic["severity"], "error");
+    assert!(diagnostic["file"].as_str().is_some_and(|file| file.ends_with("src/index.ts")));
+    assert!(diagnostic["start"]["line"].as_u64().is_some_and(|line| line >= 1));
+    assert!(diagnostic["start"]["column"].as_u64().is_some_and(|column| column >= 1));
+    assert!(diagnostic["start"]["byteOffset"].as_u64().is_some());
+}
+
+#[test]
 fn check_fails_on_invalid_typescript() {
     let dir = temp_app("check-syntax");
     write_js_app(&dir, "export default {\n");
@@ -1347,6 +1384,76 @@ fn dev_reloads_source_but_ignores_node_modules() {
 }
 
 #[test]
+fn dev_json_diagnostics_are_replaced_after_a_successful_reload() {
+    let dir = temp_app("dev-json-diagnostics");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "diagnostic-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+"#,
+    )
+    .unwrap();
+    let valid = "export default { async fetch() { return new Response(\"ok\"); } };\n";
+    fs::write(dir.join("src/index.ts"), valid).unwrap();
+
+    let mut child = Command::new(cli_exe())
+        .args([
+            "--error-format",
+            "json",
+            "dev",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel dev");
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
+    assert!(http_get(&addr).contains("ok"));
+
+    fs::write(dir.join("src/index.ts"), "export default {\n").unwrap();
+    wait_log(&log, "\"generation\":1", Duration::from_secs(5));
+    {
+        let captured = log.lock().expect("log");
+        let event = captured
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|event| event["generation"] == 1)
+            .expect("diagnostic generation 1");
+        assert_eq!(event["event"], "diagnostics");
+        assert_eq!(event["diagnostics"][0]["phase"], "parse");
+        assert!(
+            event["diagnostics"][0]["file"]
+                .as_str()
+                .is_some_and(|file| file.ends_with("src/index.ts"))
+        );
+    }
+
+    fs::write(dir.join("src/index.ts"), valid).unwrap();
+    wait_log(&log, "\"generation\":2", Duration::from_secs(5));
+    {
+        let captured = log.lock().expect("log");
+        let event = captured
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|event| event["generation"] == 2)
+            .expect("diagnostic generation 2");
+        assert_eq!(event["diagnostics"], serde_json::json!([]));
+    }
+    assert!(http_get(&addr).contains("ok"));
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
 fn dev_reloads_secrets_when_dotenv_changes() {
     let dir = temp_app("dev-secrets");
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -1516,6 +1623,77 @@ export default {
     assert!(message.contains("src/index.ts:5"), "{message}");
     assert!(!message.contains("app.js:"), "{message}");
     assert!(error["error"]["requestId"].as_str().is_some_and(|id| id.len() == 16));
+}
+
+#[test]
+fn dev_json_runtime_diagnostics_use_original_source_positions() {
+    let dir = temp_app("runtime-json-diagnostic");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("tysel.toml"),
+        r#"
+[app]
+name = "source-map-diagnostic"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        r#"type Failure = { message: string };
+const failure: Failure = { message: "diagnostic failure" };
+export default {
+  async fetch() {
+    throw new Error(failure.message);
+  },
+};
+"#,
+    )
+    .unwrap();
+    let mut child = Command::new(cli_exe())
+        .args([
+            "--error-format",
+            "json",
+            "dev",
+            "--manifest",
+            dir.join("tysel.toml").to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tysel dev");
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
+    assert!(http_get(&addr).contains("diagnostic failure"));
+    let started = std::time::Instant::now();
+    let event = loop {
+        let captured = log.lock().expect("log").clone();
+        if let Some(event) = captured
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|event| event["diagnostic"]["phase"] == "runtime")
+        {
+            break event;
+        }
+        assert!(started.elapsed() < Duration::from_secs(2), "runtime diagnostic event: {captured}");
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(event["event"], "runtimeDiagnostic");
+    let diagnostic = &event["diagnostic"];
+    assert_eq!(diagnostic["code"], "RUNTIME_ERROR");
+    assert!(diagnostic["file"].as_str().is_some_and(|file| file.ends_with("src/index.ts")));
+    assert_eq!(diagnostic["start"]["line"], 5);
+    assert!(
+        diagnostic["stack"].as_str().is_some_and(|stack| {
+            stack.contains("src/index.ts:5") && !stack.contains("app.js:")
+        })
+    );
+    assert!(diagnostic["requestId"].as_str().is_some_and(|id| id.len() == 16));
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[test]
