@@ -46,7 +46,7 @@ const jsonLd = {
       description,
       url: canonicalUrl(),
       downloadUrl: absoluteUrl("/install.sh"),
-      softwareVersion: "0.1.1",
+      softwareVersion: "0.2.0",
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Linux, macOS",
       isAccessibleForFree: true,

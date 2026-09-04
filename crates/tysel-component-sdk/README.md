@@ -5,7 +5,7 @@ Rust guest-side JSON dispatch for the experimental
 
 ```toml
 [dependencies]
-tysel-component-sdk = "0.1.1"
+tysel-component-sdk = "0.2.0"
 ```
 
 Implement one typed task:

@@ -36,8 +36,8 @@ fn runtime_compatibility_matches_packaging_contracts() {
     assert_eq!(compatibility.runtime_js_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(compatibility.quickjs_adapter, QUICKJS_ADAPTER_ID);
     assert_eq!(compatibility.quickjs.engine.version, QUICKJS_ENGINE_VERSION);
-    assert_eq!(compatibility.quickjs.release_status, "candidate");
-    assert_eq!(compatibility.quickjs.allowed_release_channels, ["canary"]);
+    assert_eq!(compatibility.quickjs.release_status, "validated");
+    assert_eq!(compatibility.quickjs.allowed_release_channels, ["canary", "stable"]);
     assert_eq!(compatibility.web_api.profile, "tysel-server-web-subset");
     assert_eq!(compatibility.web_api.compatibility_schema_version, 1);
 }

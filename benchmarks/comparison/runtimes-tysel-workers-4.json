@@ -8,7 +8,7 @@
   }],
   "runtimes": [{
     "id": "tysel",
-    "expectedVersion": "0.1.1",
+    "expectedVersion": "0.2.0",
     "executable": "target/linux-arm64-verify/release/tysel",
     "args": ["run", "--manifest", "benchmarks/comparison/adapters/tysel/tysel-workers-4.toml"],
     "readinessPrefix": "tysel listen ",

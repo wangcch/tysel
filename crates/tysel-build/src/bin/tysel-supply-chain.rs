@@ -137,6 +137,21 @@ fn github_purl(component: &ComponentIdentity) -> Result<String> {
 }
 
 fn validate_release_channel(provenance: &QuickJsProvenance, channel: Option<&str>) -> Result<()> {
+    let expected_channels: &[&str] = match provenance.release_status.as_str() {
+        "candidate" => &["canary"],
+        "validated" => &["canary", "stable"],
+        status => bail!("unknown QuickJS adapter release status `{status}`"),
+    };
+    ensure!(
+        provenance
+            .allowed_release_channels
+            .iter()
+            .map(String::as_str)
+            .eq(expected_channels.iter().copied()),
+        "QuickJS adapter status `{}` requires allowed channels: {}",
+        provenance.release_status,
+        expected_channels.join(", ")
+    );
     let Some(channel) = channel else {
         return Ok(());
     };
@@ -351,9 +366,9 @@ fn generate(root: &Path, release_channel: Option<&str>) -> Result<RuntimeInvento
 mod tests {
     use super::*;
 
-    fn provenance(channels: &[&str]) -> QuickJsProvenance {
+    fn provenance(status: &str, channels: &[&str]) -> QuickJsProvenance {
         QuickJsProvenance {
-            release_status: "candidate".into(),
+            release_status: status.into(),
             allowed_release_channels: channels.iter().map(ToString::to_string).collect(),
             adapter: ComponentIdentity {
                 name: "rquickjs".into(),
@@ -372,7 +387,7 @@ mod tests {
 
     #[test]
     fn candidate_release_policy_rejects_stable() {
-        let provenance = provenance(&["canary"]);
+        let provenance = provenance("candidate", &["canary"]);
         assert!(validate_release_channel(&provenance, Some("canary")).is_ok());
         assert!(
             validate_release_channel(&provenance, Some("stable"))
@@ -383,8 +398,33 @@ mod tests {
     }
 
     #[test]
+    fn validated_release_policy_allows_canary_and_stable() {
+        let provenance = provenance("validated", &["canary", "stable"]);
+        assert!(validate_release_channel(&provenance, Some("canary")).is_ok());
+        assert!(validate_release_channel(&provenance, Some("stable")).is_ok());
+    }
+
+    #[test]
+    fn release_status_and_channel_policy_cannot_drift_apart() {
+        let candidate = provenance("candidate", &["canary", "stable"]);
+        assert!(
+            validate_release_channel(&candidate, Some("canary"))
+                .unwrap_err()
+                .to_string()
+                .contains("requires allowed channels: canary")
+        );
+        let unknown = provenance("untested", &["canary"]);
+        assert!(
+            validate_release_channel(&unknown, None)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown QuickJS adapter release status")
+        );
+    }
+
+    #[test]
     fn quickjs_binding_rejects_a_lockfile_revision_mismatch() {
-        let provenance = provenance(&["canary"]);
+        let provenance = provenance("candidate", &["canary"]);
         let compatibility = RuntimeCompatibility {
             quickjs_adapter: "rquickjs-0.12.2+aaaaaaa/quickjs-ng-0.16.2+bbbbbbb".into(),
             quickjs: provenance,
@@ -407,7 +447,7 @@ mod tests {
 
     #[test]
     fn quickjs_binding_rejects_a_false_engine_revision() {
-        let provenance = provenance(&["canary"]);
+        let provenance = provenance("candidate", &["canary"]);
         let compatibility = RuntimeCompatibility {
             quickjs_adapter: "rquickjs-0.12.2+aaaaaaa/quickjs-ng-0.16.2+bbbbbbb".into(),
             quickjs: provenance,

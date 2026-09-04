@@ -50,7 +50,7 @@ For a project created without the starter, depend on the public SDK crate and
 copy the matching WIT package into the project:
 
 ```toml
-tysel-component-sdk = "0.1.1"
+tysel-component-sdk = "0.2.0"
 ```
 
 The crate version follows the Tysel product release. The WIT contract keeps its

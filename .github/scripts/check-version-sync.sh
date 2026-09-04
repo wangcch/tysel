@@ -59,6 +59,52 @@ if [[ "$runtime_js_version" != "$version" ]]; then
   exit 1
 fi
 
+extract_quoted_version() {
+  local file="$1"
+  local pattern="$2"
+  local value
+  value="$(sed -nE "s/${pattern}/\\1/p" "$file")"
+  if [[ -z "$value" || "$value" == *$'\n'* ]]; then
+    echo "${file} must contain exactly one version matching ${pattern}" >&2
+    exit 1
+  fi
+  printf '%s\n' "$value"
+}
+
+runtime_constant="$(extract_quoted_version runtime-js/bootstrap/index.ts \
+  '.*runtimeJsVersion = "([0-9]+\.[0-9]+\.[0-9]+)";.*')"
+web_api_constant="$(extract_quoted_version runtime-js/web-api/index.ts \
+  '.*webApiVersion = "([0-9]+\.[0-9]+\.[0-9]+)";.*')"
+website_version="$(extract_quoted_version 'website/app/(home)/page.tsx' \
+  '.*softwareVersion: "([0-9]+\.[0-9]+\.[0-9]+)",.*')"
+for version_entry in \
+  "runtime-js/bootstrap/index.ts:${runtime_constant}" \
+  "runtime-js/web-api/index.ts:${web_api_constant}" \
+  "website/app/(home)/page.tsx:${website_version}"; do
+  version_file="${version_entry%%:*}"
+  declared_version="${version_entry#*:}"
+  if [[ "$declared_version" != "$version" ]]; then
+    echo "${version_file} version ${declared_version} does not match Rust ${version}" >&2
+    exit 1
+  fi
+done
+
+sdk_documentation=(
+  crates/tysel-component-sdk/README.md
+  docs/guides/wasm-component-rust.md
+  docs/reference/component/rust-sdk.md
+)
+for document in "${sdk_documentation[@]}"; do
+  if ! grep -Fxq "tysel-component-sdk = \"${version}\"" "$document"; then
+    echo "${document} does not declare tysel-component-sdk ${version}" >&2
+    exit 1
+  fi
+done
+if ! grep -Fxq "tysel upgrade --version ${version} --yes" docs/reference/cli/installation.md; then
+  echo "docs/reference/cli/installation.md does not use current version ${version}" >&2
+  exit 1
+fi
+
 comparison_runtime_locks=(
   benchmarks/comparison/runtimes.lock.json
   benchmarks/comparison/runtimes-tysel-workers-2.json

@@ -56,15 +56,24 @@ narrowed to manifest hostnames; runtime allowlist enforcement remains required.
 ## `tysel test`
 
 ```text
-tysel test [PATHS]... [--timeout-ms MILLISECONDS] [--json] [--manifest FILE]
+tysel test [PATHS]... [--filter TEXT] [--list] [--timeout-ms MILLISECONDS] [--json] [--manifest FILE]
 ```
 
 `PATHS` defaults to `tests/`. Each test file runs in a fresh QuickJS isolate.
 The per-test timeout defaults to `5000` milliseconds. `--json` writes the test
 report to stdout; failed assertions or timeouts exit non-zero.
 
+`--filter` (short form `-t`) runs tests whose names contain `TEXT`. It also
+accepts an exact test ID returned by `--list --json`, allowing tools to select
+one test even when names overlap. A filter that matches no tests exits
+non-zero. `--list` discovers tests without running their bodies. Its JSON
+report includes stable project-relative IDs and source locations for editor
+integrations.
+
 ```sh
 tysel test
+tysel test -t "health endpoint"
+tysel test --list --json
 tysel test tests/http.test.ts --timeout-ms 10000 --json
 ```
 

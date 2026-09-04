@@ -41,7 +41,7 @@ tysel doctor --install
 tysel upgrade --check --json
 tysel upgrade --channel canary --yes
 tysel upgrade --channel stable --yes
-tysel upgrade --version 0.1.1 --yes
+tysel upgrade --version 0.2.0 --yes
 tysel upgrade --rollback
 ```
 

@@ -18,7 +18,7 @@ test("bootstrap completes without replacing host globals", () => {
 
 test("web API version is a stable semantic version", () => {
   assert.match(webApiVersion, /^\d+\.\d+\.\d+$/);
-  assert.equal(webApiVersion, "0.1.1");
+  assert.equal(webApiVersion, "0.2.0");
   assert.equal(runtimeJsVersion, webApiVersion);
   assert.deepEqual(runtimeLayers, ["web-api", "capability-client", "durable"]);
 });
@@ -90,8 +90,8 @@ test("compatibility manifest identifies the embedded runtime boundary", () => {
     "rquickjs-0.12.2+810b2b6/quickjs-ng-0.16.2+2c620e4",
   );
   assert.deepEqual(manifest.quickjs, {
-    releaseStatus: "candidate",
-    allowedReleaseChannels: ["canary"],
+    releaseStatus: "validated",
+    allowedReleaseChannels: ["canary", "stable"],
     adapter: {
       name: "rquickjs",
       version: "0.12.2",
