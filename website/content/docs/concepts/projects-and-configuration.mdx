@@ -111,7 +111,35 @@ In a terminal, `tysel init` offers a recommended quick start and an optional
 customized flow:
 
 ```sh
+tysel init
+```
+
+When no path is supplied, the interactive flow first asks whether to create a
+new project or add Tysel to the current directory. New projects then ask for a
+destination. Supply a path to skip those questions:
+
+```sh
 tysel init my-service
+```
+
+Use the arrow keys and Enter to choose options. Basic terminals without cursor
+control use numbered choices instead.
+
+For generated packages, `init` detects the nearest npm, pnpm, Yarn, or Bun
+lockfile and offers to install dependencies. Automation can choose explicitly:
+
+```sh
+tysel init my-service --package-manager pnpm --install --yes
+```
+
+Add `--verify` to run `tysel check` after installation. In the interactive
+flow, verification is offered when installation is selected, defaults to yes,
+and runs only after installation succeeds. Generated packages require the
+TypeScript portion of the check to run rather than report `skipped`.
+Package-free projects can be verified immediately:
+
+```sh
+tysel init job --package-json none --verify --yes
 ```
 
 The customized flow selects independent dimensions:
@@ -136,10 +164,16 @@ tysel init worker \
   --yes
 ```
 
-Use `--dry-run` to print the complete change plan without writing. `init`
-checks every destination first, preserves existing source and configuration,
-rejects symlinked mutation targets, and rolls back its writes if a later
-operation fails.
+Use `--dry-run` to print the complete change plan without writing. Add `--diff`
+for full unified file contents, or `--json` for a machine-readable plan whose
+changes include `before` and `after` values. Dry runs do not require the
+selected package manager to be installed.
+
+`init` checks every destination first, preserves existing source and
+configuration, merges missing Tysel entries into an existing `.gitignore`,
+and rejects symlinked mutation targets. File writes are rolled back if project
+creation fails before completion. A later package installation or validation
+failure leaves the created project available for inspection and retry.
 
 When adopting an existing JavaScript or TypeScript project, Tysel defaults to
 `src/tysel.ts` and `tsconfig.tysel.json`. It preserves `package.json` unless
@@ -147,6 +181,8 @@ When adopting an existing JavaScript or TypeScript project, Tysel defaults to
 
 ```sh
 tysel init . --dry-run
+tysel init . --dry-run --diff
+tysel init . --dry-run --json
 tysel init . --add-scripts
 ```
 
