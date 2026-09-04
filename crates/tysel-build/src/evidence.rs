@@ -290,7 +290,7 @@ fn runtime_inventory(artifact: &[u8]) -> Result<(RuntimeInventory, &[u8])> {
             continue;
         };
         let mut consumed = values.byte_offset();
-        while candidate.get(consumed).is_some_and(u8::is_ascii_whitespace) {
+        if candidate.get(consumed) == Some(&b'\n') {
             consumed += 1;
         }
         if validate_inventory(&inventory).is_err() {
@@ -485,6 +485,23 @@ mod tests {
         assert_eq!(evidence.artifact.target, "linux-arm64");
         assert_eq!(evidence.supply_chain.runtime_inventory_sha256, bundle_hash(&inventory_bytes));
         assert_eq!(verify_release_evidence(&output).unwrap(), evidence);
+    }
+
+    #[test]
+    fn release_inventory_does_not_absorb_adjacent_linker_whitespace() {
+        let root = temp_root("runtime-inventory-linker-whitespace");
+        fs::create_dir_all(&root).unwrap();
+        let output = root.join("release-app");
+        let mut stub = release_stub();
+        stub.extend_from_slice(b"\nlinker-data");
+        fs::write(&output, tap().embed_into(&stub).unwrap()).unwrap();
+
+        let sidecars = write_release_evidence(&output, "linux-x64").unwrap();
+        let evidence: ReleaseEvidenceIndex = read_json(&sidecars.evidence).unwrap();
+        assert_eq!(
+            evidence.supply_chain.runtime_inventory_sha256,
+            bundle_hash(embedded_runtime_inventory_bytes())
+        );
     }
 
     #[test]

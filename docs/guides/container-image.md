@@ -44,7 +44,7 @@ only the executable into the runtime stage:
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-ARG TYSEL_VERSION
+ARG TYSEL_VERSION=VERSION
 ARG TYSEL_TOOLCHAIN_IMAGE=ghcr.io/wangcch/tysel-toolchain:${TYSEL_VERSION}
 ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
 
