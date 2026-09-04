@@ -660,13 +660,12 @@ jobs:
             --tag "${image}:${version}" \
             "${image}:${version}-amd64" \
             "${image}:${version}-arm64"
-          docker buildx imagetools inspect --raw "${image}:${version}" \
-            > target/toolchain-image-index.json
+          image_index="$(docker buildx imagetools inspect --raw "${image}:${version}")"
           jq -e \
             '[.manifests[].platform | {os, architecture}] | sort_by(.architecture)
               == [{os: "linux", architecture: "amd64"},
                   {os: "linux", architecture: "arm64"}]' \
-            target/toolchain-image-index.json > /dev/null
+            <<< "$image_index" > /dev/null
           inspection="$(docker buildx imagetools inspect "${image}:${version}")"
           digest="$(awk '$1 == "Digest:" {print $2; exit}' <<< "$inspection")"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]

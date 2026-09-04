@@ -1,0 +1,157 @@
+name: resume release publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Failed release workflow run containing the verified artifacts
+        required: true
+        type: string
+      release_tag:
+        description: Existing draft release tag to resume
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  TYSEL_TOOLCHAIN_IMAGE: ghcr.io/wangcch/tysel-toolchain
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      # GitHub hides draft releases from tokens without push access.
+      contents: write
+    outputs:
+      release_commit: ${{ steps.release.outputs.release_commit }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+      - name: Verify the source run, artifacts, draft, and published image
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          version="$(bash .github/scripts/check-version-sync.sh)"
+          [[ "$RELEASE_TAG" == "v${version}" ]]
+          release_commit="$(git rev-parse HEAD)"
+
+          run="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
+          [[ "$(jq -r '.path' <<< "$run")" == ".github/workflows/release.yml" ]]
+          [[ "$(jq -r '.status' <<< "$run")" == completed ]]
+          [[ "$(jq -r '.head_sha' <<< "$run")" == "$release_commit" ]]
+
+          artifacts="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100")"
+          for artifact in signed-release npm-packages rust-sdk-package; do
+            jq -e --arg artifact "$artifact" \
+              '[.artifacts[] | select(.name == $artifact and (.expired | not))] | length == 1' \
+              <<< "$artifacts" > /dev/null
+          done
+
+          gh release view "$RELEASE_TAG" --json isDraft \
+            --jq '.isDraft' | grep -Fx true > /dev/null
+
+          image="${TYSEL_TOOLCHAIN_IMAGE}:${version}"
+          image_index="$(docker buildx imagetools inspect --raw "$image")"
+          jq -e \
+            '[.manifests[].platform | {os, architecture}] | sort_by(.architecture)
+              == [{os: "linux", architecture: "amd64"},
+                  {os: "linux", architecture: "arm64"}]' \
+            <<< "$image_index" > /dev/null
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
+          printf 'Reusing artifacts from run `%s` for `%s` at `%s`.\n' \
+            "$SOURCE_RUN_ID" "$RELEASE_TAG" "$release_commit" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Verified existing image `%s` for linux/amd64 and linux/arm64.\n' \
+            "$image" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+      - name: Verify the checked-out release commit
+        env:
+          RELEASE_COMMIT: ${{ needs.preflight.outputs.release_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_COMMIT" ]]
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-packages
+          path: target/npm-packages
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: Publish or verify matching npm packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_user="$(npm whoami)"
+          [[ -n "$npm_user" ]]
+          echo "Authenticated to npm as ${npm_user}"
+          bash .github/scripts/publish-npm-packages.sh \
+            target/npm-packages "${{ needs.preflight.outputs.version }}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-sdk-package
+          path: target/rust-sdk-package
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: Publish or verify the matching Rust SDK crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/publish-rust-sdk.sh \
+            target/rust-sdk-package "${{ needs.preflight.outputs.version }}"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-release
+          path: target/publish
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: Publish the verified draft and advance its release channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/promote-release.sh \
+            "${{ needs.preflight.outputs.version }}" \
+            "${{ inputs.release_tag }}" \
+            "${{ needs.preflight.outputs.release_commit }}" \
+            target/publish
