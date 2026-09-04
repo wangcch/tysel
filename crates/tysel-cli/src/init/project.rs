@@ -19,6 +19,51 @@ pub(super) fn application_name(root: &Path) -> Result<String> {
         .ok_or_else(|| anyhow!("cannot derive an application name from {}", root.display()))
 }
 
+pub(super) fn validate_new_project_root(input: &str) -> Result<PathBuf> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err(anyhow!("project directory cannot be empty"));
+    }
+    if input.chars().any(char::is_control) {
+        return Err(anyhow!("project directory cannot contain control characters"));
+    }
+    let root = PathBuf::from(input);
+    if root == Path::new(".") {
+        return Err(anyhow!("choose 'Add Tysel to the current directory' to use ."));
+    }
+    if root.exists() {
+        if !root.is_dir() {
+            return Err(anyhow!("project destination is not a directory"));
+        }
+        if fs::read_dir(&root).with_context(|| format!("read {}", root.display()))?.next().is_some()
+        {
+            return Err(anyhow!(
+                "project destination is not empty; choose the current-directory adoption flow or another path"
+            ));
+        }
+    }
+    let name = application_name(&root)?;
+    if !is_application_name(&name) {
+        return Err(anyhow!(
+            "project name must start with a letter or digit and use only letters, digits, '-', '_' or '.'"
+        ));
+    }
+    Ok(root)
+}
+
+pub(super) fn validate_entry_input(root: &Path, input: &str) -> Result<PathBuf> {
+    let entry = normalize_entry(Path::new(input.trim()))?;
+    let destination = root.join(&entry);
+    if destination.exists() && !destination.is_file() {
+        return Err(anyhow!("entry is not a file: {}", destination.display()));
+    }
+    if !destination.is_file() {
+        ensure_generated_entry_extension(&entry)?;
+    }
+    ensure_safe_destination(root, &destination)?;
+    Ok(entry)
+}
+
 pub(super) fn normalize_entry(entry: &Path) -> Result<PathBuf> {
     let raw = entry.to_str().ok_or_else(|| anyhow!("entry must be valid UTF-8"))?;
     if raw.chars().any(char::is_control) {
@@ -45,6 +90,51 @@ pub(super) fn normalize_entry(entry: &Path) -> Result<PathBuf> {
         return Err(anyhow!("entry must name a project-relative file"));
     }
     Ok(normalized)
+}
+
+pub(super) fn ensure_generated_entry_extension(entry: &Path) -> Result<()> {
+    let extension = entry.extension().and_then(|value| value.to_str());
+    if matches!(extension, Some("ts" | "tsx" | "mts")) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "generated application entry must use a TypeScript extension (.ts, .tsx, or .mts): {}",
+        entry.display()
+    ))
+}
+
+pub(super) fn ensure_tsconfig_files(path: &Path, required: &[&Path]) -> Result<()> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let mut source =
+        String::from_utf8(bytes).with_context(|| format!("{} must be UTF-8", path.display()))?;
+    json_strip_comments::strip(&mut source)
+        .with_context(|| format!("invalid {}", path.display()))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&source).with_context(|| format!("invalid {}", path.display()))?;
+    let Some(files) = config.get("files") else {
+        return Ok(());
+    };
+    let files =
+        files.as_array().ok_or_else(|| anyhow!("files in {} must be an array", path.display()))?;
+    let files = files
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(normalize_config_path)
+        .collect::<Vec<_>>();
+    for required in required {
+        let required = normalize_config_path(&required.to_string_lossy());
+        if !files.iter().any(|candidate| candidate == &required) {
+            return Err(anyhow!(
+                "{} does not include {required}; add it to files or remove the config and rerun init",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn normalize_config_path(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_owned()
 }
 
 pub(super) fn ensure_safe_destination(root: &Path, destination: &Path) -> Result<()> {
@@ -132,6 +222,45 @@ pub(super) fn package_with_tysel_scripts(
     let mut rendered = serde_json::to_string_pretty(&package)?;
     rendered.push('\n');
     Ok(Some((bytes, rendered)))
+}
+
+pub(super) fn gitignore_with_entries(
+    path: &Path,
+    desired: &str,
+) -> Result<Option<(Vec<u8>, String)>> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let original =
+        std::str::from_utf8(&bytes).with_context(|| format!("{} must be UTF-8", path.display()))?;
+    let normalized =
+        original.lines().map(|line| normalize_ignore_pattern(line.trim())).collect::<Vec<_>>();
+    let missing = desired
+        .lines()
+        .filter(|entry| {
+            let entry = normalize_ignore_pattern(entry);
+            !normalized.iter().any(|existing| existing == &entry)
+        })
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(None);
+    }
+
+    let mut contents = original.to_owned();
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    if !contents.is_empty() && !contents.ends_with("\n\n") {
+        contents.push('\n');
+    }
+    contents.push_str("# Tysel\n");
+    for entry in missing {
+        contents.push_str(entry);
+        contents.push('\n');
+    }
+    Ok(Some((bytes, contents)))
+}
+
+fn normalize_ignore_pattern(pattern: &str) -> &str {
+    pattern.trim_start_matches('/').trim_start_matches("./")
 }
 
 pub(super) fn is_application_name(name: &str) -> bool {

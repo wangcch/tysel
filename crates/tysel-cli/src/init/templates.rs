@@ -181,6 +181,24 @@ struct TemplateSpec {
 }
 
 impl Template {
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Worker => "worker",
+            Self::Mcp => "mcp",
+            Self::Minimal => "minimal",
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Http => "HTTP service",
+            Self::Worker => "Queue worker",
+            Self::Mcp => "MCP tool",
+            Self::Minimal => "Minimal",
+        }
+    }
+
     fn spec(self) -> TemplateSpec {
         match self {
             Self::Http => TemplateSpec {
@@ -284,22 +302,33 @@ pub(super) fn generated_package_json(
 
 pub(super) fn generated_tsconfig(
     entry: &Path,
-    isolated: bool,
-    include_tests: bool,
+    has_public_types: bool,
+    test_path: Option<&Path>,
+    has_test_types: bool,
 ) -> Result<String> {
     let mut config: serde_json::Value = serde_json::from_str(TSCONFIG)?;
     let entry = entry.to_string_lossy().replace('\\', "/");
+    if matches!(
+        Path::new(&entry).extension().and_then(|value| value.to_str()),
+        Some("js" | "mjs" | "cjs")
+    ) {
+        config["compilerOptions"]["allowJs"] = serde_json::Value::Bool(true);
+        config["compilerOptions"]["checkJs"] = serde_json::Value::Bool(false);
+    }
     let mut files = vec![serde_json::Value::String(entry)];
-    if include_tests && !isolated {
-        files.push(serde_json::Value::String("tests/app.test.ts".into()));
+    if let Some(test_path) = test_path.filter(|_| has_test_types) {
+        files.push(serde_json::Value::String(test_path.to_string_lossy().replace('\\', "/")));
     }
     config.as_object_mut().expect("tsconfig template").remove("include");
     config["files"] = serde_json::Value::Array(files);
-    if isolated {
-        config["compilerOptions"]["types"] = serde_json::json!([]);
-    } else if !include_tests {
-        config["compilerOptions"]["types"] = serde_json::json!(["@tysel/types"]);
+    let mut types = Vec::new();
+    if has_public_types {
+        types.push("@tysel/types");
     }
+    if test_path.is_some() && has_test_types {
+        types.push("@tysel/test");
+    }
+    config["compilerOptions"]["types"] = serde_json::json!(types);
     let mut rendered = serde_json::to_string_pretty(&config)?;
     rendered.push('\n');
     Ok(rendered)

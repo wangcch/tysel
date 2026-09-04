@@ -427,6 +427,169 @@ fn init_can_create_a_package_free_json_project() {
 }
 
 #[test]
+fn init_rejects_a_javascript_extension_for_a_generated_typescript_entry() {
+    let dir = temp_app("init-js-extension");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--entry", "src/app.js", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("must use a TypeScript extension"));
+    assert!(!dir.exists(), "init must fail before creating the project directory");
+}
+
+#[test]
+fn init_dry_run_prints_a_reviewable_project_summary() {
+    let dir = temp_app("init-plan-summary");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Mode      Create"), "{stdout}");
+    assert!(stdout.contains("Template  HTTP service"), "{stdout}");
+    assert!(stdout.contains("Entry     src/index.ts (create)"), "{stdout}");
+    assert!(stdout.contains("Package   create package.json"), "{stdout}");
+    assert!(stdout.contains("Install   npm install (skip)"), "{stdout}");
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_dry_run_json_contains_machine_readable_file_contents() {
+    let dir = temp_app("init-plan-json");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(plan["schemaVersion"], 1);
+    assert_eq!(plan["mode"], "create");
+    assert_eq!(plan["package"]["manager"], "npm");
+    assert!(
+        plan["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["path"] == "package.json" && change["after"].is_string())
+    );
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_dry_run_install_does_not_require_the_package_manager_on_path() {
+    let dir = temp_app("init-plan-missing-manager");
+    let _ = fs::remove_dir_all(&dir);
+    let empty_path = temp_app("init-empty-path");
+    let output = Command::new(cli_exe())
+        .env("PATH", &empty_path)
+        .args(["init", dir.to_str().unwrap(), "--package-manager", "npm", "--install", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("npm install (run)"));
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_rejects_install_without_a_generated_package() {
+    let dir = temp_app("init-install-without-package");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--install", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--install requires"));
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_rejects_verify_for_an_uninstalled_generated_package() {
+    let dir = temp_app("init-verify-without-install");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--verify", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--verify requires --install"));
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_can_verify_a_package_free_project_after_creation() {
+    let dir = temp_app("init-package-free-verify");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--verify", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("validating generated project"));
+    assert!(dir.join("tysel.toml").is_file());
+}
+
+#[test]
+fn init_dry_run_summarizes_existing_file_updates() {
+    let dir = temp_app("init-update-summary");
+    fs::write(dir.join("package.json"), r#"{"name":"existing"}"#).unwrap();
+    fs::write(dir.join(".gitignore"), "custom/\nnode_modules/\n").unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--add-scripts", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("update package.json"), "{stdout}");
+    assert!(stdout.contains("+ scripts.tysel:dev = \"tysel dev\""), "{stdout}");
+    assert!(stdout.contains("update .gitignore"), "{stdout}");
+    assert!(stdout.contains("+ .tysel/"), "{stdout}");
+    assert_eq!(fs::read_to_string(dir.join("package.json")).unwrap(), r#"{"name":"existing"}"#);
+}
+
+#[test]
+fn init_dry_run_diff_exposes_complete_existing_file_changes() {
+    let dir = temp_app("init-update-diff");
+    fs::write(
+        dir.join("package.json"),
+        "{\n    \"name\": \"existing\",\n    \"private\": true\n}\n",
+    )
+    .unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--add-scripts", "--dry-run", "--diff"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--- a/package.json"), "{stdout}");
+    assert!(stdout.contains("-    \"name\": \"existing\""), "{stdout}");
+    assert!(stdout.contains("+  \"name\": \"existing\""), "{stdout}");
+    assert!(stdout.contains("+    \"tysel:dev\": \"tysel dev\""), "{stdout}");
+}
+
+#[test]
+fn init_rejects_a_stale_existing_tysel_tsconfig_before_writing() {
+    let dir = temp_app("init-stale-tsconfig");
+    fs::write(
+        dir.join("package.json"),
+        r#"{"devDependencies":{"@tysel/types":"0.2.0","@tysel/test":"0.2.0"}}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("tsconfig.tysel.json"), r#"{"files":["src/old.ts"]}"#).unwrap();
+    let output =
+        Command::new(cli_exe()).args(["init", dir.to_str().unwrap(), "--yes"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("does not include src/tysel.ts"));
+    assert!(!dir.join("tysel.toml").exists());
+    assert!(!dir.join("src").exists());
+}
+
+#[test]
 fn types_generates_and_checks_manifest_scoped_capabilities() {
     let dir = temp_app("types-environment");
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -612,6 +775,22 @@ fn init_can_add_namespaced_scripts_without_replacing_node_scripts() {
     assert_eq!(updated["scripts"]["dev"], "node server.js");
     assert_eq!(updated["scripts"]["tysel:check"], "tysel check");
     assert_eq!(updated["scripts"]["tysel:build"], "tysel build --release");
+}
+
+#[test]
+fn init_merges_tysel_entries_into_an_existing_gitignore() {
+    let dir = temp_app("init-existing-gitignore");
+    fs::write(dir.join(".gitignore"), "custom/\nnode_modules/\n").unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let gitignore = fs::read_to_string(dir.join(".gitignore")).unwrap();
+    assert!(gitignore.starts_with("custom/\nnode_modules/\n"));
+    assert_eq!(gitignore.matches("node_modules/").count(), 1);
+    assert!(gitignore.contains("# Tysel\n"));
+    assert!(gitignore.contains(".tysel/\n"));
 }
 
 #[test]

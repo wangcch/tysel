@@ -70,6 +70,14 @@ enum PackageJsonArg {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum PackageManagerArg {
+    Npm,
+    Pnpm,
+    Yarn,
+    Bun,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum InitTemplateArg {
     Http,
     Worker,
@@ -114,8 +122,8 @@ enum ConfigCommand {
 enum Commands {
     /// Create a new Tysel application.
     Init {
-        #[arg(default_value = ".")]
-        path: PathBuf,
+        /// Project directory; omit it in a terminal to choose interactively.
+        path: Option<PathBuf>,
         /// Select the generated application template.
         #[arg(long, value_enum)]
         template: Option<InitTemplateArg>,
@@ -131,12 +139,27 @@ enum Commands {
         /// Add namespaced Tysel scripts to a reused package.json.
         #[arg(long)]
         add_scripts: bool,
+        /// Select the package manager used for dependency installation instructions.
+        #[arg(long, value_enum)]
+        package_manager: Option<PackageManagerArg>,
+        /// Install generated package dependencies after creating the project.
+        #[arg(long)]
+        install: bool,
+        /// Run `tysel check` after creation and optional dependency installation.
+        #[arg(long)]
+        verify: bool,
         /// Do not generate an application test.
         #[arg(long)]
         no_tests: bool,
         /// Print the planned file changes without writing them.
         #[arg(long)]
         dry_run: bool,
+        /// Serialize a dry-run plan as JSON, including before/after file contents.
+        #[arg(long, requires = "dry_run")]
+        json: bool,
+        /// Include full unified file diffs in a human-readable dry run.
+        #[arg(long, requires = "dry_run", conflicts_with = "json")]
+        diff: bool,
         /// Accept recommended defaults and never prompt.
         #[arg(short = 'y', long)]
         yes: bool,
@@ -496,15 +519,22 @@ fn run(cli: Cli) -> Result<ExitCode> {
             entry,
             package_json,
             add_scripts,
+            package_manager,
+            install,
+            verify,
             no_tests,
             dry_run,
+            json,
+            diff,
             yes,
             no_interactive,
         } => {
-            let path = match project_dir.as_deref() {
-                Some(base) if path == Path::new(".") => base.to_path_buf(),
-                Some(base) if path.is_relative() => base.join(path),
-                _ => path,
+            let path = match (path, project_dir.as_deref()) {
+                (Some(path), Some(base)) if path == Path::new(".") => Some(base.to_path_buf()),
+                (Some(path), Some(base)) if path.is_relative() => Some(base.join(path)),
+                (Some(path), _) => Some(path),
+                (None, Some(base)) => Some(base.to_path_buf()),
+                (None, None) => None,
             };
             init::run(init::Request {
                 root: path,
@@ -523,8 +553,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     PackageJsonArg::None => init::PackageJsonMode::None,
                 }),
                 add_scripts,
+                package_manager: package_manager.map(|value| match value {
+                    PackageManagerArg::Npm => init::PackageManager::Npm,
+                    PackageManagerArg::Pnpm => init::PackageManager::Pnpm,
+                    PackageManagerArg::Yarn => init::PackageManager::Yarn,
+                    PackageManagerArg::Bun => init::PackageManager::Bun,
+                }),
+                install: install.then_some(true),
+                verify: verify.then_some(true),
                 include_tests: no_tests.then_some(false),
                 dry_run,
+                json,
+                diff,
                 yes,
                 no_interactive,
             })

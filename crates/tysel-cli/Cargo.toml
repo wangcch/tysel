@@ -18,6 +18,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+dialoguer.workspace = true
+json-strip-comments.workspace = true
 tokio.workspace = true
 tysel-distribution.workspace = true
 tysel-manifest.workspace = true
