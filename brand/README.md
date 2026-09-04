@@ -46,6 +46,11 @@ The secondary `ty` mark is a direct crop of the same outlined wordmark. It is re
 
 ## GitHub surfaces
 
+[`github/tysel-org-avatar.png`](./github/tysel-org-avatar.png) is the upload-ready
+1024×1024 organization profile picture. It keeps the original `ty` mark inside a
+circle-safe area, using Tysel Blue on a solid Runtime Mist field. The editable
+[`SVG source`](./github/tysel-org-avatar.svg) is included alongside it.
+
 [`github/tysel-github-banner.png`](./github/tysel-github-banner.png) is the
 upload-ready 1280×640 social preview. Its editable
 [`SVG source`](./github/tysel-github-banner.svg) is included for future size
