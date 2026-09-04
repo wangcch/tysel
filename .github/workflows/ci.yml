@@ -281,6 +281,8 @@ jobs:
         run: python3 -m pip install --requirement requirements-docs.txt
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - name: Validate cross-runtime comparison adapters
+        run: bash benchmarks/comparison/prepare-typescript.sh
       - run: pnpm docs:build
       - run: pnpm test
       - name: Verify publishable TypeScript packages from an external consumer

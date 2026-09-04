@@ -59,6 +59,23 @@ if [[ "$runtime_js_version" != "$version" ]]; then
   exit 1
 fi
 
+comparison_runtime_locks=(
+  benchmarks/comparison/runtimes.lock.json
+  benchmarks/comparison/runtimes-tysel-workers-2.json
+  benchmarks/comparison/runtimes-tysel-workers-4.json
+)
+for runtime_lock in "${comparison_runtime_locks[@]}"; do
+  comparison_version="$(jq -er '
+    .runtimes
+    | map(select(.id == "tysel"))
+    | if length == 1 then .[0].expectedVersion else error("expected exactly one tysel runtime") end
+  ' "$runtime_lock")"
+  if [[ "$comparison_version" != "$version" ]]; then
+    echo "${runtime_lock} Tysel version ${comparison_version} does not match Rust ${version}" >&2
+    exit 1
+  fi
+done
+
 for license_copy in \
   crates/tysel-component-sdk/LICENSE \
   packages/tysel/LICENSE \

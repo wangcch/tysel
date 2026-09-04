@@ -19,7 +19,7 @@
   "runtimes": [
     {
       "id": "tysel",
-      "expectedVersion": "0.1.0",
+      "expectedVersion": "0.1.1",
       "executable": "target/release/tysel",
       "args": [
         "run",
