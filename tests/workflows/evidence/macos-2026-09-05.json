@@ -1,0 +1,47 @@
+{
+  "timestamp": "2026-09-05T06:00:37.700948+00:00",
+  "platform": "Darwin",
+  "architecture": "arm64",
+  "scope": "Local debug tools/artifacts; fake local LLM; no release or Linux isolation claim",
+  "projects": [
+    {
+      "example": "hello-service",
+      "passed": true,
+      "stages": [
+        "dev permission change refreshes types",
+        "invalid manifest preserves service and types; CLI/dev diagnostics agree",
+        "source error is located and cleared after repair",
+        "pinned TypeScript check and read-only generated-type check pass",
+        "native development artifact builds with typecheck enabled",
+        "artifact runs without source, manifest, or npm dependencies"
+      ]
+    },
+    {
+      "example": "isolated-plugin",
+      "passed": true,
+      "stages": [
+        "dev permission change refreshes types",
+        "invalid manifest preserves service and types; CLI/dev diagnostics agree",
+        "source error is located and cleared after repair",
+        "isolated dev denies network and filesystem probes",
+        "pinned TypeScript check and read-only generated-type check pass",
+        "native development artifact builds with typecheck enabled",
+        "isolated deployment requires matching worker companion; missing worker fails clearly",
+        "artifact runs without source, manifest, or npm dependencies"
+      ]
+    },
+    {
+      "example": "durable-agent",
+      "passed": true,
+      "stages": [
+        "dev permission change refreshes types",
+        "invalid manifest preserves service and types; CLI/dev diagnostics agree",
+        "source error is located and cleared after repair",
+        "pinned TypeScript check and read-only generated-type check pass",
+        "native development artifact builds with typecheck enabled",
+        "artifact runs without source, manifest, or npm dependencies",
+        "two artifact restarts preserve durable state: one LLM call and one final save"
+      ]
+    }
+  ]
+}
