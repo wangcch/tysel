@@ -1,0 +1,94 @@
+---
+title: "概览"
+description: "参考页面描述精确接口：接受的值、默认值、副作用、错误和稳定性边界。如果需要的是工作流而非约定，请从指南开始。"
+---
+
+参考页面描述精确接口：接受的值、默认值、副作用、错误和稳定性边界。如果需要的是工作流而非约定，请从[指南](/docs/guides)开始。
+
+网站的 `/reference` 索引呈现扁平的模块目录。可使用侧边栏或以下章节进入具体约定页面。
+
+## 运行时
+
+| 模块 | 说明 |
+| --- | --- |
+| [运行时](/reference/runtime) | 导出和 `globalThis.tysel` 概览 |
+| [核心类型](/reference/runtime/types) | `JsonValue`、执行配置、信任模式 |
+| [应用模块](/reference/runtime/application) | `fetch`、cron、queue、MCP 导出 |
+| [宿主能力](/reference/runtime/capabilities) | 密钥、SQL、文件系统、LLM、WebSocket |
+| [持久 API](/reference/runtime/durable) | 副作用、休眠、信号、恢复 |
+| [测试 API](/reference/runtime/testing) | `test`、`assert`、`invokeFetch` |
+
+## Web API
+
+| 模块 | 说明 |
+| --- | --- |
+| [JavaScript API](/reference/javascript) | 索引与兼容性清单 |
+| [fetch](https://tysel.dev/reference/javascript/fetch) | 受白名单控制的出站 HTTP |
+| [Request 与 Response](https://tysel.dev/reference/javascript/request) | Web 标准消息类型 |
+| [Headers](https://tysel.dev/reference/javascript/headers) | 不区分大小写的请求头映射 |
+| [URL](https://tysel.dev/reference/javascript/url) | URL 与 URLSearchParams |
+| [WebSocket](https://tysel.dev/reference/javascript/websocket) | 客户端和服务器套接字子集 |
+| [Crypto](https://tysel.dev/reference/javascript/crypto) | Web Crypto 子集 |
+| [Timers](https://tysel.dev/reference/javascript/timers) | setTimeout 与 setInterval |
+| [Event](https://tysel.dev/reference/javascript/event) | Event 与 EventTarget |
+| [AbortController](https://tysel.dev/reference/javascript/abortcontroller) | 用于 fetch 和任务的 AbortSignal |
+| [TextEncoder](https://tysel.dev/reference/javascript/textencoder) | UTF-8 编码与解码 |
+
+## Wasm Component
+
+| 模块 | 说明 |
+| --- | --- |
+| [Wasm Component](/reference/component) | 执行配置、信任模式、任务边界 |
+| [Component ABI](/reference/component/abi) | `tysel:component/task` world |
+| [运行时与 WASI](/reference/component/runtime) | 可移植执行限额与受限 WASI |
+| [Component 能力](/reference/component/capabilities) | 文件系统 WIT 导入 |
+| [Rust SDK](/reference/component/rust-sdk) | 来宾类型与分派器 |
+| [Go SDK](/reference/component/go-sdk) | 生成的绑定 |
+
+## CLI
+
+| 模块 | 说明 |
+| --- | --- |
+| [CLI](/reference/cli) | 全局语法与命令索引 |
+| [项目命令](/reference/cli/project) | `init`、`config`、schema |
+| [开发与测试](/reference/cli/development) | `check`、`compat`、`test`、`dev`、`run`、`inspect` |
+| [任务与协议](/reference/cli/tasks) | `task`、`queue`、`mcp` |
+| [构建与镜像](/reference/cli/delivery) | `build`、`image` |
+| [安装](/reference/cli/installation) | `doctor`、`upgrade` |
+| [验证材料](/reference/cli/evidence) | `bench`、`release` |
+
+## 清单与宿主
+
+| 模块 | 说明 |
+| --- | --- |
+| [清单](/reference/manifest) | 完整配置字段索引、默认值、约束、模板与验证 |
+| [应用与服务器](/reference/manifest/app-server) | 应用身份与入站服务器 |
+| [权限](/reference/manifest/permissions) | 网络、密钥、SQL、文件系统 |
+| [应用限额](/reference/manifest/limits) | 正文大小、并发数、超时 |
+| [持久存储与可观测性](/reference/manifest/durable-observability) | 存储、日志、遥测 |
+| [清单任务](/reference/manifest/tasks) | 项目工作流定义 |
+| [环境变量](/reference/environment) | 安装器、CLI、宿主适配器 |
+| [限额与默认值](/reference/limits-and-defaults) | 固定边界 |
+| [错误与输出](/reference/errors-and-output) | 退出码与 JSON 信封 |
+
+## 相关指南
+
+| 主题 | 链接 |
+| --- | --- |
+| 能力矩阵 | [docs/capabilities](/docs/capabilities) |
+| npm 兼容性 | [docs/compatibility](/docs/compatibility) |
+| 示例库 | [docs/guides/examples](/docs/guides/examples) |
+
+## 当前版本的最终依据
+
+本参考描述生成这些文档的源码树。对于已安装的二进制文件，其帮助和附带 schema 是最终依据：
+
+```sh
+tysel --version
+tysel --help
+tysel config schema
+tysel config show --format json
+tysel inspect
+```
+
+未知清单字段会导致错误。这里没有列出的 API 或环境变量应视为实现细节，除非发布说明明确将其提升为公开约定。

@@ -176,7 +176,7 @@ These manifest defaults are limits, not capacity promises:
 | In-flight requests | 1,000 |
 | Request body | 16 MiB |
 | Response body | 16 MiB |
-| PostgreSQL pool | 16 connections per process |
+| Application PostgreSQL pool | Up to 4 connections per process; separate from durable PostgreSQL storage |
 
 Load-test the exact release with production request bodies, task mix,
 capabilities, dependencies, and telemetry. Budget total database connections

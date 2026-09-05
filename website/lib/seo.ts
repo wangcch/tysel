@@ -1,3 +1,6 @@
+import { sourceLocale, type Locale } from "@/lib/i18n/config";
+import { localePath } from "@/lib/i18n/routing";
+import { getMessages } from "@/lib/i18n/messages";
 import type { AnySourcePage, BlogPage } from "@/lib/source";
 import { getPageImageUrl } from "@/lib/source";
 import { getBlogDate, getBlogUpdatedAt } from "@/lib/blog";
@@ -6,13 +9,14 @@ import { appName, canonicalUrl, githubUrl, siteUrl } from "@/lib/shared";
 export function createArticleJsonLd(
   page: AnySourcePage,
   section: { name: string; url: string },
-  presentation: { title?: string; description?: string } = {},
+  presentation: { title?: string; description?: string; locale?: Locale } = {},
 ) {
   const url = canonicalUrl(page.url);
+  const locale = presentation.locale ?? sourceLocale;
   const title = presentation.title ?? page.data.title;
   const description = presentation.description ?? page.data.description;
   const breadcrumbs = [
-    { name: "Home", url: canonicalUrl() },
+    { name: locale === sourceLocale ? "Home" : getMessages(locale)["nav.home"], url: canonicalUrl(localePath("/", locale)) },
     { name: section.name, url: canonicalUrl(section.url) },
   ];
 
@@ -29,8 +33,8 @@ export function createArticleJsonLd(
         description,
         url,
         mainEntityOfPage: url,
-        image: `${siteUrl}${getPageImageUrl(page).url}`,
-        inLanguage: "en",
+        image: locale === sourceLocale ? `${siteUrl}${getPageImageUrl(page).url}` : `${siteUrl}/opengraph-image`,
+        inLanguage: locale,
         author: {
           "@type": "Organization",
           name: `${appName} contributors`,
@@ -50,7 +54,7 @@ export function createArticleJsonLd(
   };
 }
 
-export function createBlogPostingJsonLd(page: BlogPage) {
+export function createBlogPostingJsonLd(page: BlogPage, locale: Locale = sourceLocale) {
   const url = canonicalUrl(page.url);
   const image = page.data.cover
     ? page.data.cover.startsWith("http")
@@ -75,12 +79,12 @@ export function createBlogPostingJsonLd(page: BlogPage) {
         image,
         datePublished,
         dateModified,
-        inLanguage: "en",
+        inLanguage: locale,
         isPartOf: {
           "@type": "Blog",
-          "@id": `${canonicalUrl("/blog")}#blog`,
+          "@id": `${canonicalUrl(localePath("/blog", locale))}#blog`,
           name: `${appName} Blog`,
-          url: canonicalUrl("/blog"),
+          url: canonicalUrl(localePath("/blog", locale)),
         },
         author: {
           "@type": "Organization",
@@ -104,14 +108,14 @@ export function createBlogPostingJsonLd(page: BlogPage) {
           {
             "@type": "ListItem",
             position: 1,
-            name: "Home",
-            item: canonicalUrl(),
+            name: locale === sourceLocale ? "Home" : getMessages(locale)["nav.home"],
+            item: canonicalUrl(localePath("/", locale)),
           },
           {
             "@type": "ListItem",
             position: 2,
-            name: "Blog",
-            item: canonicalUrl("/blog"),
+            name: getMessages(locale)["nav.blog"],
+            item: canonicalUrl(localePath("/blog", locale)),
           },
           {
             "@type": "ListItem",
@@ -125,18 +129,18 @@ export function createBlogPostingJsonLd(page: BlogPage) {
   };
 }
 
-export function createBlogIndexJsonLd(posts: BlogPage[]) {
+export function createBlogIndexJsonLd(posts: BlogPage[], locale: Locale = sourceLocale) {
   return {
     "@context": "https://schema.org",
     "@graph": [
       {
         "@type": "Blog",
-        "@id": `${canonicalUrl("/blog")}#blog`,
+        "@id": `${canonicalUrl(localePath("/blog", locale))}#blog`,
         name: `${appName} Blog`,
         description:
-          "Release notes, runtime design notes, and production guidance from the Tysel team.",
-        url: canonicalUrl("/blog"),
-        inLanguage: "en",
+          getMessages(locale)["blog.description"],
+        url: canonicalUrl(localePath("/blog", locale)),
+        inLanguage: locale,
         publisher: {
           "@type": "Organization",
           name: appName,
@@ -157,14 +161,14 @@ export function createBlogIndexJsonLd(posts: BlogPage[]) {
           {
             "@type": "ListItem",
             position: 1,
-            name: "Home",
-            item: canonicalUrl(),
+            name: locale === sourceLocale ? "Home" : getMessages(locale)["nav.home"],
+            item: canonicalUrl(localePath("/", locale)),
           },
           {
             "@type": "ListItem",
             position: 2,
-            name: "Blog",
-            item: canonicalUrl("/blog"),
+            name: getMessages(locale)["nav.blog"],
+            item: canonicalUrl(localePath("/blog", locale)),
           },
         ],
       },

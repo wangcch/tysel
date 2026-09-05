@@ -1,0 +1,51 @@
+---
+title: "指南"
+description: "指南按目标组织。当你需要某个命令、清单字段或运行时 API 的完整约定时，请使用参考章节。"
+---
+
+指南按目标组织。当你需要某个命令、清单字段或运行时 API 的完整约定时，请使用参考章节。
+
+## 开始与开发
+
+| 目标 | 指南 | 你将验证的内容 |
+| --- | --- | --- |
+| 创建、测试、运行并打包 HTTP 服务 | [快速开始](/docs/getting-started) | 请求成功，且打包后的可执行文件无需 Node.js 即可运行。 |
+| 在不替换现有 Node 项目的情况下加入 Tysel | [创建或接入项目](/docs/concepts/projects-and-configuration#create-or-adopt-a-project) | 现有文件保持不变，Tysel 使用自己的编译器配置。 |
+| 查找或配置 `tysel.toml` 字段 | [完整清单字段索引](/reference/manifest#complete-field-index) | 类型、默认值、运行时状态、跨字段规则和起始配置。 |
+| 检查或转换 TOML 与 JSON 配置 | [检查并转换配置](/docs/concepts/projects-and-configuration#inspect-and-convert-configuration) | 展开的默认值和转换后的输出通过同一套 schema 验证。 |
+| 添加可复现的项目工作流 | [可复现的项目任务](/docs/concepts/projects-and-configuration#reproducible-project-tasks) | `tysel task verify` 运行有边界且不经过 shell 的步骤。 |
+
+## 服务、任务与智能体
+
+| 目标 | 从这里开始 | 必须遵守的边界 |
+| --- | --- | --- |
+| 构建 Fetch 风格的 JSON API | [第一个服务](/docs/getting-started#write-a-fetch-handler) | 使用 `service` 执行配置；本地响应不需要能力授权。 |
+| 配置 HTTP、h2c、WebSocket 和出站主机 | [服务网络](/docs/guides/service-networking) | 入站监听器和出站白名单是两道独立边界。 |
+| 确定服务工作线程数量并可预测地拒绝过载 | [并发与背压](/docs/guides/concurrency-backpressure) | 返回 `503 OVERLOADED`；WebSocket 会持续占用准入许可。 |
+| 注册 UTC 调度和 Queue 消费者 | [Cron 与 Queue](/docs/guides/cron-queue) | JSON 边界、截止时间、幂等性和有限补偿执行。 |
+| 在不暴露凭据的情况下路由 LLM 调用 | [LLM 网关](/docs/guides/llm-gateway) | 一个别名、宿主管理的密钥、超时和审计边界。 |
+| 转换限定根目录下的文件 | [文件系统](/docs/guides/filesystem) | 分离的 UTF-8 读写根目录；拒绝路径穿越和符号链接。 |
+| 持久保存本地应用状态 | [SQLite](/docs/guides/sqlite) | 一个由运行时管理的连接和稳定的部署卷。 |
+| 连接远程关系数据库 | [PostgreSQL](/docs/guides/postgresql) | 一个具名授权、宿主注入的 URL 和最小权限数据库角色。 |
+| 添加有边界的缓存和临时键值状态 | [Redis](/docs/guides/redis) | 一个具名授权、宿主注入的 URL 和受限命令集。 |
+| 将函数公开为 MCP 工具 | [MCP 示例](/docs/guides/examples#agents) | 注册 MCP 任务；隔离示例把密钥值保留在宿主中。 |
+| 运行生成或第三方 JavaScript | [隔离插件示例](/docs/guides/examples#isolation-and-wasm) | Linux 是生产隔离的安全目标。 |
+| 为重试、时间或人工批准暂停执行 | [持久执行](/docs/concepts/durable-execution) | 持久存储和回放安全边界。 |
+| 构建语言无关的一次性任务 | [Rust Component](/docs/guides/wasm-component-rust)或 [Go Component](/docs/guides/wasm-component-go) | 实验性的 `tysel:component/task@0.4.0`；受限 WASI。 |
+
+## 交付与运维
+
+| 目标 | 指南 | 关键限制 |
+| --- | --- | --- |
+| 选择产物与部署边界 | [部署选择](/docs/operations/deployment) | Tysel 输出可执行文件或 OCI 上下文；平台资源仍由部署方管理。 |
+| 构建单个可执行文件 | [构建单个可执行文件](/docs/getting-started#build-one-executable) | 为当前宿主或经过验证的 Linux/macOS x64/arm64 运行时构建。 |
+| 编写或生成容器镜像 | [容器镜像](/docs/guides/container-image) | 选择源码构建或仅运行时 Dockerfile；嵌入式监听器必须可从容器外访问。 |
+| 导出结构化日志、追踪和指标 | [可观测性](/docs/guides/observability) | OTLP 环境变量是当前生效的运行时控制。 |
+| 关联并安全定位生产故障 | [调试](/docs/guides/debugging) | 打包后的 HTTP 错误目前没有源码映射。 |
+| 验证并签名应用产物集 | [可复现发布](/docs/guides/reproducible-release) | 验证材料绑定单次构建；不保证跨宿主字节一致。 |
+| 诊断、升级或回滚工具链 | [安装生命周期](/docs/install#diagnose) | 托管操作会同时作用于三个开发工具。 |
+| 审查生产就绪状态 | [生产运维](/docs/operations/production) | 发布验证材料、平台范围、恢复和监控均属于准入检查。 |
+
+## 如何使用指南
+
+请针对你准备部署的版本运行命令。在每个边界验证结果，尽量减少清单权限，并沿链接进入 [API 参考](/reference)，查看默认值、错误和不支持的行为。单个片段不够时，[示例库](/docs/guides/examples)会指向完整源码目录。

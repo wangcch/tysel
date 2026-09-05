@@ -1,0 +1,234 @@
+---
+title: "项目与配置"
+description: "Tysel 项目是恰好包含一个应用清单的目录：tysel.toml 或 tysel.json。两种格式使用相同的版本化模式。"
+---
+
+Tysel 项目是恰好包含一个应用清单的目录：`tysel.toml` 或 `tysel.json`。两种格式使用相同的版本化模式。相邻的 `package.json` 可有可无，并且绝不会覆盖 Tysel 配置。
+
+## 选择所需文件
+
+Tysel 不要求固定的项目布局。清单和应用入口组成运行时项目；包管理器、编译器和测试文件都是相互独立的附加项。
+
+| 文件 | 是否必需 | 用途 |
+| --- | --- | --- |
+| `tysel.toml` **或** `tysel.json` | 必须有一个 | 定义 Tysel 应用标识、入口、执行配置、权限、限制、服务器设置和项目任务。TOML 适合简洁的手工编辑，JSON 适合原生使用 JSON 的工具；两者行为相同。 |
+| 应用入口，例如 `src/index.ts` | 必需 | 由 `app.entry` 选择的 TypeScript、JavaScript 或 Wasm Component 代码。路径和文件名均可配置。 |
+| `package.json` | 可选 | npm 依赖、编辑器包和便捷脚本。Tysel 不会将其读取为运行时配置。 |
+| `tsconfig.json` 或 `tsconfig.tysel.json` | 执行时可选 | 控制 `tysel check` 使用的附加 TypeScript 编译器检查。`tsconfig.tysel.json` 优先，可将 Tysel 检查与现有项目配置分开。 |
+| `tests/*.test.ts` | 可选 | 由原生 `tysel test` 运行器执行的测试，不需要包脚本。 |
+
+常见组合如下：
+
+| 目标 | 命令 | 结果 |
+| --- | --- | --- |
+| 原生优先、不使用 npm 的项目 | `tysel init api --package-json none --yes` | 生成清单、源码、编译器配置和测试，不生成 `package.json`。 |
+| 最精简的生成项目 | `tysel init job --template minimal --package-json none --no-tests --yes` | 只生成清单、源码和编译器配置。 |
+| 带编辑器包的 TypeScript 项目 | `tysel init api --yes` | 创建 `package.json`，其中包含版本匹配的可选开发依赖。需要时使用偏好的包管理器安装。 |
+| 在现有项目旁添加 Tysel | `tysel init . --package-json reuse` | 保留现有包文件和源文件，并使用独立的 Tysel 入口与编译器配置。 |
+| 同时添加包脚本 | `tysel init . --package-json reuse --add-scripts` | 向现有包添加不冲突的 `tysel:*` 脚本。 |
+| 由 JSON 管理配置 | 向任意命令添加 `--manifest-format json` | 生成 `tysel.json`，而不是 `tysel.toml`；其他选择仍相互独立。 |
+
+这些选项可以按需组合。例如，一条命令即可让 MCP 工具使用 JSON，同时省略 `package.json` 和测试：
+
+```sh
+tysel init tool \
+  --template mcp \
+  --manifest-format json \
+  --package-json none \
+  --no-tests \
+  --yes
+```
+
+## 清单配置什么
+
+清单按职责组织，而不是按命令组织。只有包含 `name` 和 `entry` 的 `[app]` 是必需的；其他表均可省略，并会采用文档所述的默认值。
+
+| 表 | 常用字段 | 使用场景 |
+| --- | --- | --- |
+| 根级 | `schema_version` | 固定清单约定版本。版本 1 是当前唯一接受的值。 |
+| `[app]` | `name`、`entry`、`profile` | 选择产物、源码入口，以及 `service`、`isolated` 或 `component` 执行边界。 |
+| `[server]` | `listen`、`workers`、`http1`、`http2`、`websocket` | 修改入站监听地址、并发或协议集。它不会授予出站访问权限。 |
+| `[permissions]` | `fetch`、`secrets`、`postgres`、`redis`、`fs_read`、`fs_write` | 请求宿主能力。省略即表示拒绝，部署策略还可进一步拒绝。 |
+| `[limits]` | 内存、CPU、超时、并发、请求和响应大小 | 使用显式预算替换应用资源默认值。 |
+| `[durable]` | `store`、`path` | 选择由清单配置的持久存储及其相对于运行时的 SQLite 路径。 |
+| `[observability]` | `logs`、`traces`、`metrics` | 声明日志格式和遥测端点意图。部分导出控制仍通过环境配置。 |
+| <code>{"[tasks.<name>]"}</code> | `description`、`depends`、`steps` | 无需 shell 或 `package.json` 脚本即可组合可复现的 Tysel 命令。 |
+
+[完整清单字段索引](/reference/manifest#complete-field-index)列出了每个字段的类型、默认值、含义、运行时状态和详细参考页面。它还包括[跨字段规则](/reference/manifest#cross-field-rules)，以及 HTTP 服务、隔离工具和 Wasm Component 的起始配置。
+
+不要因为所有字段都存在就复制完整清单。请从 `[app]` 开始，仅在工作负载需要偏离默认值或请求权限时添加相应表。这样，审查者可以直接从差异中看出安全和资源边界，无需在样板配置中查找。
+
+## 项目发现
+
+感知项目的命令会从当前目录逐级向上查找最近的清单，因此可以从嵌套的源码目录中运行命令：
+
+```sh
+cd my-service/src/routes
+tysel check
+```
+
+使用全局 `-C/--project` 选项，可以在不更改 shell 目录的情况下选择其他项目：
+
+```sh
+tysel -C services/api check
+tysel -C services/api build --release
+```
+
+需要指定确切文件的自动化可以使用 `--manifest`：
+
+```sh
+tysel check --manifest services/api/tysel.json
+```
+
+`-C` 与 `--manifest` 互斥。同一目录中同时存在 `tysel.toml` 和 `tysel.json` 时，发现流程会失败；Tysel 绝不会隐式选择其中一个。
+
+发现的清单所在目录会成为项目根目录。CLI 项目命令以它为基准解析应用入口、SQLite 存储和文件系统根目录。打包后的可执行文件没有外部项目清单，因此其相对运行时路径以进程工作目录为基准解析。
+
+## 创建或采用项目
+
+在终端中，`tysel init` 会提供推荐的快速开始流程和可选的自定义流程：
+
+```sh
+tysel init
+```
+
+未提供路径时，交互流程会先询问是创建新项目，还是将 Tysel 添加到当前目录。创建新项目时还会询问目标目录。提供路径即可跳过这些问题：
+
+```sh
+tysel init my-service
+```
+
+使用方向键和 Enter 选择选项。不支持光标控制的基础终端会改用编号选项。
+
+对于生成的包，`init` 会检测最近的 npm、pnpm、Yarn 或 Bun 锁文件，并询问是否安装依赖。自动化可以明确选择：
+
+```sh
+tysel init my-service --package-manager pnpm --install --yes
+```
+
+添加 `--verify` 可在安装后运行 `tysel check`。交互流程选择安装时会询问是否验证，默认为是，并且只在安装成功后运行。生成的包要求检查中的 TypeScript 部分实际运行，而不能报告 `skipped`。无包项目可以立即验证：
+
+```sh
+tysel init job --package-json none --verify --yes
+```
+
+自定义流程会选择相互独立的维度：
+
+- HTTP 服务、队列工作进程、MCP 工具或最小模板；
+- TOML 或 JSON 清单；
+- 生成的或已有的应用入口；
+- 创建包、复用包或不使用 `package.json`；
+- 是否生成测试。
+
+选择 JSON 并不意味着使用 npm；不使用 `package.json` 也不会禁用 TypeScript 应用或原生测试运行器。
+
+自动化也可通过选项指定每项选择：
+
+```sh
+tysel init worker \
+  --template worker \
+  --manifest-format json \
+  --package-json none \
+  --no-tests \
+  --yes
+```
+
+使用 `--dry-run` 可在不写入文件的情况下打印完整变更计划。添加 `--diff` 可查看完整的统一差异文件内容，添加 `--json` 可获得机器可读计划，其中的变更包含 `before` 和 `after` 值。试运行不要求安装所选包管理器。
+
+`init` 会先检查每个目标，保留现有源码和配置，将缺失的 Tysel 条目合并到现有 `.gitignore`，并拒绝符号链接指向的修改目标。如果项目创建尚未完成就失败，已写入文件会回滚。后续包安装或验证失败时，已创建项目会保留，以供检查和重试。
+
+采用现有 JavaScript 或 TypeScript 项目时，Tysel 默认使用 `src/tysel.ts` 和 `tsconfig.tysel.json`。除非通过 `--add-scripts` 明确请求带命名空间的 `tysel:*` 脚本，否则它会保留 `package.json`：
+
+```sh
+tysel init . --dry-run
+tysel init . --dry-run --diff
+tysel init . --dry-run --json
+tysel init . --add-scripts
+```
+
+在 CI 中使用 `--no-interactive` 可禁用提示，同时保留文档规定的默认值。当所有已提供的选择都应直接接受而无需确认时，使用 `--yes`。
+
+### 包集成模式
+
+`--package-json` 只控制包伴随文件：
+
+| 模式 | 行为 |
+| --- | --- |
+| `auto` | 复用现有 `package.json`；不存在时创建。这是默认值。 |
+| `create` | 创建新包文件；如果已存在则失败。 |
+| `reuse` | 保留现有包文件；如果不存在则失败。 |
+| `none` | 即使 `package.json` 已存在，也不创建或修改它。 |
+
+`--add-scripts` 要求 `auto` 或 `reuse` 模式下存在包文件。它只添加缺失的 `tysel:*` 脚本，并拒绝替换冲突脚本。对于任意组合，都可使用 `--dry-run` 查看将要创建、保留、复用或更新的确切文件。
+
+## 检查和转换配置
+
+`config` 命令使用与执行相同的发现和验证路径：
+
+```sh
+tysel config path
+tysel config validate
+tysel config show
+tysel config show --format json
+tysel config schema
+```
+
+`config path` 会报告发现的文件但不解析它，这在修复无效清单时很有用。`config validate` 会报告格式、项目根目录、可选的包伴随文件和验证状态。`config show` 会打印展开默认值后的有效清单。
+
+在 TOML 与 JSON 之间转换有效配置：
+
+```sh
+tysel config convert --to json
+mkdir -p generated
+tysel config convert --to json --output generated/tysel.json
+```
+
+未提供 `--output` 时，转换结果写入标准输出。它绝不会覆盖文件，不会隐式创建父目录，并要求文件扩展名与请求的格式匹配。Tysel 还会拒绝创建第二个根清单，以免项目发现产生歧义。
+
+`tysel config schema` 会打印内置的 Draft 2020-12 JSON Schema，供编辑器、CI 和工具集成使用。运行时验证器仍是权威依据。
+
+新建 TOML 项目会包含 `.tysel/manifest.schema.json`，并在 `tysel.toml` 中包含以下标头：
+
+```toml
+#:schema .tysel/manifest.schema.json
+```
+
+启用 Taplo 的编辑器会使用本地模式完成字段补全和模式验证，无需下载。请将该模式纳入版本控制。对于现有项目，请导出已安装工具链的模式并添加标头：
+
+```sh
+mkdir -p .tysel
+tysel config schema > .tysel/manifest.schema.json
+```
+
+新项目会让 Git 看见此模式，同时忽略 `.tysel` 中的其他内容。如果现有项目忽略 `.tysel/`，请按顺序将以下规则追加到 `.gitignore`，使其他开发者检出代码后也能使用该模式：
+
+```text
+!.tysel/
+.tysel/*
+!.tysel/manifest.schema.json
+```
+
+升级工具链后请重新导出。JSON 项目可以通过编辑器的 JSON Schema 设置关联该模式；不要向 `tysel.json` 添加 `$schema` 属性，因为清单会拒绝未知字段。模式反馈不能取代 `tysel check`：授权语法和任务依赖检查也会使用运行时验证规则。
+
+## 可复现项目任务
+
+清单可以组合 Tysel 命令，无需依赖 shell 特有的引号规则或必需的 `package.json`：
+
+```toml
+[tasks.verify]
+description = "Check and test"
+steps = [["check"], ["test"]]
+
+[tasks.release]
+depends = ["verify"]
+steps = [["build", "--release"]]
+```
+
+```sh
+tysel task --list
+tysel task verify
+```
+
+依赖会按照依赖顺序执行一次。步骤从项目根目录使用同一清单运行。某个步骤失败会停止任务。为保持执行有界且可复现，步骤不能调用其他任务或覆盖项目选择，并且只接受[清单任务参考](/reference/manifest/tasks#step-commands)中列出的命令。
+
+接下来请阅读[入门指南](/docs/getting-started)、[CLI 参考](/reference/cli)或[清单参考](/reference/manifest)。

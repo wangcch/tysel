@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { SiteLink as Link, SourceText } from "@/components/locale-provider";
 import { githubUrl } from "@/lib/shared";
 import { Wordmark } from "@/components/wordmark";
 
@@ -41,7 +41,7 @@ export function SiteFooter() {
             <Wordmark className="h-7" />
           </Link>
           <p className="mt-3 max-w-xs text-sm leading-6 text-fd-muted-foreground">
-            A native TypeScript runtime for services and agents.
+            <SourceText text="A native TypeScript runtime for services and agents." />
           </p>
         </div>
 
@@ -49,7 +49,7 @@ export function SiteFooter() {
           {columns.map((column) => (
             <div key={column.title}>
               <p className="text-xs font-medium uppercase tracking-[0.14em] text-fd-muted-foreground">
-                {column.title}
+                <SourceText text={column.title} />
               </p>
               <ul className="mt-3 space-y-2">
                 {column.links.map((link) => {
@@ -69,11 +69,11 @@ export function SiteFooter() {
                             : {})}
                           className={className}
                         >
-                          {link.label}
+                          <SourceText text={link.label} />
                         </a>
                       ) : (
                         <Link href={link.href} className={className}>
-                          {link.label}
+                          <SourceText text={link.label} />
                         </Link>
                       )}
                     </li>

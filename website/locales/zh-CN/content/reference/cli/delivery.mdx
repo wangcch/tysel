@@ -1,0 +1,84 @@
+---
+title: "构建与镜像命令"
+description: "打包应用并输出一个原生可执行文件。"
+---
+
+## `tysel build`
+
+打包应用并输出一个原生可执行文件。
+
+```text
+tysel build [ENTRY] [OPTIONS]
+```
+
+| 选项 | 含义 |
+| --- | --- |
+| <code>{"--target <target>"}</code> | 为 `linux-x64`、`linux-arm64`、`darwin-x64` 或 `darwin-arm64` 构建。默认为当前宿主。 |
+| <code>{"--profile <profile>"}</code> | 覆盖清单中的执行配置。 |
+| `--release` | 构建优化后的输出并生成发布伴随文件。 |
+| <code>{"--stub <path>"}</code> | 使用明确指定的运行时存根。跨目标构建时，其字节必须与经过验证的官方运行时一致。 |
+| `--offline` | 要求托管缓存中已有经过验证的目标运行时；绝不访问网络。 |
+| <code>{"-o, --output <path>"}</code> | 选择可执行文件路径。 |
+| <code>{"--manifest <file>"}</code> | 选择一个清单。 |
+
+`ENTRY` 覆盖 `app.entry`。发布构建会在产物旁写入校验和、兼容性、SBOM、许可证和验证材料伴随文件。
+
+当 `ENTRY` 以 `.wasm` 结尾时，`build` 会验证 Component Model 任务 ABI 和导入，保留可移植 Component，并可包含兼容的宿主专用优化元数据。生成的可执行文件仍是一次性 JSON 任务，不是 HTTP 服务器。请参阅 [Wasm Component 运行时](/reference/component/runtime#portable-component-contract)。
+
+```sh
+tysel build --release --output dist/orders
+tysel build --release --target linux-arm64 --output dist/orders-linux-arm64
+```
+
+跨目标构建要求使用托管安装和信任策略。Tysel 会验证发布信任策略、清单、归档签名、目标、版本和文件哈希，再将运行时缓存在托管根目录的 `build-targets/` 下（默认为 `~/.tysel/build-targets/`）。
+
+## `tysel image`
+
+生成以非 root 身份运行的 Linux 容器上下文，并可选择调用 Docker 完成构建。
+
+```text
+tysel image [ENTRY] [OPTIONS]
+```
+
+| 选项 | 默认值 | 含义 |
+| --- | --- | --- |
+| <code>{"--binary <path>"}</code> | 未设置 | 复制现有 Linux Tysel 可执行文件，而不构建应用。其嵌入的应用、执行配置和监听器必须与所选清单一致。 |
+| <code>{"--stub <path>"}</code> | 附带的存根 | 选择构建时使用的运行时存根。 |
+| <code>{"--tag <name>"}</code> | <code>{"<app.name>:latest"}</code> | 生成上下文后构建带标签的镜像。 |
+| <code>{"--output-dir <path>"}</code> | `dist/image` | 生成的上下文文件目标目录。 |
+| <code>{"--base-image <image>"}</code> | `gcr.io/distroless/cc-debian13:nonroot` | 运行时基础镜像。 |
+| <code>{"--builder <path>"}</code> | `$DOCKER`，然后是 `docker` | 容器构建器可执行文件，例如 `podman`。不支持嵌入参数。 |
+| `--copy-sidecars` | 关闭 | 与 `--binary` 配合，验证并将五个发布伴随文件复制到构建上下文，以供 CI 准入。记录的目标必须与 ELF 架构一致。伴随文件不会复制到运行时镜像。 |
+| <code>{"--image-version <version>"}</code> | 未设置 | 设置 `org.opencontainers.image.version`。 |
+| <code>{"--label <KEY=VALUE>"}</code> | 无 | 添加镜像标签。多个标签可重复使用该选项。不能覆盖 Tysel 生成的键。 |
+| `--context-only` | 关闭 | 只生成文件，不调用 Docker。 |
+| `--force` | 关闭 | 替换已生成的上下文文件。未复制伴随文件时，从上下文中删除过期的生成伴随文件。 |
+| <code>{"--manifest <file>"}</code> | 自动发现 | 选择一个清单。 |
+
+```sh
+tysel image --context-only
+tysel image \
+  --binary dist/orders \
+  --copy-sidecars \
+  --image-version 1.4.0 \
+  --tag example/orders:1.4.0
+```
+
+发布前请审查生成的文件。命令生成的默认镜像以非 root 用户运行，但镜像仓库身份验证、镜像签名和部署策略仍由运维方负责。
+
+构建行为：
+
+| 命令 | 构建应用 | 运行 `docker build` |
+| --- | --- | --- |
+| `tysel image` | 是，发布模式 | 是 |
+| `tysel image --context-only` | 是，发布模式 | 否 |
+| `tysel image --binary PATH` | 否 | 是 |
+| `tysel image --binary PATH --context-only` | 否 | 否 |
+
+在非 Linux 宿主上必须使用 `--binary`。它必须指向有效嵌入 TAP 元数据的 64 位小端 Linux x86-64 或 arm64 Tysel 可执行文件。嵌入的应用名称、执行配置和监听器必须与所选清单一致。容器监听器必须使用 `0.0.0.0` 或 `[::]` 以及非零端口。`component` 执行配置会被拒绝；请使用 [Component 任务](/docs/operations/component-tasks)。
+
+每个生成的 Dockerfile 都包含 `io.tysel.artifact.digest`、`io.tysel.execution-profile`、`io.tysel.runtime.version` 和 `org.opencontainers.image.title`。这些标签包含标识符，不包含密钥。产物摘要描述打包后的可执行文件，并非镜像仓库中的镜像摘要。自定义标签值会按原样保留，包括 `$` 字符。
+
+默认基础镜像检查要求存在 glibc 解释器，或使用静态 ELF。通过 `--base-image` 选择其他镜像时，Tysel 会验证 Linux ELF、支持的架构和解释器结构，但不会声称自定义镜像包含所需 libc 或共享库。
+
+请参阅端到端的[容器镜像参考](/docs/guides/container-image)、[持续交付](/docs/operations/continuous-delivery)、[生产运维](/docs/operations/production)以及[基准测试与发布验证材料](/reference/cli/evidence)。

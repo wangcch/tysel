@@ -1,0 +1,53 @@
+---
+title: "Go Component SDK"
+description: "请使用已安装 Tysel 版本的 Component 起始包中附带的来宾 SDK 源码和 WIT 包。起始模块已经使用本地替换。"
+---
+
+状态：**实验性且带版本**。请使用已安装 Tysel 版本的 Component 起始包中附带的来宾 SDK 源码和 WIT 包。起始模块已经使用本地替换：
+
+```text title="go.mod"
+require github.com/wangcch/tysel/sdk/component-go v0.0.0
+
+replace github.com/wangcch/tysel/sdk/component-go => ./sdk/component-go
+```
+
+该 SDK 目前未作为独立 Go 模块版本发布。
+
+## 来宾接口
+
+```go
+type Handler func(json.RawMessage) (any, error)
+
+func Dispatch(input string, handler Handler) (string, error)
+```
+
+`Dispatch` 检查输入 JSON、调用处理程序、编码结果，并强制实施 1 MiB 输入、1 MiB 输出和 4 KiB UTF-8 安全错误信息的边界。
+
+## 生成的绑定适配器
+
+Component Model 绑定仍由来宾应用负责。发布起始项目使用 Bytecode Alliance 的 `componentize-go`，并适配其生成的结果类型：
+
+```go
+package export_wit_world
+
+import (
+    "encoding/json"
+
+    component "github.com/wangcch/tysel/sdk/component-go"
+    witTypes "go.bytecodealliance.org/pkg/wit/types"
+)
+
+func Run(input string) witTypes.Result[string, string] {
+    output, err := component.Dispatch(input, func(input json.RawMessage) (any, error) {
+        return input, nil
+    })
+    if err != nil {
+        return witTypes.Err[string, string](err.Error())
+    }
+    return witTypes.Ok[string, string](output)
+}
+```
+
+起始项目由 `componentize-go` `0.4.1` 生成，并已包含生成的 `wit_exports.go`，因此常规构建无需重新生成绑定。
+
+经过测试的工作流请参阅[构建 Go Component](/docs/guides/wasm-component-go)；添加导入前请阅读 [Component 能力](/reference/component/capabilities)。

@@ -1,0 +1,147 @@
+---
+title: "Tysel v0.1.1 现已发布：编写 TypeScript，交付一个二进制文件"
+description: "面向服务和 AI 智能体的 TypeScript 运行时：以单个可执行文件交付，显式声明权限，并支持任务在重启后恢复。"
+author: "Tysel"
+date: 2026-09-02
+cover: "/blog/tysel-v0-1-1/hero.jpg"
+coverAlt: "Tysel v0.1 发布线以刻意裁切的编辑海报形式呈现"
+readingMinutes: 8
+tags:
+  - release
+  - typescript
+  - runtime
+---
+
+> 专注于 TypeScript 服务和智能体，明确限定运行能力与权限范围。
+
+我喜欢清楚了解自身定位，也同样清楚自身边界的开发者工具。
+
+Tysel v0.1.1 现已公开发布。它仍处于 1.0 之前：可以安装试用、评估，并参与后续设计，但尚不承诺次版本之间的 API 稳定性。
+
+Tysel 是面向服务和 AI 智能体的 TypeScript 运行时。“原生”描述宿主和交付物：TypeScript 在构建时完成检查和打包，应用 JavaScript 在嵌入式 QuickJS 隔离实例中运行，Rust 宿主管理网络、存储、机密信息、限额和调度。Tysel 不会将 TypeScript AOT 编译为机器码。
+
+它的主张很直接：**编写 TypeScript，交付一个二进制文件。** 单个二进制文件并非 Tysel 独有的能力。Tysel 将三项内容组合成一套生产模型：自包含可执行文件、默认拒绝访问的权限模型，以及能在重启后恢复的持久工作。
+
+## 一个运行时文件，一次可验证发布
+
+部署 JavaScript 应用，通常需要组装多项内容。源码或许简单，但实际部署的系统还包括运行时版本、依赖、脚本、镜像层、权限，以及应用外部的各种约定。
+
+Tysel 将这些内容收敛为一个原生产物：
+
+![Tysel 将 TypeScript 源码和清单构建为一个原生可执行文件](/blog/tysel-v0-1-1/pipeline.svg)
+
+目标机器无需单独安装 Node.js、V8、npm 或 `node_modules`。开发阶段仍可使用 TypeScript、npm 包和编辑器类型提示；变化在于，部署时不再需要另行准备这套 JavaScript 运行环境。
+
+运行应用只需要一个可执行文件。构建还会生成校验和、兼容性报告、SBOM、许可证清单和验证材料，作为用于审计和复现的独立伴随文件。这些材料随版本一同交付，但与可执行文件分开保存，便于独立查阅和审计。
+
+这一模型适合小型 HTTP 服务、队列任务处理器和定时任务、MCP 工具、隔离插件和智能体。对这些工作负载而言，通用 JavaScript 环境默认提供的许多系统访问能力往往用不上。
+
+## 参考体积与冷启动
+
+单个文件不一定很小，因此 Tysel 使用参考应用验证产物体积和启动时间。发布验证要求参考 `hello-service` 生成的**包不大于 20 MiB**，且**冷启动 p50 不慢于 15 ms**。这不是任意用户应用的体积保证；打包内容、依赖和启用的能力仍会影响结果。
+
+Tysel 0.1.1 随版本发布了 Ubuntu 24.04.4 上的原始 `hello-service` 验证材料：
+
+| 发布验证材料 | Linux arm64 | Linux x64 |
+| --- | ---: | ---: |
+| 单个可执行文件 | 15.98 MiB | 19.77 MiB |
+| 冷启动 p50 | 4.85 ms | 6.60 ms |
+| 空闲内存，PSS | 6.81 MiB | 7.36 MiB |
+
+冷启动在两次预热后测量 11 次进程启动，并在服务报告就绪时停止计时。这是启动测量，不是 HTTP 请求延迟或吞吐量。每份材料都记录产物 SHA-256、源码提交、系统和命令；可直接从发布页获取原始 [arm64 材料](https://github.com/wangcch/tysel/releases/download/v0.1.1/benchmark-evidence-linux-arm64.json)和 [x64 材料](https://github.com/wangcch/tysel/releases/download/v0.1.1/benchmark-evidence-linux-x64.json)。
+
+构建时间随应用大小和 TypeScript 检查变化。作为开发机器参考，在 Apple M5 Pro 上使用官方 Tysel 0.1.1 macOS arm64 工具链，对默认 `hello-service` 执行三次 `tysel build --release`，分别耗时 **0.24、0.33 和 0.16 秒**。测量涵盖 TypeScript 检查、打包、能力分析、可执行文件封装和发布验证材料生成，最终可执行文件约为 12.6 MiB。
+
+需要注意，示例代码包只有 143 字节，三次测量不足以代表大型项目的构建性能。这些结果只说明：使用已安装的工具链，打包这个小型应用可以在半秒内完成。测量不包含从 Rust 源码编译 Tysel 本身的时间。
+
+这些数字属于指定系统、指定版本和小型示例应用，并不代表所有配置或工作负载。因此，这些数据只能支持一个有限的结论：v0.1.1 参考服务在记录的 Linux 环境中体积为数十 MiB，并在数毫秒内达到就绪状态。
+
+## 所需能力要显式声明
+
+Tysel 默认拒绝访问。网络目标、机密信息名称、数据库、文件系统根目录和资源限额必须在带版本的 TOML 或 JSON 清单中请求。
+
+```toml
+[permissions]
+fetch = ["api.example.com"]
+secrets = ["API_TOKEN"]
+```
+
+清单并不拥有最终决定权。实际权限是应用授权、部署策略、执行配置和运行时支持的交集。添加权限无法突破更严格的部署或执行配置。
+
+这一模型对普通服务有用，对智能体软件更有价值。智能体可能需要调用模型、获取机密信息引用、访问一个 API 或写入特定存储。这些需求应成为可审查的约定，不能依赖进程环境中碰巧存在的资源。
+
+Tysel 的原生宿主管理套接字、存储连接、机密信息解析、文件系统句柄、限额和持久调度。应用 JavaScript 通过有明确访问限制的运行时 API 访问它们。换言之，权限仍由宿主管理。
+
+能力限制不等于所有执行配置都拥有同等强度的沙箱。`service` 执行配置适用于受信任的第一方代码，并与原生宿主共享进程。`isolated` 将执行移至单独工作进程，在 Linux 上增加 Landlock、seccomp 和资源限额。macOS 隔离是开发检查，而非生产安全检查；运维人员仍需负责操作系统加固和基础设施出站策略。
+
+## 运行时内置持久执行支持
+
+设想一个订单审批智能体：加载订单，调用模型创建草稿，休眠十分钟，再等待人工批准信号。AI 智能体和长时工作流有相当多的时间并未实际运行，而且进程可能在模型调用后、批准到达前重启。
+
+Tysel 为步骤、副作用、休眠、重试、回放安全的时间与随机数，以及外部信号提供明确的持久边界：
+
+```ts
+const draft = await ctx.effect("create-draft", () => createDraft(order));
+await ctx.sleep("10m");
+const decision = await ctx.waitForSignal("approval");
+```
+
+任务恢复时，已完成且已记录的边界会返回持久化结果，处理程序据此继续执行。只要结果已经保存，模型调用或外部写入就不必因为服务重启而再次执行。
+
+这项保证并不等于外部操作“恰好执行一次”。调用外部服务时仍应传入幂等键；持久存储仍是必须保护的运维状态；已部署代码必须为运行中任务保持现有持久边界的名称和顺序。默认 SQLite 存储不应由多个独立调度器同时驱动。Tysel 提供明确的恢复模型，但不声称取代分布式工作流平台。
+
+## 定位并非精简版 Node.js
+
+Tysel 以 Web API 为先：Fetch 风格 HTTP 处理程序、`Request`、`Response`、流（Streams）、Web Crypto，以及访问范围受限的 `globalThis.tysel` 宿主 API。它并非通用 Node.js 兼容层。
+
+原生插件、子进程、动态库、Node 内置模块和隐式操作系统访问都不属于应用约定。`tysel compat` 帮助团队在接入前发现依赖风险，但它只是早期报告，不能替代测试。
+
+如果唯一要求是把 JavaScript 或 TypeScript 编译为一个文件，Bun 和 Deno 也提供对应路径。如果首要要求是广泛兼容 Node.js，Node.js、Bun 或 Deno 通常更合适。Tysel 的区别是将二进制交付、显式宿主授权和持久工作流支持整合进同一套范围明确的应用模型。
+
+共有三种执行配置：
+
+- `service`：受信任的第一方代码，在进程内 QuickJS 隔离实例中运行；
+- `isolated`：单独工作进程，生产环境的沙箱检查仅在 Linux 上进行；
+- 实验性的 `component`：有边界的 Rust 或 Go Wasm Component 任务。
+
+## 从零到可执行文件
+
+已发布工具链目前支持 Linux 和 macOS 的 x64 与 arm64。Windows 用户可通过 WSL 运行。
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh
+tysel doctor --install
+
+tysel init hello-tysel --yes
+cd hello-tysel
+tysel task verify
+tysel dev
+```
+
+服务准备交付时：
+
+```sh
+tysel task release
+./dist/hello-tysel
+```
+
+`dist/` 中的文件就是应用及其运行时。在 v0.1.1 中，构建以宿主平台为目标，因此 Linux 产物应在 Linux 构建，macOS 产物应在 macOS 构建；尚未实现交叉编译。
+
+## 现在谁应该尝试 Tysel？
+
+Tysel 尚未达到 1.0，因此 API 可能在次版本之间变化。现在可以试用、评估并参与后续设计；正式采用前，仍应验证应用兼容性，以及部署和运维要求。
+
+以下场景值得认真评估 Tysel：
+
+- 应以单个可执行文件部署的 TypeScript API 或任务处理器；
+- 必须限制网络、机密信息、文件和数据库访问的 MCP 工具或插件；
+- 能调用模型、暂停等待批准、休眠、重试，并在重启后恢复的智能体；
+- 重视校验和、SBOM、兼容性报告和可复现基准验证材料的发布流水线。
+
+Tysel 希望为这类工作负载提供一条更精简、更清晰、也更容易验证的生产交付路径。
+
+是否值得采用，取决于这些取舍是否符合你的应用需求。
+
+从 [tysel.dev](https://tysel.dev) 开始。<br />
+在 [GitHub](https://github.com/wangcch/tysel) 阅读源码。<br />
+通过[快速开始指南](https://tysel.dev/docs/getting-started/)构建第一个服务。

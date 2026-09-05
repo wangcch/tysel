@@ -1,0 +1,2377 @@
+{
+  "version": 1,
+  "messages": {
+    "nav.home": {
+      "sourceHash": "3a78695388b38b5cceefaf6796b0137877514593543b91af2752d5a17e3d736c",
+      "translationHash": "203c08e0d44ac3753a3c5b96644a6e10403bc0cbc5770b55cd1f775745a0a978",
+      "status": "reviewed"
+    },
+    "nav.docs": {
+      "sourceHash": "7af023c43013b9a53fbff7dd4b5821588bba3319308878229740489152c43f6d",
+      "translationHash": "2687ccdbb1d2288a8c7867ab8a17e3a70eade5d774aafd0d7eb7b12cbf8165cd",
+      "status": "reviewed"
+    },
+    "nav.blog": {
+      "sourceHash": "8c6bc099534a0251b576f6b88bd2db124ae9497c64bd9242e92a6aec23e6a73a",
+      "translationHash": "7855e5e9727ea5b77bf16577249e0534584a5dd4e27259cbef138467154e1803",
+      "status": "reviewed"
+    },
+    "nav.reference": {
+      "sourceHash": "71bf90935fc231d20126e2087eeb583c6aa419fc3dd1b6847bfe376b9200eaa0",
+      "translationHash": "63e51325a41ffa3e76da38b0e104e00727207b6b3251c38524908b16181a7cb4",
+      "status": "reviewed"
+    },
+    "nav.examples": {
+      "sourceHash": "e68ee04dff59551b7d1ae07a2f8a00dc61d841628948da3d2781630706a05e92",
+      "translationHash": "0d53f08678d8101b0c7e5053b30224fc671c55051770ba18207435ead7ad37bd",
+      "status": "reviewed"
+    },
+    "nav.benchmarks": {
+      "sourceHash": "9f2e7732a6956e5b4fde5b5b46048b4e2fdefaa13539a3e64b5d5dee878f6ae7",
+      "translationHash": "7c185a12004ed29dce6d99e71f553484ca1dcd517be703711ab3aa8a06ef4245",
+      "status": "reviewed"
+    },
+    "ui.product": {
+      "sourceHash": "fb9ef894175c327470f768d95ca7bee65e19853a0eaace3805f8a7b8a12270da",
+      "translationHash": "aea82737cc01867d9d23f2930e810d0544d4ebab02f0eb5a75857481a4e54228",
+      "status": "reviewed"
+    },
+    "ui.source": {
+      "sourceHash": "0e570ca6fabe24f94e52c1833f3ffd25567022beb826fa16891f3322051bc221",
+      "translationHash": "41b50a9198f43fa3e6ab9ab165af12004a655480bd9d045337891d2b4ed3d896",
+      "status": "reviewed"
+    },
+    "common.getStarted": {
+      "sourceHash": "61e8d44ad423a4a0951b21b9d11440a1c23a881fe79335c367f63be251c64800",
+      "translationHash": "715ee9dc842f34e48f267f0bf3261d7980e544b26eb3d2f0ff20e19b121c4a99",
+      "status": "reviewed"
+    },
+    "ui.a.native.typescript.runtime.for.services.and.agents": {
+      "sourceHash": "bbf42448684c6a87d9145780a1207b24527d501619fb8441cb79fbdc87213298",
+      "translationHash": "b01b6229be8ca0da273d78c3a415e194f294512c8dfc0550e1c9d17f88e82b7f",
+      "status": "reviewed"
+    },
+    "home.hero.title": {
+      "sourceHash": "57dd57575413757d7169e5b6fef49cd436b1332a0ede228172596296633e13c8",
+      "translationHash": "e5a6d2a8e877ccad57ed41ffe0d647133b7b6750c21f802b5ba7adbf54316325",
+      "status": "reviewed"
+    },
+    "home.hero.ship": {
+      "sourceHash": "8a1b000300728e5f71ad9ded52e2655457f0aeb654f6faffe8812dd22940a155",
+      "translationHash": "18b18356f89f4ca2b117e1d8838a138535d4a8480f19aa91480282782659f1d2",
+      "status": "reviewed"
+    },
+    "home.hero.binary": {
+      "sourceHash": "9a3a45d01531a20e89ac6ae10b0b0beb0492acd7216a368aa062d1a5fecaf9cd",
+      "translationHash": "8db734884f7fdcd18075d8cb72cd59630d727b458addfe7610d148fe8d27162b",
+      "status": "reviewed"
+    },
+    "ui.a.native.runtime.for.services.and.ai.agents": {
+      "sourceHash": "842f81dbbef3281e535bdab64d591212749f7a7cf8ab00974922191370e6c242",
+      "translationHash": "3a28a443b6b820e8455999107e795ee065e22eaf70254382b9aa339662eefe7f",
+      "status": "reviewed"
+    },
+    "ui.read.the.docs": {
+      "sourceHash": "559b1cc46027e5bcdba787721ecd5735e1b0977234b6848452ea173f8d7bf93d",
+      "translationHash": "ac5c3de1e8bafdf9337afb07c98d319dfa1f622c2a467a015ad7a800e2c12e33",
+      "status": "reviewed"
+    },
+    "ui.web.api.first": {
+      "sourceHash": "200036f8f49021bde6d396bc9e2f028addb308423b59ab79a616a62c7aced586",
+      "translationHash": "cc424023722e9e167feb13a268a439b37768855d00268de299076c3019322108",
+      "status": "reviewed"
+    },
+    "ui.request.response.fetch.streams.and.web.crypto.not": {
+      "sourceHash": "f0c9936c640f8ccd117b7af07d8255a20ce33ea6805850182d37f0b3570fbf34",
+      "translationHash": "2bc5f6d930c8f5806758a96cc62c94cfc6b919d2b4c9786c84e0912dc18f07a6",
+      "status": "reviewed"
+    },
+    "ui.no.node.in.production": {
+      "sourceHash": "6b62639528a372a649563769ea8a854082dc9869eb59874f09f500a3ee6c86af",
+      "translationHash": "19efc51fd20c0f01304bcaf88f504d31be1e8fe91ec9cd20c79b3b6d6ba352dc",
+      "status": "reviewed"
+    },
+    "ui.the.packaged.executable.embeds.the.runtime.targets.do": {
+      "sourceHash": "f7e9d908f983667f9d5e9357eac8fb4346555957b732c26928bccb8cfba47a48",
+      "translationHash": "2012a76aeb21a77036194229d32d1ed7eb5a6ba3c420ece3f707e5e7ebd0ce67",
+      "status": "reviewed"
+    },
+    "ui.deny.by.default": {
+      "sourceHash": "26eb1bc45b534b9163b06b0f6ef8512fccfd99fe13bb603910c4e0e6905a4f8b",
+      "translationHash": "87190d1c0f80b62193e7f9e68818389cc44a03bb246046346a603f5b51d7711f",
+      "status": "reviewed"
+    },
+    "ui.network.secrets.files.and.databases.stay.closed.until": {
+      "sourceHash": "b483aed4d60269c45aa2ceeac0a7a273cbb228a3e92a2a4ab40c2f1063ffbf3e",
+      "translationHash": "03d3d85babd827b11af2cf4093886af69f165edb831a91da4eba12b27798332d",
+      "status": "reviewed"
+    },
+    "ui.durable.resume": {
+      "sourceHash": "c3bb65c1cf2535d026d07bc3e3a4653dba6f21804f1a073ff4ab2ffbe42e9295",
+      "translationHash": "f8528c3105f2419a1921aa20b2f30831bb40c4819730dc3fccf562a5acf3983c",
+      "status": "reviewed"
+    },
+    "ui.steps.effects.sleep.and.signals.persist.restarts.replay": {
+      "sourceHash": "901c7c206f8c219655bce438c2d63e62e8cf27bdecbf573e1d53556313e7489d",
+      "translationHash": "fe9bfeee3494f3b54ce9fe4b29cb700c6cfceee4890ae93b3a5d70bad471f5ac",
+      "status": "reviewed"
+    },
+    "ui.ship.one.executable": {
+      "sourceHash": "2f8517f2f7001fbb67c6a0ed1727a7c4bf4dcc04cf92e6f8cbcd7777ce1c89cb",
+      "translationHash": "873dba11128041efe3f62754238bfa6b33dd71442aca9dff8df2a38d56bda4e6",
+      "status": "reviewed"
+    },
+    "ui.typescript.becomes.an.application.package.then.a.native": {
+      "sourceHash": "efbb4a6845c2e8777213c5a74a12eb4208ebe1b56f40d14080344edd180f1c0c",
+      "translationHash": "ecb62badecf2da248e00889f72e9e62209b218caf03893187858610796a74736",
+      "status": "reviewed"
+    },
+    "ui.bound.every.capability": {
+      "sourceHash": "b7cde3fc2371f8682ad97730226151316f386e6624d1d692a042c3e6aa6a9162",
+      "translationHash": "7ce7fdc124ce6b77da13e8e0f074888e49e09739760126f78c4151e2f87455d3",
+      "status": "reviewed"
+    },
+    "ui.the.manifest.requests.authority.the.execution.profile.and": {
+      "sourceHash": "f1bfb8bf9afb9e04ec4255a80615f515a434a41e76ea8422098cf554085ed609",
+      "translationHash": "527be55cd6f0626c95ecf13e448a4df3882a469e9486041c58c390e24de760d5",
+      "status": "reviewed"
+    },
+    "ui.resume.durable.work": {
+      "sourceHash": "bf526705d7dd79221f0e41728d175ddba0ccdf80202383d3d868f6f1285dd06a",
+      "translationHash": "c0b4d2e31dab8f8bd1252dccf772b6b966e6de26a7e9aa841990a3f7f368eec3",
+      "status": "reviewed"
+    },
+    "ui.llm.call.persisted.effect.approval.restart.resume.save": {
+      "sourceHash": "f3fb4e1bc6ab80a7dd7a3b5591ab5e9b01a0c1c975e30a59cca1dac1bec3e2d6",
+      "translationHash": "69330ca1790f54025184dd547be5350b96f20ec0e9f5aefd74beb78ece416e91",
+      "status": "reviewed"
+    },
+    "ui.three.product.contracts": {
+      "sourceHash": "13fc3b3ad31ae8c776d7ff0b9774ec90c5d1ead72aac851aafc21e2b3ee627b5",
+      "translationHash": "d7360750796bb25b4185cc3e7d2f72203e8d56d417a289c7dd0e66595986188f",
+      "status": "reviewed"
+    },
+    "ui.bun.and.deno.optimize.a.general.javascript.toolchain": {
+      "sourceHash": "c2cc52ff5b034e3e7caef955985463511a7425d9dca0dd2bc54abe139426f8f0",
+      "translationHash": "e7a337c6003d351d0ccca8969ceb9171d82dd3961e3c85554880980f89800f76",
+      "status": "reviewed"
+    },
+    "ui.workloads": {
+      "sourceHash": "84bd9e2accdbd0d686efb9581b38f31553f96f6e7066a8525e9f959face102ad",
+      "translationHash": "63c2b006b0bc9cd639070c81ea6ebb841d4ba660f22ac07b906f0057fa68c32f",
+      "status": "reviewed"
+    },
+    "ui.services.agents.and.wasm.each.with.a.named": {
+      "sourceHash": "3e798bb334d16eb06e854d152f7a58943b32ad6af1d71a2978fe60d4f89debf1",
+      "translationHash": "d3b770bb5506cdd36ebf89f4954de898675dc7561520be57b302a7beb884d5db",
+      "status": "reviewed"
+    },
+    "ui.a.narrow.host.surface.not.a.kitchen.sink": {
+      "sourceHash": "4712024425bcc9639425e5525cb96f8da5c1f909b1f12c5a4d1f5362ac5d963e",
+      "translationHash": "8584a228eda58681fd818cf2e3cd4632ac3f6bf70cc137bb0a9d78c1fb7dc63b",
+      "status": "reviewed"
+    },
+    "ui.five.minutes.with.tysel": {
+      "sourceHash": "95a6bbe318a6824124c2514bcc4d89f35c0264a4bc738a86bc08a1b421cbc508",
+      "translationHash": "82bae069af079928e954a1fe90e36a434d19f8a9ab677e6eaf3102fabd2105a2",
+      "status": "reviewed"
+    },
+    "ui.one.loop.from.source.to.an.executable": {
+      "sourceHash": "0c92a3d6bbe1a9dc9088206bf09c227242e55de7ab55fe830bb1448853213dc8",
+      "translationHash": "499780e9f6c5a19e83ac3db85152f56caf9bb884e184ccc32903b232aaff788c",
+      "status": "reviewed"
+    },
+    "ui.ship.with.proof": {
+      "sourceHash": "4e295e6ad9cd2f99fd6a310ca4d9bb0d3389726741779068b9a223ee943c3f7a",
+      "translationHash": "b8da7a0091b6b6d4b43db32692735261029c06b874056e14d5f9a520141d7259",
+      "status": "reviewed"
+    },
+    "ui.every.release.carries.evidence.not.just.a.binary": {
+      "sourceHash": "d6ef02f8baf7a1c28a5d66884b8162d39cfe82e15aa03c5c312e4ec6dc440cea",
+      "translationHash": "af8a1b42098c188f5728068418f416f08cee36f1ebf60f879118909d04d4c0d5",
+      "status": "reviewed"
+    },
+    "ui.compatibility.reports.sboms.checksums.and.ci.admission.gates": {
+      "sourceHash": "64506a75ac7d5151b1dac4dee2b5486f07a17b9512c41bd9cf060d8dab50d557",
+      "translationHash": "82c7c86ee3f4cc4bf120ea86b34550f1d57404df41620ea617f516411f7fb9b6",
+      "status": "reviewed"
+    },
+    "ui.from.the.blog": {
+      "sourceHash": "47c53aa6db0a5937894f1d10bcc15abc141a14ae82646b37ce32818251a549b2",
+      "translationHash": "85be6a7cbc0c4253f09075e416d258340a57835b347ff0661afacbbfd18e73f9",
+      "status": "reviewed"
+    },
+    "ui.why.tysel.ships.a.narrower.production.contract": {
+      "sourceHash": "39f9591fa1576217c27ee170c261e7cf0d40a45b868f960187400a19be88feb7",
+      "translationHash": "3a655bf8c2726b82baf7b87bff6ed38a9d09a6ed73af87b40a88a99918c35673",
+      "status": "reviewed"
+    },
+    "ui.all.posts": {
+      "sourceHash": "7b957c9b86ed47a2cbd19e30c0f579cc84f5544f370bd1fcdf9683da25186501",
+      "translationHash": "4758179d46ff04a9afa2f8ce4f809bbfa50249d71a18f1720f55b1904fa13c08",
+      "status": "reviewed"
+    },
+    "ui.release": {
+      "sourceHash": "766c8373b9dd0be0b89657a640010806d8a4a91f38c7983c35956ef1173075db",
+      "translationHash": "5043198f477e9c2e75fd3c550a0558a7b039a6bd3820ae6b8f1aa8060d38d9da",
+      "status": "reviewed"
+    },
+    "ui.read.the.announcement": {
+      "sourceHash": "6c3d5875d96f39ce86ba2745de5a25e835e5a376e3100f3ae1eebcfeb51334fb",
+      "translationHash": "41f5ce95704da1c508fcbe8bfa0d36f9617cfd8798377b4c5ef7b8e725f8b241",
+      "status": "reviewed"
+    },
+    "ui.from.typescript.source.to.one.production.artifact": {
+      "sourceHash": "f73c4d7a44066a7dbfe619e483e08a8c54ae279652fe1aec851e2521a8699893",
+      "translationHash": "66c90ba9af6ecd5ee74ebdc54af623446d68f8800cc74cee47d9f1054e67ddd5",
+      "status": "reviewed"
+    },
+    "ui.build.your.first.service": {
+      "sourceHash": "f00343e105843754b60fe6adccae3d6596d733bde448fc39def5e12cee0896e2",
+      "translationHash": "b825f70170945ebf0056fc02406e9bb01d907f5bf46793688fdfd2000a6a9fb2",
+      "status": "reviewed"
+    },
+    "ui.run.the.durable.agent.example": {
+      "sourceHash": "14c618c0505a6e089b48832f077de8c35029f8958d711fc26d8fdb50d7157330",
+      "translationHash": "29e9e119dc0beefa0487afc4cd1b45b0f7f189c27cac84dfe15177d2683e53ea",
+      "status": "reviewed"
+    },
+    "ui.compatibility.evidence": {
+      "sourceHash": "34115cfbabdbf1bc493e2722aed1489c5c521eb761bede190b5a21908049e1f3",
+      "translationHash": "fc70102d620913e12696f0fbb788f03a9b6d703069a389036dd102a92815ad40",
+      "status": "reviewed"
+    },
+    "ui.security.model": {
+      "sourceHash": "b84c8b60d8ab4881122ef838a4f553e5a49fd4c0a7c219e31966a63689359129",
+      "translationHash": "e3d111da2cc29ee8f49a3d0489b4a31fe28cd8f4ecfc11fb6df4f7753df02682",
+      "status": "reviewed"
+    },
+    "ui.production.operations": {
+      "sourceHash": "d49e2ee43b4814f079886cd620eba0b86e3d4d32661e5a181a50d14584416035",
+      "translationHash": "53475bc157513476538f845961e5c0bee47ade4827f7b8d4bd430fb943d516fb",
+      "status": "reviewed"
+    },
+    "ui.ci.admission": {
+      "sourceHash": "ee0aadccc5fd47566230ae2ed12368dd3e8f6ecff74e8f6d217b09145f099933",
+      "translationHash": "eec7dae9acaad857451e1020d9fe596b42887bda67bfb92406d3dceb44a6d384",
+      "status": "reviewed"
+    },
+    "ui.a.fetch.handler.is.the.whole.application": {
+      "sourceHash": "e01809e2941ca73286735b8641a472a6309e711a73625bb4ed479c38a1d318c6",
+      "translationHash": "52b9fc01efb1521e00c6a97aea4bc5d706097e3391465ea3aaff970718caac5c",
+      "status": "reviewed"
+    },
+    "ui.package.the.app.and.native.runtime.together": {
+      "sourceHash": "16fefbc16b7757e1ee329efbc7ffe125cfed8513513c1ac163709c75f9f930c4",
+      "translationHash": "b4e43520fc10d5aa8a1e9590248541b37b930537ac90f82a66076e9cc7509668",
+      "status": "reviewed"
+    },
+    "ui.no.node.js.v8.or.node.modules.on": {
+      "sourceHash": "96333d7454964d41fe17c34751c739039dec98761c6b3d96a33a7ccfd4ac03fc",
+      "translationHash": "156292255531e91082e60803d0cbc1668d127d127401b6516a8d8efe2d661d4c",
+      "status": "reviewed"
+    },
+    "ui.paused": {
+      "sourceHash": "a7a9dc5bcf71adb2edc202814060a5ab6fca515382e9f1133dcc47d52d9090a2",
+      "translationHash": "eb0c326b60ae897a19080c0b21565029be8da614a7dd6ecad97da24f4cb8fc90",
+      "status": "reviewed"
+    },
+    "ui.replay": {
+      "sourceHash": "ac203c9843b5bd8c883e07039ff82820c94422010be6108bb82403ca25376a22",
+      "translationHash": "dfca64c65c59de371c4ca1d70452f2f157e0d32c3cfa6003076ea7de51b34ac3",
+      "status": "reviewed"
+    },
+    "ui.verify.the.toolchain": {
+      "sourceHash": "f6b2a3964102dd77dbb1ca5ec5914232aa4e31a7300d836162cf89a99bb62098",
+      "translationHash": "082eebaceab3e11151f9e2e7a6061d2087eec47d8b068d14c3f4e773be57eab7",
+      "status": "reviewed"
+    },
+    "ui.confirm.tysel.tysel.service.and.tysel.worker.are": {
+      "sourceHash": "ad36fb97239f2266b8989851d54ee241af052974e9a8ff90181461077cba007e",
+      "translationHash": "396b6a998c0233f4e83d26cb2727af2f51593642f9e41b5e0838b2b659cc6e20",
+      "status": "reviewed"
+    },
+    "ui.create.a.project": {
+      "sourceHash": "c52af048cebf3e0aab5a0ecbe1f83e7dee6f3b9eb1bd640768f61d6f50b3a1bb",
+      "translationHash": "43d7d2b51d75fa42d80c78b14b15b4adf4bb68483603b60972dc07ab76705ad9",
+      "status": "reviewed"
+    },
+    "ui.writes.src.index.ts.tests.and.tysel.toml": {
+      "sourceHash": "9667126a45fbffefb6a1dd0367761b759b5292766266408a8179196439117b12",
+      "translationHash": "c848ba44eb348a3391639a1305c57d29d27166c5a76afc5ec6f285f25905f9d9",
+      "status": "reviewed"
+    },
+    "ui.validate.configuration": {
+      "sourceHash": "756353471d10bffc57aca52f66fe672af778369053ff84b4e0fedf7bf59bb84a",
+      "translationHash": "5a1511251eb03d49e9d8a7e5c787e4016b84e4dbc7c4736d5f69f8a7271052bd",
+      "status": "reviewed"
+    },
+    "ui.the.manifest.is.the.contract.entry.profile.permissions": {
+      "sourceHash": "5769a82ed68c1065d1c32f621f233c2756894b8021f5940691dfb6a5fac233a7",
+      "translationHash": "04dc33b4ec06c95cb372fb63a76dfcb4114bfb0126d660559b97fa157516a9f4",
+      "status": "reviewed"
+    },
+    "ui.check.and.test": {
+      "sourceHash": "21797aea1025d4ad52f9f9a4fbe002de5153e62764057b2312a01fddc3f78f1c",
+      "translationHash": "38e7cc9d806658684af6d69e0f9fa6cdb5fae7e9a69e55e71fb7f2846abd7cbd",
+      "status": "reviewed"
+    },
+    "ui.type.capability.import.and.isolate.tests.before.you": {
+      "sourceHash": "5ff25669737a73ee48a1aaa5c83514ed76dbd9caf64210dd135ff205b3ad41f1",
+      "translationHash": "0b49421227a045fcd5b4bdd91823e669f8bf808ea4caee5ba76bc93a851ed3ca",
+      "status": "reviewed"
+    },
+    "ui.run.then.ship.one.file": {
+      "sourceHash": "b7def3a36b30f1b8922393f44fa60f327a7ce621e454d3793ea64059cb18c2a6",
+      "translationHash": "351edcb7119f273a35cdb86358a3a0c770c5833b2c9983d874d939526f9030d8",
+      "status": "reviewed"
+    },
+    "ui.reload.in.development.then.emit.one.executable.plus": {
+      "sourceHash": "905a5f4ee42dc40850a08749e637c1e07a8fe3256f819f1be05eeb546217ad97",
+      "translationHash": "b21eabf69e481f0a0c2d6089d6058bf5b8c497dac9583b14bbfa8ea7ae479f04",
+      "status": "reviewed"
+    },
+    "ui.node.js.is.optional.for.editor.declarations.the": {
+      "sourceHash": "17338faff076868f29cdfac8c5cd057bcec44232c057cc5b67f75ea7b4574240",
+      "translationHash": "70bb8a178dcc4545f726ce0ef7de15693acd932892ecb739331def9f21322b14",
+      "status": "reviewed"
+    },
+    "ui.paused.67": {
+      "sourceHash": "af0ecb7fcc51ed23deb562eaa5db4ccd9013d11b6ebeb98e1228b024fd398b04",
+      "translationHash": "de6243cf24a452e3e03f458925a0c558363f72b1d87fc13928f2e2e0cf2afd91",
+      "status": "reviewed"
+    },
+    "ui.hover.to.pause": {
+      "sourceHash": "14b554a3c3b51a08e377b511faae95042b02161c06004a96e79f15c706c9d267",
+      "translationHash": "0b15eb6a7d6fb2ddd384891e7bea5ca0502d43e8351738dce990a2e265caf05a",
+      "status": "reviewed"
+    },
+    "ui.then.run": {
+      "sourceHash": "05e8dff94109b9d4588febb3558654615f19bdf5d0aef4b0fb9ccae99e361586",
+      "translationHash": "054bff18b61a059f8a5be942096157ceb297235ab3e8c5c4b2aa303962d3002a",
+      "status": "reviewed"
+    },
+    "ui.no.rust.node.js.or.npm.on.the": {
+      "sourceHash": "9833d62805d89d5465edb6b88edc64012098963a5fe14850642a7bf93936ff4c",
+      "translationHash": "3ba0954197ab649fce1ee34c21f76631e5ed0ae46caf05cbc8860f84d5df5a52",
+      "status": "reviewed"
+    },
+    "ui.http.service": {
+      "sourceHash": "da69c27936851e07ffdd00e8302381f74f982fecf4a28dafb17d9cb28adfb740",
+      "translationHash": "66c2a80a47c7d4a8814807fa66a1e4c1ef80bd0f81cd71fabd71020923f62813",
+      "status": "reviewed"
+    },
+    "ui.a.fetch.handler.is.enough.for.a.first": {
+      "sourceHash": "3712c8ec77f549c8bde1b15bf59c148651168a41eca9cfae749e7dfed1fbe7b6",
+      "translationHash": "c219c3c53e98521f851bf987e7790a3d324a04676f55c397f0c2890b3737fc5b",
+      "status": "reviewed"
+    },
+    "ui.service.no.host.capability.required": {
+      "sourceHash": "4b694c06c3eb0fa73025fd860a4a763582f7c6a24c9ac4e31d0fc59bb9972286",
+      "translationHash": "d280971236dca7eb257db5d56fcbfc0c799b7377fa5448ab6a58e6f2a05386ae",
+      "status": "reviewed"
+    },
+    "ui.durable.agent": {
+      "sourceHash": "c8ec3f252eb6e3ad1c5d86fddf6ffb93330a071666f56994b4fd9f08198dc766",
+      "translationHash": "13478be3e70a2a40351291e30cbe5e0db11260280d0bc4f7c7778d4d6d8c2962",
+      "status": "reviewed"
+    },
+    "ui.llm.call.human.approval.then.resume.after.restart": {
+      "sourceHash": "931b5820a505aa33a9e5a5f2398fd79bb3eabc03b93e7bfc6598f5bf85af23ed",
+      "translationHash": "40f52e9f1dab49f96beaa66c4d73e340e87b1d0693fc7092d6b01c9ddd5d0788",
+      "status": "reviewed"
+    },
+    "ui.service.durable.store.llm.declared.secret": {
+      "sourceHash": "be9897120433d9578d524829e4754d933aba9d817ab4d59ed2de9e05c100ab97",
+      "translationHash": "6b60220b52d8575c6c318344a2c0fb3c385f2809d87666f64590de38c027ac38",
+      "status": "reviewed"
+    },
+    "ui.llm.call": {
+      "sourceHash": "0559f37ab89bb009218de905cade14ff1175e19fa0175e639c28eef3a59b7aa2",
+      "translationHash": "e3fee05f688708b4d123021d765a08d10d30ebdbdb6a018fc9c5b7ab127919c2",
+      "status": "reviewed"
+    },
+    "ui.generation.goes.through.the.host.model.aliases.and": {
+      "sourceHash": "9ba8cd6f7aa9d346bad5913270dc8135cc41ec3ea1ffeb7dbf27deb97cf3dea0",
+      "translationHash": "e52fa7593c889d0b363ef77199e835a65d75f4838b06f12677fa7249310140b1",
+      "status": "reviewed"
+    },
+    "ui.service.provider.config.declared.secret": {
+      "sourceHash": "9959e7fa184004c6d8d4e4af82cee1d5fa05351e7efd50782d155daf2ee29948",
+      "translationHash": "17a69691f7e818010947298ee0dbca57bb586d89b59f51e0d1c1671bfdbf502d",
+      "status": "reviewed"
+    },
+    "ui.mcp.tool": {
+      "sourceHash": "24bb4cb114e4143db8212def8eaeb96f05f9696dbbd0a17131552c4aaf8e502d",
+      "translationHash": "7d7f913591343652d0db0be36b76c2a1d0eb1b0a0540b99d90588de4a6669f19",
+      "status": "reviewed"
+    },
+    "ui.validated.json.tools.over.bounded.stdio.isolated.workers": {
+      "sourceHash": "36e48e9b8717fddc162565cf6b6a2a8654bc26363b4e0b2a535e86211b602f9c",
+      "translationHash": "f34d29890dd846019d7405a8ef8838b655434287b6d21511065cda08c938f606",
+      "status": "reviewed"
+    },
+    "ui.isolated.brokered.secret.handle.only": {
+      "sourceHash": "f098f6c16ed11d2a73f9f99b41c26b2ccc6d1fb17ef0a635f3241ba200a5dd3f",
+      "translationHash": "bb0999aa27d29877a1e20cf41ecf16a64e237c4c1297f50f0ce99e4d54bf5c66",
+      "status": "reviewed"
+    },
+    "ui.sqlite.worker": {
+      "sourceHash": "7bb7db015f47c633744ed465314cc315052c0597979aa2b3448be3e11d2c6048",
+      "translationHash": "75b1d7109b2ec92e554699306f04f193ea2225da7df2899d8a73f9443b0e3fbf",
+      "status": "reviewed"
+    },
+    "ui.local.state.through.a.runtime.owned.client.the": {
+      "sourceHash": "3f1cca10fa1691a1e54904b41532bc03ee8cb61c88d1851243eebc7942bda678",
+      "translationHash": "b9ac22db4ff3bad2cf6ff2ebf65590695868ade70edb677cfd2b389dfdb3c914",
+      "status": "reviewed"
+    },
+    "ui.service.runtime.relative.sqlite.grant": {
+      "sourceHash": "f5a156451832df39bff6f42c38bd10a3d9e4b46928b8111986d55da44b59c165",
+      "translationHash": "7e599ca113cc62d07716dcff7727477362050d111d1efd4debcf40d614654ac7",
+      "status": "reviewed"
+    },
+    "ui.postgres.service": {
+      "sourceHash": "ce127e85084df768d60a48fd08bc45b2a8a7f73e1e896f6714f5501fe85541be",
+      "translationHash": "52317b87d99cb3d6062a489d40fe827bcf7289ccc4ff399d893e71825cb33d51",
+      "status": "reviewed"
+    },
+    "ui.query.a.named.database.the.connection.url.stays": {
+      "sourceHash": "45ba38f443a710f084733c3727ebd77a4cf22f4161a717602809975a33b4fc7f",
+      "translationHash": "cc554f1659d60bf3829eee4890121042c000ea1f110db277069a6f45a092985d",
+      "status": "reviewed"
+    },
+    "ui.service.named.postgres.grant.e.g.main.read": {
+      "sourceHash": "59f8b73304ae8e27c6f98f733a786b53ca6bb59afc99e00aa3f1a98437c7e164",
+      "translationHash": "b3472ef157ed15bee4aec101e154ecd051a2d7db91e39d49864e9cddf511e448",
+      "status": "reviewed"
+    },
+    "ui.inbound.upgrades.need.an.explicit.server.flag.outbound": {
+      "sourceHash": "759300a2b7201da27ff78040dd4d6077544160db003d29f81af1ca7106996b52",
+      "translationHash": "cec23894fae68f18910a4dbef3eff1a6fd23c8ede3851765a34f52d9fd4d1eed",
+      "status": "reviewed"
+    },
+    "ui.filesystem": {
+      "sourceHash": "8230c68a6158c8ba8c1b7d5b8e0557be9564e129e15806f60dc2205a9ca5bfe7",
+      "translationHash": "47b6174788b64db59e598cc1c289856821f88550c4c4fea174c3ef031b06f6b1",
+      "status": "reviewed"
+    },
+    "ui.utf.8.read.and.write.only.beneath.manifest": {
+      "sourceHash": "25bcea61e6daee5f05dd563bd7599efc09eab6ae0cbda5dcaa273958f1e5493f",
+      "translationHash": "89ba92954be5862cc20b453a7dc1eeb0fa36444c0e90295a4fe604c59fc68fbe",
+      "status": "reviewed"
+    },
+    "ui.service.matching.fs.read.fs.write.roots": {
+      "sourceHash": "5596edde395c136312be6861fa9b5b00a9ca44b8bbd66e8604f0056c84698a20",
+      "translationHash": "5ff0e23143eea86542cd2e011319ccf5b23a5a5f642c326c54e7027a79089805",
+      "status": "reviewed"
+    },
+    "ui.wasm.component": {
+      "sourceHash": "029cb00227416d104ed05f5b6cd3aafeb1d08d16d7ba5d2c2c46edc19d37f017",
+      "translationHash": "5814672f60150245e201b1212ff652170338a8f3a7e4edf9417d40e0022861d3",
+      "status": "reviewed"
+    },
+    "ui.a.language.neutral.one.shot.json.task.through": {
+      "sourceHash": "0685d7a14916575e078cfb453df1bce947569cb255e7e5bbd7185b8eab0d0aba",
+      "translationHash": "81839dce920318e34e5ef12131d0fd69f88008fcf129d9f8369e9108c2784139",
+      "status": "reviewed"
+    },
+    "ui.component.experimental.isolated.task.trust": {
+      "sourceHash": "cede779a437b3f56c0c1e7a78334242c2bccf8f54fb1ccff737887ed56d3d68c",
+      "translationHash": "dfdf5f79c8cc2705932ba657d2066f7601d5a51649315e02a52ee89b11e232ce",
+      "status": "reviewed"
+    },
+    "ui.services": {
+      "sourceHash": "604dce445e326d952308addc99bd3d0e3ffb0ed9a455e4aa0190641fc5facccc",
+      "translationHash": "ec309ab207ef7fa31b139a743e5bf864ae84aa1ae2cdebb5d304ac05a67c58fd",
+      "status": "reviewed"
+    },
+    "ui.web.request.response.entrypoint": {
+      "sourceHash": "6375822357c7a70e470d2dc504be8bddc9e9014362f808a15881f564316cf5bd",
+      "translationHash": "816beb87d0bf183126b288ca3973b81cc6654a527f667c20d2d0bbbc9378248c",
+      "status": "reviewed"
+    },
+    "ui.inbound.upgrade.or.allowlisted.client": {
+      "sourceHash": "d7bb3100b83d6bd3abd11acff06b4fb23602c82dec00b216a61c5263df195cc2",
+      "translationHash": "1e566fe7715aa3c48872b46883cfff8adc54323a8d8624828b3abcd36a6c1599",
+      "status": "reviewed"
+    },
+    "ui.scheduled.and.queued.task.handlers": {
+      "sourceHash": "ca1f182b73222435b5d03974e1a90c58923bbd264ed7567664d97a821f24144b",
+      "translationHash": "8d50fadeaea805f17a060c6ef9cbdc2d637b4b02d843978687364b5977c9a52d",
+      "status": "reviewed"
+    },
+    "ui.agents": {
+      "sourceHash": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee",
+      "translationHash": "2df7697dbb6128781c7871082454bcfa03686558e5afe7f28f6ca66ecc3b2d1d",
+      "status": "reviewed"
+    },
+    "ui.effects.sleep.signals.resume": {
+      "sourceHash": "26d90e867875f3a0676d78319334426dd51846637bca1586d3ad5dde5f259667",
+      "translationHash": "ec8bb57c948d852b9aebd24bd4043aa83a96bc1f0639748a0c8592cc7b389ba2",
+      "status": "reviewed"
+    },
+    "ui.host.brokered.model.generation": {
+      "sourceHash": "53607d65ae8e0c56c504c25779bf18c121b328799705a8360e2d645305252800",
+      "translationHash": "c9104a971c91be12fc69bf1c244f03f63752516ed65bb5f7e3703518b15a8fdf",
+      "status": "reviewed"
+    },
+    "ui.mcp.tasks": {
+      "sourceHash": "57dd7f80a40e9157bdb37b4a704956b040e4818a934c131151dddc6be0019c4d",
+      "translationHash": "b1bc5d78c6018ab7244bf0d7bbba55bbfba1a5c57db5b31e4b05e405c6157f8d",
+      "status": "reviewed"
+    },
+    "ui.bounded.stdio.tools.with.validation": {
+      "sourceHash": "911b5517e1fc57543d6b4fea3166399513b141e4d46a99ca424a2524e60f755b",
+      "translationHash": "9ec12be4df6215fd068e35732bdd277d17a7debefa3df1ff44d2230b862c9de1",
+      "status": "reviewed"
+    },
+    "ui.host.grants": {
+      "sourceHash": "710a2414d6f457c8d339aad9520c3eb79ba4f77f8ba7d21c71d06361bffb6503",
+      "translationHash": "d048f3747d72e4c209b224b0311815385cb9dfd3a8fc09a6ce574914adfb7269",
+      "status": "reviewed"
+    },
+    "ui.opaque.handles.never.plaintext.env": {
+      "sourceHash": "7ff16fe4814a62df08124e87825b510cf8724864b41e3f47de7f5d400a8e1023",
+      "translationHash": "94c26e728b00b116d78c056df2ee3639e9f98a75357d14475ec15c44ba92c61a",
+      "status": "reviewed"
+    },
+    "ui.named.grant.bound.sql.clients": {
+      "sourceHash": "4a02e72af59f28b348cb4181b962a671549323a0459fb6b446c37fdf1dc40417",
+      "translationHash": "8ca4eb00adbb52a6e0cb9f378c8d8c6f9696a88393ac3f057b9b464de9506c40",
+      "status": "reviewed"
+    },
+    "ui.read.write.under.pinned.roots": {
+      "sourceHash": "e1c7d925d6fe680c341b27f943277ffe3b5c8dffc2fa171ce29acb927d539773",
+      "translationHash": "3256ec81a7a015f59455fd5ae7e96e513de4981b017cf7fd5cccf035cb2ddedf",
+      "status": "reviewed"
+    },
+    "ui.web.api.first.application.surface": {
+      "sourceHash": "ff525377c4b3f2a87fd0aba81f12fb2c3810a756623003e9b4ae543c873a8e27",
+      "translationHash": "b384d39cc62a93fd6d14a6eaf2be89c6479b38f6d4fa9b782fe6eefe4b216a98",
+      "status": "reviewed"
+    },
+    "ui.outbound.http.on.an.allowlist": {
+      "sourceHash": "6e1482ecd6d0b5de50f3c946d923a14f842bee41575776966029dabfa254d0dd",
+      "translationHash": "17266b523976a42a1b2dfbf3532bf5eaff2f7f0713981c41d40eb8946ecce9b7",
+      "status": "reviewed"
+    },
+    "ui.web.crypto.subset.no.node.crypto": {
+      "sourceHash": "5f107dc604a00fcff488f5e346ae7b7a97e5730e548cfb8f06d6b1f4e16ac02b",
+      "translationHash": "df57abc2cb4329e2466f8bca6db81a8fd7d5ec35dab109e7e80f7e3a0665af11",
+      "status": "reviewed"
+    },
+    "ui.wasm.components": {
+      "sourceHash": "cf0b73755c07a7ff96654eab120b2ee83d935bb475d4d882b5e93f607fd5773c",
+      "translationHash": "5814672f60150245e201b1212ff652170338a8f3a7e4edf9417d40e0022861d3",
+      "status": "reviewed"
+    },
+    "ui.one.shot.json.task.world": {
+      "sourceHash": "914eaed37b8c70679c442c9e15c0e6efdffe5f9a43eb7c689b54181167df6a9d",
+      "translationHash": "680ad4b3f363a7831d41ab37b17163ae75f4e177dd6229c1e6701329b09fcf02",
+      "status": "reviewed"
+    },
+    "ui.guest.types.and.dispatcher": {
+      "sourceHash": "4e093a9e66aeb90d5cc1d0eb4014b1c89a5020aee99b9ba2a284e3ada8d172e2",
+      "translationHash": "9e56cb668b4b03fa5b9d7c740794c39c84c00d07c2c1ed6a943edd63a02a23c8",
+      "status": "reviewed"
+    },
+    "ui.generated.bindings": {
+      "sourceHash": "dcfe8753d4ae296ce56b8b14c9cc003cab0687005c722e24d08159f0d3a54690",
+      "translationHash": "083b5f36e2e4a2c90a6c61555e48315433ee7727074e1559bfd69bd331c21946",
+      "status": "reviewed"
+    },
+    "ui.contracts": {
+      "sourceHash": "0488acc63d8b513587cc45e2d7dd7c17cb873266452b23273c6dedb651764243",
+      "translationHash": "1ff420ba0a81995a0e82d49c242b3f756592e6a3120b746a8e52c184bd9a31d1",
+      "status": "reviewed"
+    },
+    "ui.manifest.grants.and.reductions": {
+      "sourceHash": "c8842d45b26e03999907286eb25ded29d879d197e5ce7b6f6ef33caedf8cbf86",
+      "translationHash": "1e9b33e6f55ce8dda17574970398fbcfe81255d14671f470f947636e36c4cdba",
+      "status": "reviewed"
+    },
+    "ui.effective.authority.and.limits": {
+      "sourceHash": "de0f8cc21a84db4209bf4326fa0c80c70e2e1cb191a6e963e53d9961ef18d1e9",
+      "translationHash": "abce3126b6674fdde88d5f3e2f49bf1e03631549eee6fb4883fecfc838a0a930",
+      "status": "reviewed"
+    },
+    "ui.handlers.in.a.fresh.isolate": {
+      "sourceHash": "c5f76a07b6a1f4cdbda18dda3229a283f45edd3046a19479caf03be62c11f781",
+      "translationHash": "ce23cc29328bd8aa73fdaf00383141d5226d0c2bbe609012c94af8473157185e",
+      "status": "reviewed"
+    },
+    "ui.docs": {
+      "sourceHash": "e4c03b402774360f190dd276f64c35e31da74d5be25159fd3b9cbcf187ea0382",
+      "translationHash": "db01dac2e66e083ed5ea43e87d47c9e89d03c367a3f7334f381d15be48adaedc",
+      "status": "reviewed"
+    },
+    "ui.grant": {
+      "sourceHash": "4720809b310662058d7b2e39d09d099a889fcd0d55112ebe40505c408f0fc0f3",
+      "translationHash": "df29c6296d9c5d3f96b4705cbddb5b18122080b075bd695b9c43cd26d36dc6c3",
+      "status": "reviewed"
+    },
+    "ui.reference.recipe": {
+      "sourceHash": "10108e718e781016495d4d5b94b010033328ad9391ab1d2754e4b31f4ec280b9",
+      "translationHash": "9e5a64a26e2b385edfaad1dc7815c4f2fdd1b57a90edb0226ae5409629e09846",
+      "status": "reviewed"
+    },
+    "ui.lookup.by.contract": {
+      "sourceHash": "17a33b02ee66fa4004cf466f46e6783c2e71bde362d16bc5a9b90d09c07c4e24",
+      "translationHash": "209598cb7ceca4b60403335e4139ed738da02e90f1c0d7599177a74011cc94f1",
+      "status": "reviewed"
+    },
+    "ui.each.link.is.an.exact.interface.page.accepted": {
+      "sourceHash": "b8ca57ade6c423b37eff342bec7e95cf1118975e606f6c87067cb18869fbe00c",
+      "translationHash": "fd2be8a811670879ed3c62c928efa434d80fd9972f82b038d5c203494e83f3fc",
+      "status": "reviewed"
+    },
+    "ui.api.reference": {
+      "sourceHash": "80255f6096dd724d8a1af8df3e16a950c8f911e39b64b13fca9f37b6b4703dd9",
+      "translationHash": "4bd67d729e87e946cd02ed43dc8f5224cbac66b785870c425cc64069cf3f6130",
+      "status": "reviewed"
+    },
+    "ui.shell.child.processes.ffi.and.dynamic.libraries.are": {
+      "sourceHash": "8f05e766900a5f88504dc72056b8abd2e805fa7e85869c910dd8285e12406685",
+      "translationHash": "2f431640092d4ca1ca4852334bb3e8e088bb05c50857d2aa852e3f29792ddd66",
+      "status": "reviewed"
+    },
+    "ui.capability.matrix": {
+      "sourceHash": "eb92341736203e17a83c424aec01817ee196070e2b9ac7f33fa0f18c860164c8",
+      "translationHash": "6c84c4dc33e5923cbf9c69c3cc1d7adc7998a3253dbf2a9891d8f21b2cd141f2",
+      "status": "reviewed"
+    },
+    "ui.execution.profiles": {
+      "sourceHash": "3badecfaa655b088d63b8a50535ff087f58712367a8afc33608c8a9cbb7b8cfb",
+      "translationHash": "90979262caffb0bde4364d3443b673a082da20e42759414f4387fb264bcc4d56",
+      "status": "reviewed"
+    },
+    "ui.and": {
+      "sourceHash": "4aa9bfd2f175a94ad5a7cb321e1aea9790c73eb366a3415b47a00aeaa9fbf24a",
+      "translationHash": "c3828f02baf2d420a6769dbeb9f10a009d58af940521140b78cdb5318be85a23",
+      "status": "reviewed"
+    },
+    "ui.example.gallery": {
+      "sourceHash": "215c7926902602c17bc9873067ed2af24519419323645064ce51a4fa698d9b72",
+      "translationHash": "d57ab7fec9863f7dad29113b83a500158aa4c2060ccf7e59c625a6ba7d07829e",
+      "status": "reviewed"
+    },
+    "ui.open.example": {
+      "sourceHash": "4221bd94eddfd0c3e59239c077221a0bdd13b1277894db1e85de45e3af78a47c",
+      "translationHash": "e599ca46519382d4f7ea8a259160396f58fae34bd3777afbed93bfe1286741ac",
+      "status": "reviewed"
+    },
+    "ui.ci.admission.linux.x64": {
+      "sourceHash": "f6511781966a1cc6e991b4249f3eaaba293a18459a5a3dde2307412928047499",
+      "translationHash": "be7853927c46ead80023f56d8f775ffbf56370f5124d6f6abf981d0754648641",
+      "status": "reviewed"
+    },
+    "ui.clear": {
+      "sourceHash": "913a4cb91be20332f3559f8070255d7ac3e6228bb423f4441551d3f783e7d4f4",
+      "translationHash": "1e9f2561b7cf43c495c3417ea97bdebc53321d66be975b811d3bc0022c72197d",
+      "status": "reviewed"
+    },
+    "ui.sample.layout": {
+      "sourceHash": "6938543acf259ea6151fc3644b0dd6b5c3557c12572961225e78cf15765e570e",
+      "translationHash": "a0619d95793ce3c0a8346a579b1ecb03f97d9b3b7bcaa6408bad09e383720194",
+      "status": "reviewed"
+    },
+    "ui.waiting.on.ci": {
+      "sourceHash": "9062b1a5aa67db895657af0ce7617de866e65b6df04aa81bd8914eeeaeebc423",
+      "translationHash": "68e9e05455b49e451e3ce945d4bcaf35ea6f01b8d871b82ddd7bc3f34770f621",
+      "status": "reviewed"
+    },
+    "ui.not.a.ci.claim": {
+      "sourceHash": "fc92b4477445eed4e658b6ec68b9fb34c94e7b60bc3a0674d10e498d1cea4a7e",
+      "translationHash": "e7e1d4facbb12d60dc3b5d41810dbe590b9d530c7d8ec34d60552a1e19cc631d",
+      "status": "reviewed"
+    },
+    "ui.illustrative.snapshot": {
+      "sourceHash": "9318bafaf436bb5f2d33d94eb039e317b3da342ea481b68e13c7b20dedf87c6c",
+      "translationHash": "e9167cd69434044b737e049de164cb68f03ccc181c79195b3f540084b6201888",
+      "status": "reviewed"
+    },
+    "ui.ci.run": {
+      "sourceHash": "16d690be242dcd3f480a67a74158c37881bcf10b4e8d2170e72da83355271c25",
+      "translationHash": "e6c7c139aa3b27bf20c1d9ca0d340a9679ac5201c59dfb01b5c4c4aa4fa4282b",
+      "status": "reviewed"
+    },
+    "ui.fetched": {
+      "sourceHash": "0c7fcf412c36e9e1cfc3cca37cec9afedcfca86e1943f6827c36e88dfda41642",
+      "translationHash": "1aed7ae9b02052e67adb4cd3846cbd78e20a1a71a969634156c583ae0203a34a",
+      "status": "reviewed"
+    },
+    "ui.gates.stay.public.measured.cells.fill.from": {
+      "sourceHash": "d87ae556d631fbd6ae8c9b748f4aa84851078c40ed0c7c520b0bfe7f7a57fd09",
+      "translationHash": "21c5572507297ed643de735a8ca5ae2fda0321c11a52d272dbbcd6ed61bad180",
+      "status": "reviewed"
+    },
+    "ui.admit.on.p50.linux.pss.regression.budget.not": {
+      "sourceHash": "44b3448d43bfc64e0dfcff59381a28bc03e17e9a323a68f4b5046323b6263e5f",
+      "translationHash": "d94736481c9e9d824273ed3256f6be8775bf763d4826d604e2702404e1eefb66",
+      "status": "reviewed"
+    },
+    "ui.runtime.microbenchmarks": {
+      "sourceHash": "459aeab58cc38106e8d6a54c1a28177f4f5c4a7d811b1a11c8ae441e49c296ac",
+      "translationHash": "3c4cc82918f49086a5054f277cec31218f137008e2139684ffdf9e46bd7b9015",
+      "status": "reviewed"
+    },
+    "ui.same.run.not.release.gates": {
+      "sourceHash": "b3651347574a85c6688ece704730996a5aa7e4186c8dc5195aa17d0bd455657d",
+      "translationHash": "2dee81a5623311717c160dc9dc399dd25e8ee0cff3963ddf75586185267db68f",
+      "status": "reviewed"
+    },
+    "ui.observational.only.they.never.fail.a.release.and": {
+      "sourceHash": "7a26a8766baba5acede6588b6d99c770829f93b0e43b9ade0584144391b19179",
+      "translationHash": "163f17aa54395afae6b34b67f5e72ed7c09e450ca5bdd83c38a1e927fcd55752",
+      "status": "reviewed"
+    },
+    "ui.metric": {
+      "sourceHash": "2d275a74912cca2e02e6d41f9cae3a75ceef3ed0ef734eff3710e10eb7112228",
+      "translationHash": "b87e67c7dae039910f79b50feeae0daee49f29066618cf35637550c34f5a625e",
+      "status": "reviewed"
+    },
+    "ui.on.this.page": {
+      "sourceHash": "b5658fc8edda24f9c94eabac9e536e0a18e3055a8ca255f9d1b8f256ea02a6cc",
+      "translationHash": "a610e0c62b3e1e39e09d7f9d5d9e352a0770d302b31f614c5d11daf6da5e315f",
+      "status": "reviewed"
+    },
+    "ui.lock.the.environment": {
+      "sourceHash": "6efa9dcff13b5dce0b8dacc544948cd2baa9f9c8e731ea654dffe254d0f551a7",
+      "translationHash": "419ae10febd4dc3d6a75d42cdad5f40a9ef64871ecaf7c09fecd8eb4c4a057be",
+      "status": "reviewed"
+    },
+    "ui.pin.runtime.versions.and.hashes.reject.dirty.trees": {
+      "sourceHash": "a98957412275c04de56bf9ce810490a27d1236604e9e75cb20eb238ca989d686",
+      "translationHash": "57056da006793950b22dcd44e7fc55ac41246402f3a37fefd282f6ce8f441ce2",
+      "status": "reviewed"
+    },
+    "ui.rotate.every.runtime": {
+      "sourceHash": "ea5615ce7d1d5984481af5177ba84b4937dc61fc61645e5a1b1e6dd83722be0e",
+      "translationHash": "917a8c6feb19673997966737b17e348284ba90d7535c521d823d49b4677f128e",
+      "status": "reviewed"
+    },
+    "ui.run.node.js.bun.deno.and.tysel.in": {
+      "sourceHash": "fd9811e7e848e77e48ea534772fbbb1f270967c9f13dd76e87b4e019f2daa884",
+      "translationHash": "5a214bd59ff1d4ffee3551ff18853c850b181efc9faa6a92bb7e1be025723f96",
+      "status": "reviewed"
+    },
+    "ui.prove.both.architectures": {
+      "sourceHash": "7531b705e822c12c77f057f211311bb3abec079575c269d3c1489b3a1b01e6fd",
+      "translationHash": "bce2a54c6e5638660f2f785db0ee16e3a7423f31c7e845ff6dfa2d0c3343a24d",
+      "status": "reviewed"
+    },
+    "ui.complete.three.record.cycles.on.dedicated.linux.x86": {
+      "sourceHash": "4bb78e658a7b0c612eed48f69c260e4fef1c16139a054e47afd8cdfb35a07564",
+      "translationHash": "cd4723d68f7180a2546a33dc90a6360c00b2bd4903ae7b864bd182f198ddbf17",
+      "status": "reviewed"
+    },
+    "ui.replicate.externally": {
+      "sourceHash": "c20458881cdc75781cc149333632a925d18432f9647e79232f2f57caea43fc9d",
+      "translationHash": "e8e36d21cef3f634b193f7de58d74f5762ef44ffa49cbf5e83fe1bac47fa516c",
+      "status": "reviewed"
+    },
+    "ui.repeat.the.workload.from.a.separate.load.host": {
+      "sourceHash": "8284962e90724c08b616a01d870e20ed09a21864e5ced587d0b82fdf015853d1",
+      "translationHash": "aeff97c5836604973ab1f99bb2c7c9581aa25697c1a7ba71d7def96b956f725b",
+      "status": "reviewed"
+    },
+    "ui.release.guards": {
+      "sourceHash": "0439b87b137be668032149880b8ab96ed35f633abbeb017f4c4b4c7fab3e7ec0",
+      "translationHash": "5fe8a5bc4fdc76d3fee8873c84e171ffb8d44273abe6d4472e77c7aff83d5d85",
+      "status": "reviewed"
+    },
+    "ui.shown": {
+      "sourceHash": "6ba2a0e0afd03fb083223d57fd1b4497d5a6bdc48471816d2d9d82ee31481117",
+      "translationHash": "2d8911321b03b967cedca6b266889e5cda1a2998e0bef94422ff3aca0f29fa09",
+      "status": "reviewed"
+    },
+    "ui.runtime.suites": {
+      "sourceHash": "9c2c1f2e13bcb06f6cca5c38336f4d6398eb5e2dd1e124c2d3f2c8ce269be29d",
+      "translationHash": "c152e222d280ffcb5c7d61b6ac1e010c67571ae17351c82bf26bf92be5d2119b",
+      "status": "reviewed"
+    },
+    "ui.observe": {
+      "sourceHash": "744ea732e226adc1edb73aa06f0aa3e38b1f75cb52d644deadc6f2528af97853",
+      "translationHash": "b47316c0087844a78a69282a22536f45224baebdbac58a9647616e7a298caf4b",
+      "status": "reviewed"
+    },
+    "ui.cross.runtime": {
+      "sourceHash": "e398e517b2794768e213740d37445fc6710d5a11130e81117720ad59bcf24bdc",
+      "translationHash": "f5783c54e0012253cafdc4bb6ddf8770e176d89925f9935c2c44820d85132b10",
+      "status": "reviewed"
+    },
+    "ui.withheld": {
+      "sourceHash": "7f5ad98195ddf9d5da5f3bc2a67f39ed865f94200ecae8c874fac12159ca84d5",
+      "translationHash": "7019d8065b32a31a6358bde91ae3e9ab990c422997df23ee3f09dcf8c64f5f25",
+      "status": "reviewed"
+    },
+    "ui.seven.gates.ci.measured": {
+      "sourceHash": "e13e1c01a9c34499cd6f68c8d2e38d300adcfc725668782ef962494add4c2883",
+      "translationHash": "39bf2fe3a7acafbf6d26c632efc68cc23d6f1725d6a93e6be14f7aabfae1b370",
+      "status": "reviewed"
+    },
+    "ui.seven.gates.sample.layout": {
+      "sourceHash": "6f06e2763e46b1fb24e1e40d39f85a87bfdaa66626532e57b3de8bf1633cc18f",
+      "translationHash": "6eac00fed0f19daacb2e6595ec609a0e0be89c49c8abdaecb7c87de252ca8524",
+      "status": "reviewed"
+    },
+    "ui.seven.gates.waiting.on.data": {
+      "sourceHash": "c23c688c5a9d00716269c679ecbde8c8924aa00d9c8e85b914c119bb890768de",
+      "translationHash": "8c43022d72218820e16b95cef16654040b3fa3976d67d72d4ee58b6889777682",
+      "status": "reviewed"
+    },
+    "ui.illustrative.layout.only.not.a.published.ci.claim": {
+      "sourceHash": "de22b350d174aeef43d891e0767373af353c65edea634837dec6f49f3e62868b",
+      "translationHash": "b26a7013ceda3d214103a28cf56f633bb2bacdc8ece4c9112efa5417130d067a",
+      "status": "reviewed"
+    },
+    "ui.fixed.runner.regression.gates.not.a.production.performance": {
+      "sourceHash": "7ace2a6d3109d390568b67dc4a2094743d87d295952eff5fba2a04883b32f5a6",
+      "translationHash": "f86781a19eef084d5a4cd5914b7a679c473e5735a57605cc9342b7a9324a24bd",
+      "status": "reviewed"
+    },
+    "ui.ladder": {
+      "sourceHash": "df0663641d3ef583bb62c3224436d3aa97453f9c2d02e4b5a9137bf3d4332c32",
+      "translationHash": "7026276bb8e71392cf2dbc66ea1c8cb57683c890fc19fadcc7c6f2d31ba4d536",
+      "status": "reviewed"
+    },
+    "ui.reproduce.locally": {
+      "sourceHash": "3085789e06eb45405149bfaf8740e87aa81e8acc2937bcf8d2b2a32a5aa276c7",
+      "translationHash": "9e0d3d57ac8baea8f1c6a918a9a746cb1a128d369443d926985ade4457f2c1f8",
+      "status": "reviewed"
+    },
+    "ui.release.mode.clean.tree.time.gates.admit.on": {
+      "sourceHash": "28b77b6d5d35addbfb7485c0878539dff7bb0fb82e29bf5a19f07cfbf646f5b8",
+      "translationHash": "c2e9287dcba8c64813f6686a2c0ff64555c96268da5f2012816a13724664f528",
+      "status": "reviewed"
+    },
+    "ui.release.evidence": {
+      "sourceHash": "55721654f9f5ee40e2acd466f488de43bcf890ee0d7fcb20272c5bfd0708ea8c",
+      "translationHash": "9315de492d69d924f3368691e7e4469bcba0f9dfa9cd526ee56f424cb2881655",
+      "status": "reviewed"
+    },
+    "ui.performance.documentation": {
+      "sourceHash": "a1467972cbc5f4316402678b9c645ebc79b8d49e28f490586cab02e57c8e9868",
+      "translationHash": "7a3592a6fcdac023b548e1c05b56a63591bcb7cbd6a1dc990eea5127dc7c1f7f",
+      "status": "reviewed"
+    },
+    "ui.benchmark.source": {
+      "sourceHash": "a4c484f45dd2499a0651a9e83c43b8d222c84cdf80f612448753a818b61116cb",
+      "translationHash": "442282bcdf66aacc1946a87554e300056eefb3a4b04de109bde6f470ac42f8bd",
+      "status": "reviewed"
+    },
+    "ui.raw.evidence.json": {
+      "sourceHash": "f9c58cf763ac8618e83407e29fc00f4f4a1dbe47b213a62e0962dd74f7990471",
+      "translationHash": "115807bc32efff04b8832a47a8a1c674e44d62abbbde68c4d9e3f85ba88b3c9a",
+      "status": "reviewed"
+    },
+    "ui.evidence.reference": {
+      "sourceHash": "6a37785498cb7607c3d077b0884c31cc4f03beb925ab0bdaef4ed71893358643",
+      "translationHash": "e73b85b72dc84e194b83c71d9405316246b8adf37bfc3991c829d65f7f972c24",
+      "status": "reviewed"
+    },
+    "ui.cross.runtime.publication.contract": {
+      "sourceHash": "9ee489b53fba137fee0239a1bec27dc3b66dca044da12868222abbf7e3bc9d92",
+      "translationHash": "5ca938c20b4bc64f9215bed964375fdf4b642d6bfff7830e49be6fcf30b1bf42",
+      "status": "reviewed"
+    },
+    "ui.separate.bar.for.public.comparisons.not.these.ci": {
+      "sourceHash": "c11278ce947bdc509b60b3ed9bcd38d28a471db49cadaa2353a3960257605913",
+      "translationHash": "c5cce1271c8febeb7afd03380216ca5bb7f70e5e1531a152363507d3f3e46f4e",
+      "status": "reviewed"
+    },
+    "ui.expand": {
+      "sourceHash": "3532fb18834ebc5fc94c4d1c517cada1d4370cd9596ea3d42c7b2ab37381a649",
+      "translationHash": "e8dbfa14ec41a3425888152377a1a6d836fac8fca8d873fe66815fecfcc86425",
+      "status": "reviewed"
+    },
+    "ui.collapse": {
+      "sourceHash": "be6eb1fc3b05bf9dceebad2eac7841d1b2f40bda9aa2da34df8ca22af02bc3ed",
+      "translationHash": "afd4b783536b8297bb2506836727af1ccae7626a7d04e89de7ad402360e0a970",
+      "status": "reviewed"
+    },
+    "ui.no.cross.runtime.winner.is.published.yet.the": {
+      "sourceHash": "58aa9a7188761870640b58fc00b72e4235895e0bda2ccff80c7a558430391084",
+      "translationHash": "c7bd0f87b3db67e45ea21009e153b02d212e2d607c8dabd2af52535bcfedab41",
+      "status": "reviewed"
+    },
+    "ui.comparison.protocol": {
+      "sourceHash": "a0b009b08f7bc27a8f1a7601507582727f749bff3dd05c5b29290db2417a0bd7",
+      "translationHash": "68376c983def12530c4512298a9fc1b78347f06984b5d2f47181fcb27ab6b6f6",
+      "status": "reviewed"
+    },
+    "ui.looking.for.the.product.story.start.on": {
+      "sourceHash": "6954f3bcd2968bdc3e184c3a6193c6b7d4c7d7a35a6ac9d301d51694d30e51a1",
+      "translationHash": "3d2409f6905b57a15a0f520d3794fa6d33a507ae6cf11b4abcde00a8adf9c5b1",
+      "status": "reviewed"
+    },
+    "ui.post": {
+      "sourceHash": "a5554622c655c7a7e470c115f374d92595fa3b1f431dc6ee3d1edfbc103846ed",
+      "translationHash": "7d5a89f6b1894c6eb1746a11d031ad99392fbb279cc3160e153a1a1ff62597c7",
+      "status": "reviewed"
+    },
+    "ui.min.read": {
+      "sourceHash": "96e191f8496f60e94720512b8a98e046c8ea99e6da796f9e65b8bf3447757c75",
+      "translationHash": "a2aee41a94a730b1341763adfb450e3b70db05e542e40f5a65cb806b26ff8b58",
+      "status": "reviewed"
+    },
+    "ui.next": {
+      "sourceHash": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858",
+      "translationHash": "acfc4e74a650e7dfce69a54bc74065931f029c9d80e78e3e024f1474c5f2950a",
+      "status": "reviewed"
+    },
+    "ui.get.started": {
+      "sourceHash": "0ded1aba19a492beb4722449c229816b84474016a9e6165a915519a996cbf15f",
+      "translationHash": "98f5f85523380007c2c8757faafbf00d01d985023cf7ead686b6b031c60356d2",
+      "status": "reviewed"
+    },
+    "ui.install.the.toolchain.and.ship.a.hello.service": {
+      "sourceHash": "9e37d1a5935cbebb3bc3d974851db2767de24ea1f1c5f68ecdfd01d2ad4f4b6e",
+      "translationHash": "5514937a501d4e299dec44f5c72ef259a64644dfa34796c7320e611e69ee51fb",
+      "status": "reviewed"
+    },
+    "ui.read.the.docs.186": {
+      "sourceHash": "412b59669150e05afaf4671cae2d9708750732c55d290efffeec7dcf7fef80e7",
+      "translationHash": "0c25540b85ce880525f1a222f2ffc4b2a4c0326d4bcd2ee20b5f79b828428dee",
+      "status": "reviewed"
+    },
+    "ui.concepts.capabilities.durable.work.and.operations": {
+      "sourceHash": "4b8538ddea364878b545c4d77590772b4ded0496661b737286457e6253282b4c",
+      "translationHash": "d04916774268be17dc0bf6bd130369dac93af07caf79f3190652dcaa0d069156",
+      "status": "reviewed"
+    },
+    "ui.browse.the.runtime.examples.and.release.evidence": {
+      "sourceHash": "e06cc54ab8a9626bb97fab3fbd85d12dd078597028c53785b8d44a7101362146",
+      "translationHash": "a3a4a9efe1fd1066e3de1e002299b16a910376896ecd8aff5e6caf33d0a679bc",
+      "status": "reviewed"
+    },
+    "ui.all.posts.189": {
+      "sourceHash": "fcd841acd69d53eb8be1a0b20595bfcb47eba30191add482d66bb5b38b407aa0",
+      "translationHash": "dbfb8e8cb2fbc6c449cb14bff2bbfdfd87a363587d0cf76715d1433b1b1dd095",
+      "status": "reviewed"
+    },
+    "ui.tysel.blog": {
+      "sourceHash": "c4781a69f9946453fda8bfc072ae3f7cdc10489b18212fe2d05c7afe488281d1",
+      "translationHash": "174c64a6f8002bb9e85f756e3fe6f42e8ec2d07f063230e17fee1c0cdc8ad460",
+      "status": "reviewed"
+    },
+    "ui.notes.on.shipping.typescript.as.a.binary": {
+      "sourceHash": "d55523c59b2b4dd140190d5a32fd04c69bbeea2d7e436aeff02a5d3b3c8def8c",
+      "translationHash": "d61511037acb38762fab58aa64048715f6acc01f7ba4a84af1f1b8585bec5209",
+      "status": "reviewed"
+    },
+    "ui.rss.feed": {
+      "sourceHash": "c66fc686fcbea1fefcaf58cfd8fe39afbc549b5db3db7c6805f47345dbdc968d",
+      "translationHash": "729eb52a684fa315610c2ab86eead479e2d8d700491d02c25eabc40f806ea68a",
+      "status": "reviewed"
+    },
+    "ui.featured": {
+      "sourceHash": "2c8f9493f6913a4a501e7cf3e2fcbcd8685e0a3d08e864ac02a9f26228c0715a",
+      "translationHash": "24d025cb5dd1aa574c2f5a5bece362c14f49b62f5a8ac96ee55035ede8beeef7",
+      "status": "reviewed"
+    },
+    "ui.min.read.194": {
+      "sourceHash": "b337c94500c5a161f3ff55c770cf6f1df25f5e276d3b5be573aedd9a92f3a949",
+      "translationHash": "76ec1d17ead361a093441336dc3d269ad9cf695fece82510c9ca29430bb02b6e",
+      "status": "reviewed"
+    },
+    "ui.read.the.post": {
+      "sourceHash": "0ea38e24d08fe29beac39f8277aa5682dc226c563fd95019af003034a7b1fad8",
+      "translationHash": "2f8c6aabde29656f7fb7255b8e3e8d66381b0464e1fa06d65e8619a7633b6aa9",
+      "status": "reviewed"
+    },
+    "ui.earlier": {
+      "sourceHash": "e10ae990740118886b011c218c7d0777c5c203954e0038747965ddbe5aea1744",
+      "translationHash": "be1d537c0042deba644e682c297fe019521afc7ebc30ce9df410cd3ef89b2ad7",
+      "status": "reviewed"
+    },
+    "ui.fetch.style.service.on.the.web.api.runtime": {
+      "sourceHash": "0bf8224586eb87d5e339f124c0960e9214c7d330f35079a0b3dec9644e0e3385",
+      "translationHash": "155e97873ca9ed9c0f859ddb4f55e99853415889465cfc3982b7ec7fca5877ac",
+      "status": "reviewed"
+    },
+    "ui.queue.worker": {
+      "sourceHash": "9a3a9d41dba4b2372cfe8922f77b8c07efbed1767684a0e5a1569b98a0fcff1d",
+      "translationHash": "377c764f7e095722820c219b27c44269a7fe25d86bb82dc5036478f16623c8c6",
+      "status": "reviewed"
+    },
+    "ui.service.with.one.named.queue.handler": {
+      "sourceHash": "d59645140489e4d910d9953e743fff8d9b96cadcfd0743c1197abd77bdd8aaa4",
+      "translationHash": "3f95b39f8a934587f443a82f098d70f21a7fdeeec446f60ed07e5bde9426c1d3",
+      "status": "reviewed"
+    },
+    "ui.isolated.mcp.stdio.tool.with.validated.input": {
+      "sourceHash": "0d4ba324f4922a3a5d762473d12b5844b1410dad0477878792d28ea173e14d73",
+      "translationHash": "836006f11ab8c2b7e1a50713a6117f106834154c06990227f2191190a7347a18",
+      "status": "reviewed"
+    },
+    "ui.minimal.service": {
+      "sourceHash": "0677c8e7cc59722b1033b413b5fceb779568c6b3f39d0e2c1e93c5839e719d90",
+      "translationHash": "70a68fde1eb893bed56c660d7ba05f3684946dbdccf694305f39e9582ec6bea1",
+      "status": "reviewed"
+    },
+    "ui.smallest.fetch.handler.for.custom.application.structure": {
+      "sourceHash": "c88cf19ac521b40ff9f66367c8e6926df8e19e77886998400291e92a9efb2609",
+      "translationHash": "b93464b948db84b50cd0feefcbb131dcea2be44cd7ed2f9eca3e4ea9fe6a230b",
+      "status": "reviewed"
+    },
+    "ui.guide": {
+      "sourceHash": "8dd65d0952ed144ccf6e76ebf8aa45644afb2b9236762c414d07e813d42f588e",
+      "translationHash": "6eadeddb7e7047ab68755c3e205a8443064a8dc6e26ff4e39ad67209132b6319",
+      "status": "reviewed"
+    },
+    "ui.contract": {
+      "sourceHash": "a6f5b0e592fa68e4ba8014ad5f62214f41153de6a5d51c78fc6148c54a1d6deb",
+      "translationHash": "1ff420ba0a81995a0e82d49c242b3f756592e6a3120b746a8e52c184bd9a31d1",
+      "status": "reviewed"
+    },
+    "ui.create.a.starter.or.open.an.exact.example": {
+      "sourceHash": "1a947e2ea0f0c0ce15f104f03699947e64116a5dba74cce71a8247d8226a384d",
+      "translationHash": "4241d3f707225293831963511b4e155ea4730a42836c49727bdac0bfd7fc6f15",
+      "status": "reviewed"
+    },
+    "ui.use.a.built.in.template.when.starting.a": {
+      "sourceHash": "307b7b94ee3822db48622b9380591a169ff65ae0da1d71e0ae2ddfcf1fdd628e",
+      "translationHash": "aea338f13bc50801522f5216540494ab47355172d4a023753bcea441db5302cc",
+      "status": "reviewed"
+    },
+    "ui.start.from.a.built.in.template": {
+      "sourceHash": "6157896aba798d5edab6b86cf3e4ede2382e96d2f9d46d9ef7594c3f9961a5cc",
+      "translationHash": "39408b58d2656610e7f10b670c199faaa60d5f8ac317e39d499fa7ef8e70229b",
+      "status": "reviewed"
+    },
+    "ui.these.commands.create.the.project.before.validating.and": {
+      "sourceHash": "e5cd77bd4545caefe192f20bb0fb939d108d1813c5444b44a848c257f1a7e239",
+      "translationHash": "dacd3ebc90600239f7d73ea6ec62cd4e4a2cec276eb488921fc879532eafd2c2",
+      "status": "reviewed"
+    },
+    "ui.init.reference": {
+      "sourceHash": "6997ee560afb5d174273dbc1ef7c83b0a8a22e9e9b5dfd8c97b053222b445bde",
+      "translationHash": "e5e9c398c36624773d85d928206591b79465f4cefeaca8d131130f76aa4f6eb7",
+      "status": "reviewed"
+    },
+    "ui.download.version.matched.examples": {
+      "sourceHash": "f71256033c9dd5bd28c1a54edcd6d9331010c784fe3ded4f70e68c6549811598",
+      "translationHash": "b6e6366ddf806233852b9a757ef8534d1ffad6c39959e4a8dcfd400af4be8d50",
+      "status": "reviewed"
+    },
+    "ui.replace": {
+      "sourceHash": "95e154398a4bc0091aa4d6b607472ac5a89e41fbc84a3a49f823314d6de9eebc",
+      "translationHash": "75527e5b5cba4a88fed0a32427f2de96e38eb6c0e55eda07eeb57bac38550d8d",
+      "status": "reviewed"
+    },
+    "ui.with.another.directory.listed.below.this.downloads.application": {
+      "sourceHash": "e7c3bb9b8378416951b157466526fe004e43f0e44aea97bca887af64b94e69d6",
+      "translationHash": "c84c55b905c48b86ffc649d8cb769eee0aa27d639b0ac78ffbe971204c0f400e",
+      "status": "reviewed"
+    },
+    "ui.start.with.the.durable.path": {
+      "sourceHash": "69a73e079d4287cf4ef55b9273dabe931ad1ccba3d802beef23e37aaa89447bc",
+      "translationHash": "c264a672d5f19964a00f9df7179708227a794884016ddd147d389ebfda3bfa87",
+      "status": "reviewed"
+    },
+    "ui.requires.a.real.openai.compatible.endpoint.see.the": {
+      "sourceHash": "28bceecd78329f7fef56faf8f1fbb8cd9813dd0438ddb9fc7be5a3255aaaa611",
+      "translationHash": "aed80ac6c34f1d45b830ae0c79ec4a30ad79410178883d36f0443df0b88143d8",
+      "status": "reviewed"
+    },
+    "ui.development.source": {
+      "sourceHash": "fd06326eb8d1db59a2601f8c1a5875ef8228289c33f3a10fdb4112af56e7d16f",
+      "translationHash": "489ace6b5141cd711afea8658249dd3a9fc6cda07fc1213fcd6709d7dfa9223c",
+      "status": "reviewed"
+    },
+    "ui.durable.execution": {
+      "sourceHash": "b227a68dbe788dcb31076f562c0d1e5b318d093873d68136848ed90c636b5604",
+      "translationHash": "f82387b0a59c177e91c9f2fb0b89f98d81b8efbdb3cfbfe0beebddea03e0a94a",
+      "status": "reviewed"
+    },
+    "ui.durable.api": {
+      "sourceHash": "7000443298e68364d7b76d4f4dd50485fd0b5756052aee3c56e9db45901b7133",
+      "translationHash": "66c9a5bcd01922825c2b8fde3bf0ce8b78f36612248112a934aec5b79e040b94",
+      "status": "reviewed"
+    },
+    "ui.one.installed.toolchain": {
+      "sourceHash": "c78e24a3aa46af2cabb66ed78d1073aa582a544c1e85a325502c99f534371a0b",
+      "translationHash": "0b092780435e892b2da7c488afd2fcd39fe7c874322265260b57a537bf8cac99",
+      "status": "reviewed"
+    },
+    "ui.install.tysel.once.then.use.the.same": {
+      "sourceHash": "1543e67b8929aab0fdb463daf7cd14c7329373d50ccfb7ceca8f3271f61a37e2",
+      "translationHash": "9f66a8baec3aecb32d1596762c8b18338fb12087e62bc82b9ec1ef9897db0eb1",
+      "status": "reviewed"
+    },
+    "ui.command.in.every.example.project.the.managed.installation": {
+      "sourceHash": "58d60773d71bdf146a7b64370a721c46722663344841bb19bb50894af79dec02",
+      "translationHash": "c5e678f88f70c39e3e0ee5fdfe4730f861ff0057e1905fec5d0e1eeb2b8b9b6d",
+      "status": "reviewed"
+    },
+    "ui.installation.guide": {
+      "sourceHash": "d334745b85acdbfcbfe8396dfa2c463e3ba6dcd372ff3ce4ab93a1d2aca8277d",
+      "translationHash": "533e0d86c743f2a9caec9ab09028d2df55654f3c661230a65e052f5f123f7750",
+      "status": "reviewed"
+    },
+    "ui.effective.profile.default": {
+      "sourceHash": "91d045d018efbac85a1f10ad1c99b8aa3fe966074d52ba3566722f06a84dca06",
+      "translationHash": "86ee3347b2a7bdb6def163a3c95189b9880f10d368e7f75d9c976ecdf316f878",
+      "status": "reviewed"
+    },
+    "ui.supported.no.dedicated.tree.yet": {
+      "sourceHash": "084de0d0796c00154f716d048b217f722c2087239d872e287164adb0080585a0",
+      "translationHash": "5756fc7bf23d205e644794f65069e7e50089ec498238e3f4abd49c8d22adb208",
+      "status": "reviewed"
+    },
+    "ui.these.apis.ship.today.they.are.reference.recipes": {
+      "sourceHash": "ee20a2bfc89d2a7e6ef90044d8c2234d647764dc0be1e78a01b79d15826e2c1f",
+      "translationHash": "caa980760f7dd32feb9783c888d3f2b4e2e12593004fa5ac00f5f70b0804706d",
+      "status": "reviewed"
+    },
+    "ui.recipe.contract.only": {
+      "sourceHash": "1b1f633a3931c9df2a9af51660a45497cc74bd0aa6aff9a0dbdb31a5c5408260",
+      "translationHash": "ec79bbce747461eeacb7634920f9928b7e60dca8984a2c6c09a151735c19f666",
+      "status": "reviewed"
+    },
+    "ui.shell.child.processes.ffi.and.dynamic.libraries.stay": {
+      "sourceHash": "0f5cbe2227809db542955277bc012e8f3e3421547e57303ebff7bc23e838d979",
+      "translationHash": "2f431640092d4ca1ca4852334bb3e8e088bb05c50857d2aa852e3f29792ddd66",
+      "status": "reviewed"
+    },
+    "ui.and.227": {
+      "sourceHash": "6201111b83a0cb5b0922cb37cc442b9a40e24e3b1ce100a4bb204f4c63fd2ac0",
+      "translationHash": "de1d5dd076fb7a704745fca1d49d20599e9bbf5c7e859408d38d6be1260be00d",
+      "status": "reviewed"
+    },
+    "ui.docs.gallery": {
+      "sourceHash": "2749efca74dee59ebe2f12e2a1d544fda7f3809c56b3ed9695b4e766580e5505",
+      "translationHash": "a8d0c99bb51cad3c9959eceab204749152f1c8988a50f7547a0ad8ebdc1068de",
+      "status": "reviewed"
+    },
+    "ui.runnable": {
+      "sourceHash": "c687f9d17a223fc2248605e025395c9750a4a818bddbb15f463e44e87722f8fa",
+      "translationHash": "897b6105e2a58d3a15f583610c81dbb3e2743108bac357057dcfe2dfd959cc12",
+      "status": "reviewed"
+    },
+    "ui.experimental": {
+      "sourceHash": "3dc9f569422dcfdadcb2c33f3eb2ee6fcebc8ba679bd63e690f9ddd0ff7c24be",
+      "translationHash": "001a51a407db9f9a06e80c066482a107a6c1bbfb7027859805bb39564b80ae6a",
+      "status": "reviewed"
+    },
+    "ui.recipe": {
+      "sourceHash": "aec69352b5b97ce21b850a7bc1f33d93054b531e13b116f1f4ca193a33c13cbd",
+      "translationHash": "9e5a64a26e2b385edfaad1dc7815c4f2fdd1b57a90edb0226ae5409629e09846",
+      "status": "reviewed"
+    },
+    "ui.after.opening.the.example.directory": {
+      "sourceHash": "8e78901ea9f6a0040789c31cc96293c08bd58014fde06c8a92e3fddd7e429195",
+      "translationHash": "09a8af72d645ade36cedaa4c3459c30041747728fd0ae48b8890aba48d564372",
+      "status": "reviewed"
+    },
+    "common.copy": {
+      "sourceHash": "e21f935f11d7e966dbbae78da9daa378fe8142a14e7c0cd7434183005faa6c5c",
+      "translationHash": "63d90d977348ab1f9aa34ebb42b103216ce161feb0a1c08e237607bf42c3cf79",
+      "status": "reviewed"
+    },
+    "common.copied": {
+      "sourceHash": "8d525e5f158b9afe05f3122af363ac67763bdc4e1395b46597b320c289766ce3",
+      "translationHash": "8f6f8d979c981ced1cf17ae96e27690b8a33b9dff1c98c8ce651764ffe9cf235",
+      "status": "reviewed"
+    },
+    "nav.openMenu": {
+      "sourceHash": "b40b3713b43dc702682dc967ea5c2dbe20ae414c30baf100d162a8250a928065",
+      "translationHash": "edb98581834ca7fd97b73392d43fda6afe40b44b6b8d0acd7d05da1bee57b098",
+      "status": "reviewed"
+    },
+    "nav.closeMenu": {
+      "sourceHash": "6ccd5c7856042d36476ffd35a41b54518be95621cc741ac3ed55b8108ea41586",
+      "translationHash": "be0d5706c694fe18c78373a3ae36323adee9716bb1bdf45bd93ad517c6942b68",
+      "status": "reviewed"
+    },
+    "theme.light": {
+      "sourceHash": "2f740f4cf6888e99dfe73f3d6208323cb350b33a37016e1ae3367a90b3e93c84",
+      "translationHash": "a52d332cfafb32ee53a39a33b3a4b2d9de9f88a17156d627d4b14346b84232d3",
+      "status": "reviewed"
+    },
+    "theme.dark": {
+      "sourceHash": "8abe9e0ba6b6f3834c2e48d2f858557641277e2c17463e526685fe3f95967843",
+      "translationHash": "a3538a688840f49446a5ff0a1f700e024a861503a5b94f28a1052a9c6ca1ac0c",
+      "status": "reviewed"
+    },
+    "ui.tysel.workload.examples": {
+      "sourceHash": "94955e52c514165c8401812c0ce4285e4f942a27deedf38442e4e9413f939097",
+      "translationHash": "d25ed14d3c432d3295968ae987df51af694b90de5176b5ec07559db34594f460",
+      "status": "reviewed"
+    },
+    "ui.start.an.llm.draft.suspend.for.human.approval": {
+      "sourceHash": "3180a52d261b68d494408ba0ad3bd2797d2f2a0ba85099bb88c1354e11464b6a",
+      "translationHash": "a6696bcdb379d64ad53f306a8f0532e745f20c47c141f66c3917c029ee83b83d",
+      "status": "reviewed"
+    },
+    "ui.llm.secret.sqlite.durable.execution": {
+      "sourceHash": "7c9728e385ecc103c1e8d97c16494116a2ae6311dabc4910d4b9fa683c5fe507",
+      "translationHash": "477ab4e0dd9bdac609eb3b9a273293a9e3fbb010a437c6ac176f6955ea11f8ce",
+      "status": "reviewed"
+    },
+    "ui.trusted.first.party.http.apps.labels.name.the": {
+      "sourceHash": "2ee90b79dfb7dbfc27c9f88905e26e1e98b7b5612c806b834d67df91f19ec566",
+      "translationHash": "ff839f63ec68ae6365cdbe823abdc9ffc62d41ccfba1bbfed307e51850b41ae4",
+      "status": "reviewed"
+    },
+    "ui.the.service.profile.currently.defaults.to.durable.store": {
+      "sourceHash": "4469dd111df70f1c5d23c232be7904887a797c0e6a52582c487dd49eacb765e4",
+      "translationHash": "dfdb6f694d531b1b17500bc4310e4a95524b6d6820d81877b835b04d1a020c40",
+      "status": "reviewed"
+    },
+    "ui.hello.service": {
+      "sourceHash": "64c10aa4433991509ede54a05ddb8fc4b3f506fe0e347e8e5f05d635e98d19a5",
+      "translationHash": "98782b35ec3619f533bd2d7fdca0c7fe1fa576ec5df6368dd3872b1c842de8c3",
+      "status": "reviewed"
+    },
+    "ui.minimal.fetch.handler.and.one.executable.build": {
+      "sourceHash": "fe118e778973e9c3c6c15ce3e8e9b6afb2faf095e1fbddd5c4b89d1ee63f287a",
+      "translationHash": "ac4b807352e1fceb23f41ed8e7a0087ed5163f13d8ff673923adbc3ca3e7b399",
+      "status": "reviewed"
+    },
+    "ui.web.api.first.npm.router.compatibility.is.scanned": {
+      "sourceHash": "08a515cfef874e1abb16dd3935087fae9714879091676a472f733f470d8e3ef2",
+      "translationHash": "8ef56c8b4a3fdc1fbb7c1333051f085c3fabd758bdf945ebbc361c01008a01f5",
+      "status": "reviewed"
+    },
+    "ui.websocket.service": {
+      "sourceHash": "e595dd84fbca835ee0f76b9113d0cdd261ee49d6b0fa028ceb1ccc4406228ace",
+      "translationHash": "7b6d86b7064849dde16d5ba9634f97c29d40bda8f1a4b4bd782ce8d34a54de88",
+      "status": "reviewed"
+    },
+    "ui.http.1.1.upgrade.and.bounded.text.echo": {
+      "sourceHash": "6fc53f86e4899fca242b6f453f2a004171bd576f8e1ec85ecce514f83fd57157",
+      "translationHash": "d27838f0c06544981c48f84fb78905b611c348e1e544f968794f3059d4a74903",
+      "status": "reviewed"
+    },
+    "ui.http.inbound.websocket": {
+      "sourceHash": "1c7ce3a2998c9ccea71934676ab474181668742bde633274c678bec89ced7614",
+      "translationHash": "95130df1405a12b3bcf3e4e260c9b387e9c44b03f9f1c79fb6a55afe0c8233c9",
+      "status": "reviewed"
+    },
+    "ui.persistent.counter.through.a.runtime.owned.grant.bound": {
+      "sourceHash": "930c58fc444bfc940e290d051a8cab2b94df9ab21dbae296cd16e799750759bd",
+      "translationHash": "531e57eb4ac47d22392fade198dc9d7b4ec28918f7e84584b56d63dbe01e4424",
+      "status": "reviewed"
+    },
+    "ui.named.database.grant.the.url.stays.in.the": {
+      "sourceHash": "07315813db72ba2ca563eb9c7516f385a5ab90690687a5bba9b8d7a45ba426a3",
+      "translationHash": "356854c9b60a16100725f051c4e3a6ba4a0de8833359ff809dae502216caecbe",
+      "status": "reviewed"
+    },
+    "ui.redis.service": {
+      "sourceHash": "968ee1ec430ae49de7677ff8e944bec608a481392c1d5203dfdc77f2fd203be0",
+      "translationHash": "dfb31e2bb7caa7712140846e792cd9f5932109f50606d1ffeb16fc2d60ccff0e",
+      "status": "reviewed"
+    },
+    "ui.bounded.cache.operations.through.a.named.host.injected": {
+      "sourceHash": "b532a2e5160ad20a3e1c2a6ee69e7518a4355ac792cc75d79727d82acd5b4e11",
+      "translationHash": "888e08444838dfe16c3d6d6fb0dd1fbe37cb4f08ecc0bd006f3fd6f2bfd4e7ec",
+      "status": "reviewed"
+    },
+    "ui.filesystem.transform": {
+      "sourceHash": "4a881bae52f1e2f03af91ddc54f5b27d8b26b51c032c9904bef31bfea736a206",
+      "translationHash": "9cb4bb7bb9d4719163cd77f8d10420abe55527bdcacf446fdc93c75d8bd8b5d9",
+      "status": "reviewed"
+    },
+    "ui.read.and.write.utf.8.files.beneath.separate": {
+      "sourceHash": "4343845b938df4381093fe31fb231a406536e5bd8cc189751c22e54999540c10",
+      "translationHash": "88e2adc4484080ccb1ae9b2ca27b9c05d8bcaaf9a29d56949f19f4e9cdf20ce8",
+      "status": "reviewed"
+    },
+    "ui.filesystem.read.filesystem.write": {
+      "sourceHash": "64ec536b7d76d0f898c0bdfe59a38c102b2be0c79949f9a247deb6315066db6b",
+      "translationHash": "3cb4219a635c3e942e1cc84541d5630e95f8142cdf0cf08b0d814a9bae82c59d",
+      "status": "reviewed"
+    },
+    "ui.cron.and.queue": {
+      "sourceHash": "987dd3ee2485199741ef743f92a521db888ce46d139517ffe56fee4fa9ed37ea",
+      "translationHash": "48fe48acefb3bbf0c6f74b54e4d9829f4f9a8e91cc24cd71bda8366b7d9db193",
+      "status": "reviewed"
+    },
+    "ui.scheduled.and.produced.json.work.on.the.bounded": {
+      "sourceHash": "09c2c7eaa436d38711f62fa34d4aa206269d4c92399505f34ba69f4c21a26275",
+      "translationHash": "616cf9872d8495b7fac69b55b64534d5399060f461516f09eae849cae52a7866",
+      "status": "reviewed"
+    },
+    "ui.task.worker": {
+      "sourceHash": "bd398df79a9c7bca7056487902842afd5f3825da2c3500cdcd0815ef5f22339c",
+      "translationHash": "08e70042e55618407b47839d1f7fadd816dfe8b7d48f7a1c10aa1c512192c1d6",
+      "status": "reviewed"
+    },
+    "ui.utc.cron.registration.and.one.named.queue.consumer": {
+      "sourceHash": "c3c97e9db02b2db59023fc82cf88e96d444783e8ceb8597d8bcb81ccc2f867de",
+      "translationHash": "4976eba74eb6a1e8a74cccd50b27ce8054580b47ade977e84bcd8b9250e5ac75",
+      "status": "reviewed"
+    },
+    "ui.agents.and.tools": {
+      "sourceHash": "38e53cacd6b5d1619e53197f8f477080707eed3a0df086d1f87404b91c03c9cc",
+      "translationHash": "75454098975010904f282f25359acc27383b811e9f48e1dd748eb567925619f4",
+      "status": "reviewed"
+    },
+    "ui.work.that.must.survive.restarts.or.run.as": {
+      "sourceHash": "637add1d78bf742702bddd8754901937d76d875307a7d48fa7ccc9aeb71c1f16",
+      "translationHash": "cd1158ab312f26013aaf2d36a7bf09bff06f271940312098c2b2c3146bbef3bd",
+      "status": "reviewed"
+    },
+    "ui.llm.service": {
+      "sourceHash": "f7a13a7e08f1e3745f65fb3ad496f90c034460bd636ee42783bf8d985461d895",
+      "translationHash": "73e364f5db60b4251cf2e9c40a8377184aedc8b6f7707b2747d9802d7819ab3d",
+      "status": "reviewed"
+    },
+    "ui.host.configured.provider.alias.with.credential.isolation.and": {
+      "sourceHash": "a35c4594aa015ef8e2f3b27e8fa02c991d1d61f84cd97f0e7793f21a6a7f2b3c",
+      "translationHash": "02e7dd0ff57c6d4de46186ed5f38d6a2ef32ea6a616005d13f9610466cf2b9f1",
+      "status": "reviewed"
+    },
+    "ui.llm.provider.secret": {
+      "sourceHash": "8f5f5654327e2f22a5284076bfbd650086f2364e4a1878f640be98429e5e6411",
+      "translationHash": "8636ad9676a7b20ce747b29f93972d12e0e8a397e1e06691e85a8c18e0aee256",
+      "status": "reviewed"
+    },
+    "ui.validated.json.tool.over.bounded.stdio.returns.an": {
+      "sourceHash": "3d7662e29ea91fef18a86102b5746fd8b847ba6cac891e62f98213d7189f9a34",
+      "translationHash": "0365c604ee440555808585653e4ec85cc259419f41284e08889c1061ef68c88b",
+      "status": "reviewed"
+    },
+    "ui.mcp.brokered.secret": {
+      "sourceHash": "70dae95d2878b4eb014e9b3c240621071030c946b31dcbf4414fbafdcec23069",
+      "translationHash": "80920d1bf2cdfda026fc7e4164d49483fff65e923f64b9ee7867a809340008bb",
+      "status": "reviewed"
+    },
+    "ui.isolation.and.wasm": {
+      "sourceHash": "929adee0d85dda026106ab0b11ebacf038d8f30005c4dc1b5c4c7da5c2ccaf29",
+      "translationHash": "c2799ad1cf0062ca4ef3f5c6535dbcaf32d337a6f6b311b1032150821c6549ba",
+      "status": "reviewed"
+    },
+    "ui.separate.worker.process.or.a.language.neutral.one": {
+      "sourceHash": "9c6da4d30ebb3b1c668490fcead91091982c2adb501bdda29d4858c0ac76e5e0",
+      "translationHash": "cef5aa8e2eb4c7d54f876a2d23e11d6d34766426c78fd8da1c71daf48f833074",
+      "status": "reviewed"
+    },
+    "ui.isolated.plugin": {
+      "sourceHash": "b0cb0a03edea8cb33791e8e9f643c9a57105a09fe162f602f050af1896c62ade",
+      "translationHash": "bc1f9d8dc739e1948f4f07ec8ed3e5662718d65509608c01b87322502bf8acf0",
+      "status": "reviewed"
+    },
+    "ui.fetch.handler.under.the.isolated.profile.manifest.grants": {
+      "sourceHash": "2253cb9f8e26a0d06544b9ba8906c7292d4b327cc6b6fe0c4870f33fc4cb2061",
+      "translationHash": "bff96dd1d46125f53aaeb0eadbfd8924ebf422e441d6ea3d104d489db9dded6f",
+      "status": "reviewed"
+    },
+    "ui.host.capabilities.denied": {
+      "sourceHash": "87cc7b46f9710676ae92887f3d432bcc594e611f5da9de67e6267407f335cd6a",
+      "translationHash": "aa8ab23c3b53d9c856aab393bed3b443350317066ec3104edaac7d9f9510c8b5",
+      "status": "reviewed"
+    },
+    "ui.rust.component": {
+      "sourceHash": "a8586d9f45293a546b19b1f18a55837d224219367b35318e2fccfa4d7859e540",
+      "translationHash": "01dbfa49d39b3bdcfeac4ccc8a432d570de3eee5a4519d2ed36b84ab8373c944",
+      "status": "reviewed"
+    },
+    "ui.one.shot.json.task.via.tysel.component.task": {
+      "sourceHash": "b8aa50be91eae853a0bf1521a0bcaf3cc2c450d6c2f39ce377561acd20c8a94c",
+      "translationHash": "0258e34a6ba789ec91ab578b897dc2c798af9858cd187dd11c9dc7a712aa14d8",
+      "status": "reviewed"
+    },
+    "ui.json.task.no.ambient.wasi": {
+      "sourceHash": "c3db0df415e5be0ebb0a920f98e3255b936e310d1a415afa4d3315baae240421",
+      "translationHash": "9db287f464f011749da2bb63c72f44a63fd31ec2f426090960549eb4ae344b8f",
+      "status": "reviewed"
+    },
+    "ui.after.building.the.rust.starter": {
+      "sourceHash": "d7132b52f16b3a7d3829c565fa19ef4b02e3288136d27f6a9d939555c47b4e14",
+      "translationHash": "ae08c027c3172eb53d797e59a75ea2a3d99f553d81c72abf1af8cfc497cdccdb",
+      "status": "reviewed"
+    },
+    "ui.starter.guide": {
+      "sourceHash": "2aa9b6d97eb12f0fed81176947b6abfa94c3640ad27863f30188314902069369",
+      "translationHash": "a2497faee1604a96b299faede92fe3f949a37da21c25b9daca65b0a71db27db1",
+      "status": "reviewed"
+    },
+    "ui.go.component": {
+      "sourceHash": "4fa84cfdbeaab45187f676c0f71803968c73dd3909c7ffb37fd7a8463eb7a9c8",
+      "translationHash": "0567e2a608a84c8cd2feafe6e8f69d7c3da766eacc4a5d158eceb03aadfb3cf6",
+      "status": "reviewed"
+    },
+    "ui.same.component.world.with.committed.go.bindings": {
+      "sourceHash": "3e7d23cfc20ed894c438f563d0a464f2598154bc0a791838272be67c9462424d",
+      "translationHash": "96e29b0427d23332b7b5365721f6c3d61cffdac8972d45625860a9194fc0bd00",
+      "status": "reviewed"
+    },
+    "ui.after.building.the.go.starter": {
+      "sourceHash": "5bb8eefe9bd356562e4bc099aeafc82c53d95e0300452cb482fd4b587358b0c2",
+      "translationHash": "8e026add4b26c329843765c4d1cca1a85beef965be9e0959aaa87e623d638e17",
+      "status": "reviewed"
+    },
+    "ui.handler.tests": {
+      "sourceHash": "f220544341503c301de64e87b89173a85b0977cd6e9869252fd5300d23a6ac42",
+      "translationHash": "3e0af9dfb7c4bee19b90a5f1df3206e5486a111be09b26f7591aa01ce67cdeb4",
+      "status": "reviewed"
+    },
+    "ui.invoke.fetch.handlers.in.a.fresh.isolate": {
+      "sourceHash": "a8a9366abf38de2a14e5c064b2fc646c4bea8e7662fd251bbad6beea929c4dc3",
+      "translationHash": "0c2452ac5b752ea7136aa8646c05298a099fe8551227f8799e49cbb0ac53c690",
+      "status": "reviewed"
+    },
+    "ui.fresh.startup": {
+      "sourceHash": "690a6e39e681a7c28f0e64ee6bad81778d962d1f4848a106981d9747065b471e",
+      "translationHash": "4cb1fa51c81d3f1de9d8474b26a645b239f6abb53a77922373f25e074cda7a75",
+      "status": "reviewed"
+    },
+    "ui.p50.spawn.listen.2.warm.ups.11.samples": {
+      "sourceHash": "02d63b0ffa9796fc33ec4d6de242b98468e204bef95b6bcd3a8d0c1b4eb1b475",
+      "translationHash": "f1987f9c181773af192a8a7ad69a7d921866fe43e7fb679a82c325b524fbbcf0",
+      "status": "reviewed"
+    },
+    "ui.idle.pss": {
+      "sourceHash": "281b79106e55cb2c5a6e2b8c5168ee4f3636bb73be696ba1f9bc49957df5c674",
+      "translationHash": "3f28f5b161833c043876086c9b73cfda1c777a1e270034d1a56676c29474fbd7",
+      "status": "reviewed"
+    },
+    "ui.single.pss.sample.400ms.after.listen": {
+      "sourceHash": "782e20dfbb0dc8cf007377214a60a6606d25d4f6173ad10a8fc73fb0edb2c434",
+      "translationHash": "bdde2a89ef37865fb0be9fe26dbde8fae42702b5c07044d124d2f5d566c371d4",
+      "status": "reviewed"
+    },
+    "ui.executable.size": {
+      "sourceHash": "5f4a73eb02cd08f2d7217d2d24b330a5c8d8ddbfeb0b5ebe04f9d9bcd06a955e",
+      "translationHash": "a592d8919177b0a29e362e23949c4d88be19eec2c9dbf04bc5aee0f33a4fc8c6",
+      "status": "reviewed"
+    },
+    "ui.uncompressed.on.disk.hello.service.binary": {
+      "sourceHash": "435bc11a6ae28fca29fc9d09f865a2adf23146244cab2d0895f685ae169cbac0",
+      "translationHash": "d7798166148f331855bf7634b311cfec1bf17230338090a110ae442dc6f49f1b",
+      "status": "reviewed"
+    },
+    "ui.isolate.create": {
+      "sourceHash": "633d19c400f5f6ca291be3fbe187d4dc88be3fedda1854822b7c0439942ef550",
+      "translationHash": "9aa821be53f3010efd3679d110296b64847b05f3182d1fc92ae2dc6a657e4060",
+      "status": "reviewed"
+    },
+    "ui.p50.in.process.create.not.pool.reuse": {
+      "sourceHash": "46e53e712e504e1e1dd331353c98aee4abea804c0a83158786277646ce09a169",
+      "translationHash": "a0060b725ac7a74dec828ecdefb58cbcf2370d3e4b1d68493169261c85b12a8d",
+      "status": "reviewed"
+    },
+    "ui.reuse.growth": {
+      "sourceHash": "7e6924afc477ebf15f4005b2b007e808890b498bae2f296386907245da826917",
+      "translationHash": "ddae6b3f1b004536e877a3da02fbfda734f04922c497724bf6b8af1f274e5ecd",
+      "status": "reviewed"
+    },
+    "ui.single.before.after.pss.delta.1.000.reuses": {
+      "sourceHash": "de49aab07b53d910112e617781929aba85f6328c3647151c6cb0cec86a444dda",
+      "translationHash": "aee703b9178915002b4f0df508b1e6e193411d2639934a0e3d59b162ec18dcef",
+      "status": "reviewed"
+    },
+    "ui.queue.delta": {
+      "sourceHash": "f0264f5c561ed00f0e52e89905538180d134ac517e56d2f18b331bf844f4c924",
+      "translationHash": "102869ad30485df28df68b98ed440b08799a9da8efbcffaf2e72407287da5490",
+      "status": "reviewed"
+    },
+    "ui.in.memory.scheduler.pss.delta.10k.tasks": {
+      "sourceHash": "af38273f9dc0c978c88214a7ecd34442b76b789cde012ccd2ecfbd231b4470ef",
+      "translationHash": "61fc5e4eb5e8a1be53e66bf358544e9e3d068f0281cf5a1bdaff854fa104924d",
+      "status": "reviewed"
+    },
+    "ui.p50.on.in.memory.sqlite.not.disk.or": {
+      "sourceHash": "04013450cd9d2418aed9cb5a370a87dcd2336e96b512494fe6b04db7a5c0f330",
+      "translationHash": "c7d8c9cd1752634019d1097b4ead265da4e96516226a067fd9f82d1952c333b1",
+      "status": "reviewed"
+    },
+    "ui.isolates": {
+      "sourceHash": "9197b0aceafb13b0584337ce4a5d942961322fb5da85ada63f9d27163893675d",
+      "translationHash": "8584932e293ef8638bedc956b1e0f846d4c7295b710770b10fa7cdb2176b9a62",
+      "status": "reviewed"
+    },
+    "ui.single.host.lifecycle.microbenchmarks.process.spawn.request.dispatch": {
+      "sourceHash": "4f6b340d948ab84032d7f8f8bb69c35c7c493074387caa07b07426c1e4efff55",
+      "translationHash": "ed7d7b4894a44ea42e01e6f91505223c84d22f3e76438e86fbdf7ee1ee97d248",
+      "status": "reviewed"
+    },
+    "ui.worker.process.spawn": {
+      "sourceHash": "42afa3c930c54bc5e963ae6ab48a725af7e907a817d1a6e1796a2d2837a3f824",
+      "translationHash": "6f94568adacb226de6e35d993573e65d9a7f2564eb8a11d9e5ec7cecec725373",
+      "status": "reviewed"
+    },
+    "ui.p50.supervisor.spawn.worker.ready": {
+      "sourceHash": "a287b5db00694956343bbe498e032e043cad71c04dd9da6d094f6ea00c038c40",
+      "translationHash": "7781b513dff38093ed8e8f42bff620cd5021cf359c489fe76899f641b23b037e",
+      "status": "reviewed"
+    },
+    "ui.warm.pool.request": {
+      "sourceHash": "b20c267e10dddd5ff262d81d4271197f9b2523a4b19c33a72be90943cafae916",
+      "translationHash": "5e4806a6465f7105866878c9f695e2ba2c80edb3f45b2a00e3249f323a88cfb7",
+      "status": "reviewed"
+    },
+    "ui.p50.full.request.through.a.pre.warmed.isolated": {
+      "sourceHash": "6d6282761ff2ea8eeb16b35b41b2ca8279ab67bc985f0d64852d42161d2efa58",
+      "translationHash": "5880983c0f69183d99474767611575c57768198093ebe87376693d1febe9956d",
+      "status": "reviewed"
+    },
+    "ui.crash.replace": {
+      "sourceHash": "45a7a41a9dccb9dad9b8e162b94978ba87eaad35a3a5cdb171f55019f52dedb4",
+      "translationHash": "2718a45df494eebb7eb67b0b7dee7021851c52d74518dc285b4760cb1aceb15b",
+      "status": "reviewed"
+    },
+    "ui.p50.replacement.after.isolate.crash": {
+      "sourceHash": "a81d54a1a899d1fff27cc3b6b47fe0824aa77536e8ef8496be01725617926bc1",
+      "translationHash": "45f2d09db47e4320f812a1f784277500fb549a7dc067c571f9cc6793a4283889",
+      "status": "reviewed"
+    },
+    "ui.tasks": {
+      "sourceHash": "b3a60e61a5233d0506ac737405a2a45280349683cac68722f18d0b73eb495ef4",
+      "translationHash": "5253040db8643c857d0bd7823551422f0c2f91855d0d3656b4efd8b30b3edb95",
+      "status": "reviewed"
+    },
+    "ui.in.memory.scheduler.microbenchmarks.not.database.or.distributed": {
+      "sourceHash": "9b5917394eed1cbfa507b6af4323817b76ad0b3b161223f005bc772945df8e92",
+      "translationHash": "d82c8e55974c840d908fa98f0614a5b856f5dcdc6dde4c3cc6ac7c4b0bc83023",
+      "status": "reviewed"
+    },
+    "ui.enqueue.10k": {
+      "sourceHash": "2f3db5f08348dbb574f885ccec766b70d1733711763dbc622fd0df0ec8923ee4",
+      "translationHash": "167d55f651179dc8aaee39928278e7955940ea86825fb511ba3c10abde599a22",
+      "status": "reviewed"
+    },
+    "ui.p50.time.to.enqueue.10.000.in.memory": {
+      "sourceHash": "5285834090b74cf06ca2715f8059b6115dc9a8c3a00bf0845bf3462dbbc8ef65",
+      "translationHash": "70be4f02d06aa5590449242108fe3bf02a63db5727d02f4de9635b13fce4c9d8",
+      "status": "reviewed"
+    },
+    "ui.claim.commit": {
+      "sourceHash": "9d191caf917851a362148cb4bec07ab5c4e7ae184f3245cb3af7bfe8d7923a84",
+      "translationHash": "d0e8419044560f4564a955d82e08a6241f43cb8b59d337fb476fe54d9965027e",
+      "status": "reviewed"
+    },
+    "ui.p50.claim.commit.for.1.000.in.memory": {
+      "sourceHash": "6f7c8b470ecf6e04a93f7ffbeea291fc894792b355c7d96d0764f43de7c40c46",
+      "translationHash": "46c450aa0d67b3a71aa733e222370c6a77758e29980d507a2a201d188ac190a9",
+      "status": "reviewed"
+    },
+    "ui.crash.requeue": {
+      "sourceHash": "eaac42d5a4e09c081550cc1856cd7a269fb537fefc31b50f2e1cdaed2735de13",
+      "translationHash": "4f89fc1043ef2a32f3fb68b6be20756c0f64c58ab9f127a05c43cf872f1a576b",
+      "status": "reviewed"
+    },
+    "ui.p50.requeue.after.worker.crash": {
+      "sourceHash": "90f85e69f2057715df7717d10b1b620937a98bc1b9b24e66dc9ec158fedd189a",
+      "translationHash": "9297a4ad40e48bffe77150a46efeb1e4682e0880ec69a0a492ac6fafaf7dd078",
+      "status": "reviewed"
+    },
+    "ui.durable": {
+      "sourceHash": "37c6e47e54638c39a92ff4beef364a5c857df2ae8b732997d242969f2b211d66",
+      "translationHash": "f82387b0a59c177e91c9f2fb0b89f98d81b8efbdb3cfbfe0beebddea03e0a94a",
+      "status": "reviewed"
+    },
+    "ui.in.memory.sqlite.except.the.explicitly.file.backed": {
+      "sourceHash": "7beef663edbad358e4fdb3404946e7f772d6d16ef0c7a05de5d285a3fb41da52",
+      "translationHash": "ef556109975c4b08d1c15968d871dac8e2d1524dd18441068e14637dc0cb84c9",
+      "status": "reviewed"
+    },
+    "ui.sqlite.append.32.events": {
+      "sourceHash": "f788095db07b354d39ddd0358f45963d8e9bbf87777f748bacc5335af925f8e7",
+      "translationHash": "949c018564839d1709f1fbf3d8178502cdc9618c2851c25e84c4fa983a868ee7",
+      "status": "reviewed"
+    },
+    "ui.p50.append.on.in.memory.sqlite": {
+      "sourceHash": "291e975afb332c8b0b3f27fa688283b50f0653c03bf150fc57346f2e7e476815",
+      "translationHash": "bae93e7c71c0263b97904647df626c4cab91f4d87b68364d93a4fefdeded2823",
+      "status": "reviewed"
+    },
+    "ui.replay.1.000.effects": {
+      "sourceHash": "fbb6a347f52d93117dd9c4ab85c50af719fe1c4d84298f630e356d40e865bfbf",
+      "translationHash": "ce9e5112862622063c9600f8cbeac40b6e88787180ce7de5d8f33f2d883cf8a4",
+      "status": "reviewed"
+    },
+    "ui.p50.replay.on.in.memory.sqlite": {
+      "sourceHash": "465708f028810fb9ebaddc183b00622581b8b445ec79bd07d72be33c56f0969e",
+      "translationHash": "a9dca5327546f96830e6a7ac59c61131e3b72a8c0ed44297610e599b2ec6a04c",
+      "status": "reviewed"
+    },
+    "ui.file.backed.restart": {
+      "sourceHash": "4b7d1d68fa49dd30e2b8de292ce0350a3516a5812a9d2e72e0732251b1095a64",
+      "translationHash": "e05783dadbd2be39d460eedba7248f3e7d802748d7ddb101f9e919367f90cb03",
+      "status": "reviewed"
+    },
+    "ui.p50.reopen.replay.of.16.events.on.temporary": {
+      "sourceHash": "e625257e716e19905d3832a6d162e52dab3ed81b209ca74aa2a8393aa412199f",
+      "translationHash": "58e50692caf2371aea278d36303b8bbfaa94276d5665cb04cc621330ad113c1a",
+      "status": "reviewed"
+    },
+    "ui.loopback.microbenchmarks.with.explicit.connection.and.batch.boundaries": {
+      "sourceHash": "b002a4ff0d13ef0c1d867239c97ef952c0d97f231d18d9349c18c760672e4b81",
+      "translationHash": "f3aa48f20719aba34dd1574064dfc2a86d440b297df627421d76442b0aaaa269",
+      "status": "reviewed"
+    },
+    "ui.json.1.kib.new.h1": {
+      "sourceHash": "6f707513e6f7273d1b5b2c42ac734cd803d275db9adf366c78f06fc02e99fd02",
+      "translationHash": "ad658a0f8ef68942ac5e3cc8e202241cb15cde20ffbc8d061d0137a74ab42b82",
+      "status": "reviewed"
+    },
+    "ui.p50.tcp.connect.request.full.response": {
+      "sourceHash": "58cf6618eab338437a7f94ed40c879199c890a43c2f2425b6803593fa66a1c6a",
+      "translationHash": "e0f3feb955496506198edece5b8d54303b85cb61430251740c59addd5e54a7de",
+      "status": "reviewed"
+    },
+    "ui.websocket.connect.echo": {
+      "sourceHash": "cb29a19c09802fc4a2366617c201ce87d4f20f5f9b3e9ecbc5e61f543e3fd5b1",
+      "translationHash": "5e8824d8557290b8386fd047134d8ce7073e8feb94b0ceb5c7464884a7f81767",
+      "status": "reviewed"
+    },
+    "ui.p50.handshake.one.echo.close": {
+      "sourceHash": "dfa5b1a7006f469663c7a4a35b3c0afaab2044060d3d17eeaeecdf1001e30d71",
+      "translationHash": "3d2fa864469d173f8e87a2c30f29790a48ba7ca4f2efce65a4d282d0a6f3ab8f",
+      "status": "reviewed"
+    },
+    "ui.h1.100.request.batch": {
+      "sourceHash": "5890d40ed5e4bd0daf0bf56aadcca4a4d579eee398602ccb658b8e6d08dd25b1",
+      "translationHash": "5e19527ca8611a19ae5d9e8cfa8da67d8c5d732f972f48a247c877b6835531b5",
+      "status": "reviewed"
+    },
+    "ui.p50.wall.time.until.all.100.concurrent.new": {
+      "sourceHash": "2f19193048dc55f8353443454e917ef093ab09cde3b4d61f37536d1c1e6bb5b5",
+      "translationHash": "14106b67dd620347792771a75fc1724913da01122dad9c326fd6364a74d983fd",
+      "status": "reviewed"
+    },
+    "ui.pass": {
+      "sourceHash": "2f9acb02faa121bb2a3621951f57b4c690655337edee2e5ac350be2b3be88ea8",
+      "translationHash": "1e9f2561b7cf43c495c3417ea97bdebc53321d66be975b811d3bc0022c72197d",
+      "status": "reviewed"
+    },
+    "ui.fail": {
+      "sourceHash": "425305e25df9df108e011164f7ca97522276cf1bc67b8aec3a7139cd60fb9a81",
+      "translationHash": "28384d7afd2e4fa66084f6803b9d3cb3b1c1ebb0a4ecc4cc97706745405e5df4",
+      "status": "reviewed"
+    },
+    "ui.skip": {
+      "sourceHash": "6ad446059a8bb8d8722e1420110f2784368a2ad5a56384d516c602530e5af256",
+      "translationHash": "fc50a99caae0cddc10e0d3f953c48b08c35f1139fcefcc83f01a81bf92124aa1",
+      "status": "reviewed"
+    },
+    "ui.open": {
+      "sourceHash": "6e10953f3e4ca159285c03a116d60c5086727c958dc25b31c39848ffea1dcdfe",
+      "translationHash": "e55f2ab3e631c5f91051d31ba6de9356616b219267e24dd4b78fc2e35267ba86",
+      "status": "reviewed"
+    },
+    "ui.demo": {
+      "sourceHash": "4ff006ca6b88e752f08cb7881714505ceb3d2079eea432acfda8e158e0d1d82e",
+      "translationHash": "0d53f08678d8101b0c7e5053b30224fc671c55051770ba18207435ead7ad37bd",
+      "status": "reviewed"
+    },
+    "locale.label": {
+      "sourceHash": "a4fe65264ef7dbb38d104b1e81eb3350f3142f3d16f32bdec39b1d9b42c1b8d1",
+      "translationHash": "9f6fee1aba17a56586bf16a77b07b1a76d8c4e867430c6ee6abfa3128b55fa98",
+      "status": "reviewed"
+    },
+    "locale.original": {
+      "sourceHash": "f91b469bbbbda9bdea40f8dcfcc13aadd816cdefa870fdf454a982de8fd5e929",
+      "translationHash": "58e5726a0acf5f51719269f181c7c7e666b4b07ff8d6cd3ea79381347b958d2d",
+      "status": "reviewed"
+    },
+    "locale.untranslated": {
+      "sourceHash": "02be0d46ee1f7e409f65d76d1034229b0e264a917d753d06c56ee0728535165d",
+      "translationHash": "63da2c5b43a5c7a46d93c88ad4f61767e3381cace2f2e78959c39833c7a7da71",
+      "status": "reviewed"
+    },
+    "site.description": {
+      "sourceHash": "087d3b8ababeacae4d0f1028155d25d8445a3ab87235de96136902e9e52d8dfe",
+      "translationHash": "d7f320c41b0ae37c17896e3b1d16c79c41d367bbe0ee391023c1e69edaf7ba90",
+      "status": "reviewed"
+    },
+    "fumadocs.Ask AI(AI chat button)": {
+      "sourceHash": "ea9e45ac7083cf49eaca10fc7c9f1ca1f1aaca9067d4b7e974aaf270a7c95414",
+      "translationHash": "69d8ed1c70a6a0ff81d0f96e950f7969d647c3ab0a0da78a0a7975887a8711ed",
+      "status": "reviewed"
+    },
+    "fumadocs.Back to Home(404 page)": {
+      "sourceHash": "eec78426776352f1ec59953c188e053590e17399c3948d810c1b020a8f224da4",
+      "translationHash": "d66f4359dae37110800e78bee282c2c6eed06365b26eddb0b0c3f7598081c8ca",
+      "status": "reviewed"
+    },
+    "fumadocs.Choose a language(language switcher)": {
+      "sourceHash": "f8416d793a642faa027935eb7b5a975533baa3705a806c57cde08be442c95d46",
+      "translationHash": "b90a8ac9c488ce4659237c49ba9e6d271ac16d16939fb1a2d8cbc26f8d7d3b4e",
+      "status": "reviewed"
+    },
+    "fumadocs.Choose a language(language switcher)(aria-label)": {
+      "sourceHash": "f8416d793a642faa027935eb7b5a975533baa3705a806c57cde08be442c95d46",
+      "translationHash": "b90a8ac9c488ce4659237c49ba9e6d271ac16d16939fb1a2d8cbc26f8d7d3b4e",
+      "status": "reviewed"
+    },
+    "fumadocs.Close Banner(banner)(aria-label)": {
+      "sourceHash": "171f7f76bd02de06b42476e067c06e6a78f220be89366bc6474171802a91d638",
+      "translationHash": "1fcab7a395d2131bea9be16d00227bba7d0009d2efc82f72a8035006d7488ab0",
+      "status": "reviewed"
+    },
+    "fumadocs.Close Search(search dialog)(aria-label)": {
+      "sourceHash": "713e7816521d60911bd5720a384d3230d3d1b319e517ed084ccda4d55ad7a592",
+      "translationHash": "ab008ef18dac8f830cfd4c58c9003e17c4cd4dc4689b44fbf5b81df1d65deb7c",
+      "status": "reviewed"
+    },
+    "fumadocs.Close Sidebar(aria-label)": {
+      "sourceHash": "8896c14d09e7669a3807286f212e00c666488cbe66941869a63b0131e9fb293a",
+      "translationHash": "623a7d6abde41e17376e66b7ecc85d76e41a0109025ceb5d987a61ac17c216fa",
+      "status": "reviewed"
+    },
+    "fumadocs.Close Sidebar(sidebar)(aria-label)": {
+      "sourceHash": "8896c14d09e7669a3807286f212e00c666488cbe66941869a63b0131e9fb293a",
+      "translationHash": "623a7d6abde41e17376e66b7ecc85d76e41a0109025ceb5d987a61ac17c216fa",
+      "status": "reviewed"
+    },
+    "fumadocs.Collapse Sidebar(sidebar)(aria-label)": {
+      "sourceHash": "9da0bf42ad074f0967d11de494fc8f7f3afb628a3b40e133a2dd63d10a77a8d6",
+      "translationHash": "ce1d67c2703c6d4393fe3702e70b740185df4b40377d3881d29967e6124c73af",
+      "status": "reviewed"
+    },
+    "fumadocs.Copied Text(code block)(aria-label)": {
+      "sourceHash": "75a5d50a9fe912cc331ef2bd0c4e7dd1ed7415ff4e9a6b89e27f27497a2f79bd",
+      "translationHash": "714207e324062c610ffd1eb167ec25b7e9dcb5843fc0096324c360e81901733e",
+      "status": "reviewed"
+    },
+    "fumadocs.Copy Anchor Link(heading anchor)(aria-label)": {
+      "sourceHash": "6999a51263ff3a5b4c67af6c8c9824f998d9e78712dade1d3bdae78ebc70e7a9",
+      "translationHash": "ee6a2095141add8b579fa306087d562da4cf50b91eb0e55a06c4d5eab7f65f0e",
+      "status": "reviewed"
+    },
+    "fumadocs.Copy Link(accordion)(aria-label)": {
+      "sourceHash": "724e78a3254c899d16ef6324a7abc9a8f5240ffce8bff74976df397c68ce9d78",
+      "translationHash": "8e86f9b1d54f2c5125b0deb2617517c0b0601399dca6917c7527fc1b72ebda7f",
+      "status": "reviewed"
+    },
+    "fumadocs.Copy Markdown(page actions)": {
+      "sourceHash": "47ffe39e75566b3835200592d6862b047b19b40483b056b11ee4086bb675c8ff",
+      "translationHash": "f9c71ee4c4359bef66eccfdb399283036759f74c9b745e74a4e96e1d93bfa677",
+      "status": "reviewed"
+    },
+    "fumadocs.Copy Text(code block)(aria-label)": {
+      "sourceHash": "8195c1caa5035a4402c0196c8eb512c99d722f30eba76cadf99fcfcb01688ab4",
+      "translationHash": "befad318258f8c93fa7640a1fea20fd5c23afa0d81016d459bcf358be4fec5b4",
+      "status": "reviewed"
+    },
+    "fumadocs.Dark(theme switcher)(aria-label)": {
+      "sourceHash": "60acc53f13a5d1bf115878c4a785e9a43e8286c4139a8402a6ac7d23966f9153",
+      "translationHash": "a6b75d0680322a61f4d46185dfb28c875fea97ad8868217b4cbfee3de639f2c1",
+      "status": "reviewed"
+    },
+    "fumadocs.Default(type table)": {
+      "sourceHash": "21b111cbfe6e8fca2d181c43f53ad548b22e38aca955b9824706a504b0a07a2d",
+      "translationHash": "306da767a461a51e85c0ee884498ae78dd543b73c7390b1eae819b67600000f0",
+      "status": "reviewed"
+    },
+    "fumadocs.Edit on GitHub(edit page)": {
+      "sourceHash": "8dbf35488c3f264413696c17b7f55650ddefe9d9fc5864ecc85bf7a90075b309",
+      "translationHash": "359d338ba3364d12d57924cf59361406d99533bab75ea44d70a41699307b0290",
+      "status": "reviewed"
+    },
+    "fumadocs.Hide Sidebar(sidebar)": {
+      "sourceHash": "9709a3b2e51f0ef313f5ad19d1b926e3ae80e95f73e8b7c8c60363810505d6d8",
+      "translationHash": "76af3dbc0795546513eed90bf8ac430396ee32ba29958611560ccf8d4e5675cb",
+      "status": "reviewed"
+    },
+    "fumadocs.Last updated on(page footer)": {
+      "sourceHash": "103e2a9f3f94ffe026e35d59dfdf47a05659b033382560b4bafaea6f9223effb",
+      "translationHash": "a52ee5b247e92f3cdd0a8795a17933120a3e3f83ec9aa7c59ab541c9b39aa198",
+      "status": "reviewed"
+    },
+    "fumadocs.Layout Tab(layout tab trigger)": {
+      "sourceHash": "c0d9415c664fc5f0bc1457d55083971386f74e2e72a85474bfb9885668d73f4d",
+      "translationHash": "c5879e5be7d63f0c24e559096840e35a1d14f3af236fa4df5739e6c05b94271f",
+      "status": "reviewed"
+    },
+    "fumadocs.Light(theme switcher)(aria-label)": {
+      "sourceHash": "dbcd5e7bb7a0f538810de44c3efbd813037ee3fa358747bb71fa58e157af45f7",
+      "translationHash": "aa0819dfc4d8d78280b8c7605b008bfc9df42b585f9106feaa3c8d5bdfda711e",
+      "status": "reviewed"
+    },
+    "fumadocs.Next Page(pagination)": {
+      "sourceHash": "6ead5dfdc11ef7da26e4c09f348d42a8d6306b7faa54ce0a7dc6c567dab1db6f",
+      "translationHash": "8a8542f6964852dc4f7b840333d683776195ca83a2bf184f3b39b621e1b5d842",
+      "status": "reviewed"
+    },
+    "fumadocs.No Headings(table of contents)": {
+      "sourceHash": "877e7e5d5975af695d62c2695eb97d1969d9f7d71d594f5ab48cd70a175a4bd5",
+      "translationHash": "f3b4326ab686d701db5ca2a97e3a9e350130197c943977c3582d1378f8962be4",
+      "status": "reviewed"
+    },
+    "fumadocs.No results found(search dialog)": {
+      "sourceHash": "7d7e360586090927c7aeee67c8a46d8354694e7aa4b722ff5b421347f798057a",
+      "translationHash": "73de5ef9c0c022fac3f75c7ed2a762d7e23a1e80e003120ddc892a7942c25984",
+      "status": "reviewed"
+    },
+    "fumadocs.On this page(table of contents)": {
+      "sourceHash": "b5658fc8edda24f9c94eabac9e536e0a18e3055a8ca255f9d1b8f256ea02a6cc",
+      "translationHash": "a610e0c62b3e1e39e09d7f9d5d9e352a0770d302b31f614c5d11daf6da5e315f",
+      "status": "reviewed"
+    },
+    "fumadocs.Open Search(search trigger)(aria-label)": {
+      "sourceHash": "9c3451e933c5ac535459f88405d7c3973b8103d5df3d75a9615e91b8e0c7ba45",
+      "translationHash": "5e9e915d6fbaa0a2535f2cccd1b63b2160f9d66bf20a15baf7199bf2f83e6e70",
+      "status": "reviewed"
+    },
+    "fumadocs.Open Sidebar(sidebar)(aria-label)": {
+      "sourceHash": "ef84dd64b90fc4856e6076cda0e48af86c3bb6816a434571d08988e205591a98",
+      "translationHash": "dfba9849d56f3a164170bd4b7cef58cb68547c73b9d1abb8837be1b7bb0f3bf1",
+      "status": "reviewed"
+    },
+    "fumadocs.Open in ChatGPT(page actions)": {
+      "sourceHash": "c27a47a5c24fdd0f68175066a80839a0e771f02fd45bde86887228841cef5bf3",
+      "translationHash": "dc1883935d5025cb49af06d83094d4bb75696c1fd70a91a6489b4a9e3d7d89ab",
+      "status": "reviewed"
+    },
+    "fumadocs.Open in Claude(page actions)": {
+      "sourceHash": "9512e37d4a15473303780d07ea21f61afeedb87fcd0241d4dbae2a2a475fe59c",
+      "translationHash": "07f8803c22929fe133f626b313b40003a457b2467be0c7db61d54021b65efb2a",
+      "status": "reviewed"
+    },
+    "fumadocs.Open in Cursor(page actions)": {
+      "sourceHash": "af29fb46ae908eb1a213727c131527d2cfc2a7ec79d968a910f7c88fbc88590c",
+      "translationHash": "71ae5ad52fbeced060ceb8be6365c940b42ce39fa3444dcfd2bb4230d982729d",
+      "status": "reviewed"
+    },
+    "fumadocs.Open in GitHub(page actions)": {
+      "sourceHash": "4fb78818bd18432cb2e7875d7fe5a4985e66dac9cdd4a5b69d0085a31c8974c9",
+      "translationHash": "eb13ef075893699353c866fd1c42cc64497af54578d557d1014ef7b8032ba00b",
+      "status": "reviewed"
+    },
+    "fumadocs.Open in Scira AI(page actions)": {
+      "sourceHash": "d488d0e2510b998b3b25f518c9fbda2388d3cd5466d80bed09f2b28cc010b16a",
+      "translationHash": "d2cd0da2958d08b1aafcf9ceff90cbbaefc90c4c97a649f8d36587d7c3a33f50",
+      "status": "reviewed"
+    },
+    "fumadocs.Open(page actions)": {
+      "sourceHash": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942",
+      "translationHash": "c771248e511fbf9328abdf31f3f2472d14940144c3ef819c3ec3bd8c2631738e",
+      "status": "reviewed"
+    },
+    "fumadocs.Page Not Found(404 page)": {
+      "sourceHash": "cb2f00d1e554baf96001ddb5e22ee63a8053fd3f8b6cad8acd74504af0dadb52",
+      "translationHash": "e75737c1ab90e168e9e4364e5873c26edc50b742e25e634efedd439bd5e0f0b0",
+      "status": "reviewed"
+    },
+    "fumadocs.Parameters(type table)": {
+      "sourceHash": "e68b36b17cbd990802f57741cb75cf3a73fa66a61999b0cd70e3cf7d26cfb25f",
+      "translationHash": "9634fb0832be624fc5beafc8a2ba68e9e66bfc5162c46aed461befee62b84783",
+      "status": "reviewed"
+    },
+    "fumadocs.Previous Page(pagination)": {
+      "sourceHash": "a163aaa22cf7ce6c4c2a634f98bef10d0fe0a0602ada2aa50d60b262dc70b2d9",
+      "translationHash": "c9b9ae7a61444ab7e3b9c2b7e9357bcfe6c7956074de87a9f0dd6fcabcc618c5",
+      "status": "reviewed"
+    },
+    "fumadocs.Prop(type table)": {
+      "sourceHash": "57d968860fabe1008d2c72342adec04b70f4bae48b7bcf6ebca915624100c353",
+      "translationHash": "86de52d178203799951d818b1d3af85f13288de66bf2b0373cc21f53b1e42ff4",
+      "status": "reviewed"
+    },
+    "fumadocs.Read {url}, I want to ask questions about it.(page actions)": {
+      "sourceHash": "619e3673b5ff957f91e9722429e9aebace51f7be53e100efc3f0edddbcb1cdfd",
+      "translationHash": "a952bf988f48f13e8cb9d1546bdf0a9c05c15be3f745dfc3085f58da0388c352",
+      "status": "reviewed"
+    },
+    "fumadocs.Returns(type table)": {
+      "sourceHash": "16dcaa923f16b449fb2089fd7f135465339cc1e6638c8e5fcf7f143d60f4a0d3",
+      "translationHash": "dfd7a59f3d9389d9d93a020f2558a73a32c20609aaeaf466f24d90415dad1e02",
+      "status": "reviewed"
+    },
+    "fumadocs.Search(search dialog)": {
+      "sourceHash": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9",
+      "translationHash": "44ce7ae909bbb28bbbe3cbbba8d617b71217869d62741b4c104dc123a6ef603d",
+      "status": "reviewed"
+    },
+    "fumadocs.Search(search trigger)": {
+      "sourceHash": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9",
+      "translationHash": "44ce7ae909bbb28bbbe3cbbba8d617b71217869d62741b4c104dc123a6ef603d",
+      "status": "reviewed"
+    },
+    "fumadocs.Show Sidebar(sidebar)": {
+      "sourceHash": "04efae3fc7825d3a016a59f5d8c96460b02f15523dbfaf973fe411717be722f8",
+      "translationHash": "d97efcf76cb0979dbac18d47d68ea7a1ac931df3d68c9aa07b617af80df7ef0d",
+      "status": "reviewed"
+    },
+    "fumadocs.System(theme switcher)(aria-label)": {
+      "sourceHash": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a",
+      "translationHash": "217cfe7db1e3d10a734f5a0342df7977e5c1eb3c8906b28716732f72330cf181",
+      "status": "reviewed"
+    },
+    "fumadocs.Table of Contents(inline table of contents)": {
+      "sourceHash": "a9360e0212a4d173581c91da68494d022ee55871188be00acf863d2ed0cf7a6a",
+      "translationHash": "52daa71ebc31058156b21dc21c01ed18eb4e9a723749259cacd1558afe32dfea",
+      "status": "reviewed"
+    },
+    "fumadocs.The page you are looking for might have been removed, had its name changed, or is temporarily unavailable.(404 page)": {
+      "sourceHash": "bb6a203b3184da97cc89d010d8cf1092756744a230584c6bcc60b138dcf8ecc5",
+      "translationHash": "0e9958ee182022107fe6f246be85b14b951f6d5f83571a80f3777c559c378a20",
+      "status": "reviewed"
+    },
+    "fumadocs.Toggle Menu(mobile menu)(aria-label)": {
+      "sourceHash": "f2fca5f984057b8d0a173d66466213cc2e910871e9583fbde8fdb8ca342245f1",
+      "translationHash": "69ee5f51f38b9cd9a29679ade207f2d5eb422e23984148f614c6a37d55a28676",
+      "status": "reviewed"
+    },
+    "fumadocs.Toggle Theme(theme switcher)(aria-label)": {
+      "sourceHash": "de148bf172104c6736a88eafadbebc7f7c6a8e7bed558fbe29697e7acb6ff46f",
+      "translationHash": "7a1604323e8bf3f2cd4cc2d2d67fcde41cc27dc36c40017cf9a7dcf1de3216a6",
+      "status": "reviewed"
+    },
+    "fumadocs.Type(type table)": {
+      "sourceHash": "baaddf70fb5d432b8bd948ef91d6f910124a6d138edae4d5f000c4610ddc8eae",
+      "translationHash": "ba40014ff496f64e755492a5c6243cc0222a5d3e4b795ecfea7c9bed809adaab",
+      "status": "reviewed"
+    },
+    "fumadocs.View as Markdown(page actions)": {
+      "sourceHash": "17d36a505f972e68d0a81c212ff4d54427b2df3859346d0aa65f60bb61c75d38",
+      "translationHash": "38eb967b670521dcef486f4b602aa71cf59b39f1048cf0267b6a007c9f0fa1dd",
+      "status": "reviewed"
+    },
+    "fumadocs.displayName": {
+      "sourceHash": "ba118bf7fc9c1aedc1edb28a0aa86e0b43b681f222af6616e13c43be87815b06",
+      "translationHash": "9937e365aaf3a0854053a3179584ad9cd82e1164ea8535b50c1e6ae7102b373c",
+      "status": "reviewed"
+    },
+    "site.title": {
+      "sourceHash": "986fddf29eb12a52484a3c517273318e5661fbfdd7abedef8eb93aa7228833f5",
+      "translationHash": "ff9d738e8085ec9629b11db1324df29de31975c9caf6d41619edd807707c096c",
+      "status": "reviewed"
+    },
+    "blog.description": {
+      "sourceHash": "33a7f7001e09b66ee50a667febce15544fdbcf5f1c0b1875352c662c3df03fcc",
+      "translationHash": "b3b005ec3e957bea345a31e9486eb917d4c2992ca8235b555ceb4ee22da25070",
+      "status": "reviewed"
+    }
+  },
+  "content": {
+    "docs/concepts/meta.json": {
+      "sourceHash": "b131854badc593af84fe13ad5ecb4ecb35479174a15a4d819c3a5f637447cccf",
+      "translationHash": "6238640c0171c218ce20d1b103cf5e034fbcfd4354fc9602fa310a2c0605a59f",
+      "status": "reviewed"
+    },
+    "docs/guides/meta.json": {
+      "sourceHash": "0eb4bd29639f2902ea8c4a6932020a819c06eb9d539c24fd67a14f1312d311af",
+      "translationHash": "45c8d98e796613eab302d19bb8c999bdde2d300ee59ef9ce359b4b2164f877bb",
+      "status": "reviewed"
+    },
+    "docs/meta.json": {
+      "sourceHash": "2b9ccbeed1d2b5fe83f4f751c476c7981ad5b9d933f41805842867c8d4c9520e",
+      "translationHash": "ce086d4c003540350a527190d78c5efca20f11765bf15cf4b15dd02bbd0eb6c6",
+      "status": "reviewed"
+    },
+    "docs/operations/meta.json": {
+      "sourceHash": "3a00ec1f5ccc3055d6b67a1a3ab1bb24ef8991885ac97f2d1671f73427ce1a2d",
+      "translationHash": "cab4e4276a5246a8bcc0cbcaee8cbdfcbbe2418150fa1946779d650be6acdbf1",
+      "status": "reviewed"
+    },
+    "reference/cli/meta.json": {
+      "sourceHash": "0051be3f0f28a386626e0cfdb3a5405fffc85d557d42d906d687f7c7fecba977",
+      "translationHash": "67ed47738a0d28d029169ddb1f9c9a2c344dc99dde60cbe0aa132b14cb90a4b8",
+      "status": "reviewed"
+    },
+    "reference/javascript/meta.json": {
+      "sourceHash": "a179ec0b7536d094fd767d48c9c226406e5f24e357466c926d3aae9af7e65fdf",
+      "translationHash": "a179ec0b7536d094fd767d48c9c226406e5f24e357466c926d3aae9af7e65fdf",
+      "status": "reviewed"
+    },
+    "reference/manifest/meta.json": {
+      "sourceHash": "678fe075c75696ae5e55147b2fedb67f5f226b3c23754df35cb842a795861403",
+      "translationHash": "6ec32b69e2db557bfa014e24a4a9ad63e69f8f275859a69fce223bc6e94d368f",
+      "status": "reviewed"
+    },
+    "reference/meta.json": {
+      "sourceHash": "febad09e350025840d6751615951b2a8e432c8c721013a1d4bc14d5c908e7ca7",
+      "translationHash": "5cfdcf722550547f80039253bbdd8bacd5baa76d3f76851dc18c91434dd611f7",
+      "status": "reviewed"
+    },
+    "reference/runtime/meta.json": {
+      "sourceHash": "1d2d2c743d2e9ee6faab05838c62cee0ffbe1f929d76a1aa451db5329638b36b",
+      "translationHash": "69e99e6629e46009bcd33ebdd732b1c94f8b08c299cfab129b80a4db46b9bbba",
+      "status": "reviewed"
+    },
+    "docs/getting-started.mdx": {
+      "sourceHash": "0226ed150bfdd714d2dcc62879a6f755cfc96d89c0ceec8b61553df95fa0e012",
+      "translationHash": "eaee1f0ada0066c3ba2d360d75a0f4d5e09fd31ecf59a7f99fcc27c4e3b2f808",
+      "status": "reviewed"
+    },
+    "docs/index.mdx": {
+      "sourceHash": "81e5e66ca319958283104df4609a0c2cb692bcdb4fbc34cccb045ca39dd50482",
+      "translationHash": "2e499349f1f44a822d0f20ac56fc9051596c34aae7ba00e3c5c1d070413ee758",
+      "status": "reviewed"
+    },
+    "docs/install.mdx": {
+      "sourceHash": "68273194ace99e7af7933126e3c373d739ab4d856d08558cfeef633939a2e64d",
+      "translationHash": "24152d190dc55eec83fc6f959cd20616905cd0dd87f3c8c8a295d446eef1d167",
+      "status": "reviewed"
+    },
+    "reference/javascript/abortcontroller.mdx": {
+      "sourceHash": "862eec68e10e2387cf1bc3eb6731a1322b20a5b0d209acebbe6d0326e8a4de05",
+      "translationHash": "00043a6aa196621a863918d4bab7c2138ca269235d5dbf12356ef7fbf735ced2",
+      "status": "reviewed"
+    },
+    "reference/javascript/crypto.mdx": {
+      "sourceHash": "8b786a1e3fd23da8fe54171ac1829794e1f3f3a365cf9c288cece10a995c459f",
+      "translationHash": "2af8c80951b7f3d3a22d8feb0c9998be8a59768a4304e3a1bad71e60c892837b",
+      "status": "reviewed"
+    },
+    "reference/javascript/event.mdx": {
+      "sourceHash": "5e13ef4d98d71c564ba7fe008c66dc72b5394a31be8b32318461a76a0cff27d7",
+      "translationHash": "fe7de27ab3665471e9e35a69a46f7c278de99caed90dd5678a6754e659ca263d",
+      "status": "reviewed"
+    },
+    "reference/javascript/fetch.mdx": {
+      "sourceHash": "b344d495c86d2099b2eda4ac8a13c3c972139369eef4fd672057724b470060b9",
+      "translationHash": "928e200aca18e24264aa561afe62a946283b9d91295b8a2ae237ee89f7bab11f",
+      "status": "reviewed"
+    },
+    "reference/javascript/headers.mdx": {
+      "sourceHash": "42f6c11191518ceb86be90d1a1f85d95a7dd9a42d52110f53932941fe9f624a4",
+      "translationHash": "6b80d7840ce3bde9b5a8841c3f8c8f09366e30f30a9c1e025fd7aba579d6cb80",
+      "status": "reviewed"
+    },
+    "reference/javascript/index.mdx": {
+      "sourceHash": "a7ba0a075b701bc1d8e93cebf1a761c5a715a5d478bcc7710c7d64af1bb48f89",
+      "translationHash": "ffe8c800ad04747db3a467d7a5dd797266c9a77ec76ddf59482f184aeeaa1557",
+      "status": "reviewed"
+    },
+    "reference/javascript/request.mdx": {
+      "sourceHash": "995c228d413ae2ac1bbf92ac95004f535a1b6dfa1c2bb8ac578a0c13549899ef",
+      "translationHash": "ce4f359a67ee2d611f9e7362eacabffe98ffd96812b76daa098a1510db3f982e",
+      "status": "reviewed"
+    },
+    "reference/javascript/textencoder.mdx": {
+      "sourceHash": "52c8ba77b4919fe4545a676b63e167bc0b4b477ced4f8129bcc51756309d650d",
+      "translationHash": "1608224618c641be8af79456be3068ff1b82dc871649ebb28a3d875dd9663271",
+      "status": "reviewed"
+    },
+    "reference/javascript/timers.mdx": {
+      "sourceHash": "abf1465fb7850d7347596087f3301d9be1a803cb829d0d3f1a400dbf182761fb",
+      "translationHash": "e870377589a72333d9af18679a2d09a10b9238a7ff9329309169e4e72b8f4627",
+      "status": "reviewed"
+    },
+    "reference/javascript/url.mdx": {
+      "sourceHash": "e7f09130d693bd2743626dbb570023dadcf1ceb99f28f35ffd76b9441d3ffa23",
+      "translationHash": "6c0d7a1785954db13cace77acea2b9b99e9f1203bf14c44e6c0f3c25bf5c6c47",
+      "status": "reviewed"
+    },
+    "reference/javascript/websocket.mdx": {
+      "sourceHash": "9055e593227b9449c300c78ca1c784eb792777fcaa73385d82e689aca5acf6ec",
+      "translationHash": "1a36d9b955f6a5182d7295aaf01b18a5336383b19f4dcab2b1680a29ec428848",
+      "status": "reviewed"
+    },
+    "docs/capabilities/index.mdx": {
+      "sourceHash": "25848e68373e57b145be92b61545e84f1b4249de6e4b1ec20872b1e4e4c749ed",
+      "translationHash": "443a828396339e376b903f5c0008c4f983fcd364e1d9a8447c58dd32d58a1e22",
+      "status": "reviewed"
+    },
+    "docs/guides/index.mdx": {
+      "sourceHash": "1d8b9323711af7578db4574238d675509319e7894a8784beb9c90b66973471a9",
+      "translationHash": "05721b03642f8482ee589942988c580487cbbde6085dfcab540413b469541571",
+      "status": "reviewed"
+    },
+    "docs/performance/index.mdx": {
+      "sourceHash": "a00aceea2007998201738b81ad3292489bf3761b35f10ff95503b92a308d0233",
+      "translationHash": "b622adb33418aabb23909ff75b6f2b040c769ff88c38ff190945818f79962326",
+      "status": "reviewed"
+    },
+    "reference/cli/index.mdx": {
+      "sourceHash": "4aa3fab1c41a0694c91e4c01bc3ac9de2691026f286771a41e16d6eec90a368e",
+      "translationHash": "d550cbe29d988f8dada09d8c1b5faec83b6cf2f3f75b2ec47b785ae93a12bbb6",
+      "status": "reviewed"
+    },
+    "reference/cli/installation.mdx": {
+      "sourceHash": "d59cb6740c462e65a3603bb3339faef2de2b9f42d56f783a1bd1bfda4a5c7ba6",
+      "translationHash": "126716cdee67cf67885e89fe548ab857559c89d18ada41234e864396fd27db02",
+      "status": "reviewed"
+    },
+    "reference/runtime/index.mdx": {
+      "sourceHash": "a5ca3434cb26d3114d50610048270a1b68b4bfc5b9ccf52aa7ae64aabbab3a4b",
+      "translationHash": "3019344e29a158b66f49e5f51a745814e94dd5653cb7396d4991d033b82e2128",
+      "status": "reviewed"
+    },
+    "docs/compatibility/index.mdx": {
+      "sourceHash": "81c1a479cf9d1722f3dea0008e35f4d09f84beca63a11cc16e8b43486f04d10e",
+      "translationHash": "a5d803add4e13519bb8f1e598d2fa726d8ae1cf27c85e68a43afd6162a2688f3",
+      "status": "reviewed"
+    },
+    "reference/cli/evidence.mdx": {
+      "sourceHash": "6756f75b57da793b8125766e73494c101dbe0bee450adf26e28893f8e3696fb8",
+      "translationHash": "b60f387d02d1169ed0bd0a4544bf4e870bbf505d52d4a2ccf8bcc35869d9ea55",
+      "status": "reviewed"
+    },
+    "reference/cli/tasks.mdx": {
+      "sourceHash": "ff5255c0ca17f8bade09a9e7d783ee4e2596e27f1912677ba14b809633d6ec74",
+      "translationHash": "9ce93d245469f5575566963175bb60417598215846eac543f578a9da021db92c",
+      "status": "reviewed"
+    },
+    "docs/concepts/durable-execution.mdx": {
+      "sourceHash": "2e68a5f95eeebce606127e40dec9725e5e49b74f2a82e3d1b04690cb26d12b8b",
+      "translationHash": "e7b15ae198604e28fa0b1ab59ca6447ffda3d2de1d7d8089b27d4361d2b5d525",
+      "status": "reviewed"
+    },
+    "docs/concepts/execution-profiles.mdx": {
+      "sourceHash": "dfb099fb4c0ddd6b8a317793c89b801d8d899c713f3e2713c7ba81f74043cee8",
+      "translationHash": "d67b2dd929183ec9952ee4471638aaddb2f34d8112453893295523243969f9b7",
+      "status": "reviewed"
+    },
+    "docs/concepts/how-tysel-works.mdx": {
+      "sourceHash": "141a911439ac92949aded7d70f29377ca0288f722a55e54eebc44ba981c05afc",
+      "translationHash": "bfd5d75f607ada12379cf84c18eba7ed6548cf7f23d3d144cc8d83106405f1eb",
+      "status": "reviewed"
+    },
+    "docs/operations/component-tasks.mdx": {
+      "sourceHash": "48ecba7539212f3907b4347a8274de14d65ae40d295ff95eae557801079d8824",
+      "translationHash": "c1f988407b949f946abf60eaceaf56f12d1c4adc2f4da83a6473558a07a024c6",
+      "status": "reviewed"
+    },
+    "docs/operations/deployment.mdx": {
+      "sourceHash": "205b5dd1d35372a9a3a983bd789aa0e610fd76c7e815b93cf59775755e8b6af7",
+      "translationHash": "eaf9c071587adf18959b1f4941bc29df98bedc681036d64ba8459ff83de55319",
+      "status": "reviewed"
+    },
+    "docs/security/index.mdx": {
+      "sourceHash": "c3902c708ab537797d358892e96fcc43f818f0847b369aff77b07793604e9168",
+      "translationHash": "0cbeffc14cf35a145e2e10aff4ef556107bb7fa4b418d14a1f93feb8c9310e87",
+      "status": "reviewed"
+    },
+    "reference/component/abi.mdx": {
+      "sourceHash": "d8df19ab62786e117eb541a54226a95aba24b78a2f6f197e7a1d5254c1355902",
+      "translationHash": "5cab532b30b7242159589c4b4d66b708281f7b75a33ee77e4b1570ef0b8a94fa",
+      "status": "reviewed"
+    },
+    "reference/component/index.mdx": {
+      "sourceHash": "08abceedd5eadb67bfe7962cbe265200e4bb229d6a6853c2c4efd725af92cf31",
+      "translationHash": "c0bf69faaff3de69ea3fe90bc92db4be89a7f4a8161c021951639c41bc0e5f5e",
+      "status": "reviewed"
+    },
+    "reference/component/capabilities.mdx": {
+      "sourceHash": "9c63147d94e11a6205f724c042bafb4af4b2c80e9b4d0d1da638200da47820dd",
+      "translationHash": "da4e7eb7272a15fa4a1df8b7a31e492f6407cdb1ab6b0f2a2984ae4cf06ccf89",
+      "status": "reviewed"
+    },
+    "reference/component/go-sdk.mdx": {
+      "sourceHash": "e57eda2207f63b3f19966cb5c265b2114ac927101de9d04e93dc4f579fbd42e0",
+      "translationHash": "90067d80fbc35d2535427d81fff203d061db60edd08ae18ad4920f7b9d89262e",
+      "status": "reviewed"
+    },
+    "reference/component/runtime.mdx": {
+      "sourceHash": "2f032dbdbb521886a3aad260016b942ac73f6c5708aaebdead4037e60d763f14",
+      "translationHash": "f47c98a5620f7553a5450b6960921bca646bde79e0669838b5f2c1b5a1a83c11",
+      "status": "reviewed"
+    },
+    "reference/component/rust-sdk.mdx": {
+      "sourceHash": "af7df701c4d0ec207e023c11d8d67f84f48b55a053aa35718d273d0d6dcfd7cd",
+      "translationHash": "a6386b032b302697b156ff1daad1272dfffcbc25db4e3c5a87b84c4f5dfd2143",
+      "status": "reviewed"
+    },
+    "reference/manifest/durable-observability.mdx": {
+      "sourceHash": "8117f2c1f41ee9966ddae45e97e340360179d77855c29260060dd161060b36a4",
+      "translationHash": "4603d51e9202861a8ece85c83641d5ecae3eb7eb6f59b172444b37f09a4d71ab",
+      "status": "reviewed"
+    },
+    "reference/manifest/limits.mdx": {
+      "sourceHash": "3bfa8de2deef27e1572ae1ab01d136b406891a77d55e88ae111619ea1f839559",
+      "translationHash": "d50eb2af1b750a5c887779e720eecadb8a1800f40eade2d4b4c7aa3df38a83eb",
+      "status": "reviewed"
+    },
+    "reference/manifest/tasks.mdx": {
+      "sourceHash": "af2f770f126ae835e4c1f8f6fb6c255b46519e6898207ea0775589e838c1121e",
+      "translationHash": "04c1024b82858301622cff641d988f22aa1d15985ce0fcc0b2d8daef745568db",
+      "status": "reviewed"
+    },
+    "reference/manifest/app-server.mdx": {
+      "sourceHash": "01a73fef4959d03a0c1a1beff10900b89d1b594dd6fe551baf313c714f30418c",
+      "translationHash": "f066e245b86aa828020286e7892324a91381b539817de2a6c2c573edb31a8ce5",
+      "status": "reviewed"
+    },
+    "reference/manifest/permissions.mdx": {
+      "sourceHash": "16a834f474667d8c67d9efb0da078cfd44b55229d6fea0ecbf99b60bfc8e0718",
+      "translationHash": "0ae1c3f04a7a4fe157f0e8be40e0eddb63b14cd8ab51151c72bf91b3277ee60f",
+      "status": "reviewed"
+    },
+    "reference/cli/delivery.mdx": {
+      "sourceHash": "500bb21ba6dfed50578f2d54e5233d446a6afbfef2eca8bea4e019286cca195d",
+      "translationHash": "ccbbfed3f7d5cdc3b2a01356805d9240a6624ee366dbf8311500913474730cbb",
+      "status": "reviewed"
+    },
+    "docs/guides/redis.mdx": {
+      "sourceHash": "73f82be1c73aaaaff9b298f626c36c46629cd5561757b9999adb725a185bc692",
+      "translationHash": "8fdcf5a8e598e106c18e889ae52b36923b711f610a95e0e75ba83db886f8b0e0",
+      "status": "reviewed"
+    },
+    "reference/cli/development.mdx": {
+      "sourceHash": "ccf571f55dd2b40ada24f282cde88ba63a9f779343cd5c2f49133235b726c8b3",
+      "translationHash": "9ba27257478fd167412867a4c7feb0ea199f74ee56d5094b0d9aceece75d5150",
+      "status": "reviewed"
+    },
+    "reference/environment.mdx": {
+      "sourceHash": "1af65b78116439af012302f640e484d7a6a782b1156b8d2f7c675aabd959a622",
+      "translationHash": "63e00ad319b9a9486e998e53ffa19a8850b2dd69c8a4a2812a39d314f790731a",
+      "status": "reviewed"
+    },
+    "reference/index.mdx": {
+      "sourceHash": "9f3771fc361d60f279e08e19575b151249605d523a817162ce229bdf53d15bdd",
+      "translationHash": "4e244d6c88a1a81f3a4e41cf0090b0106a34eec2fdc9046f1a278778b451ace2",
+      "status": "reviewed"
+    },
+    "reference/limits-and-defaults.mdx": {
+      "sourceHash": "392aa2c7ff52202c7cdd2a658608c1aceacea093b36192c28118bbf12e9ebf7f",
+      "translationHash": "ce294f87a1aa7d02706216475d24b1d494194352212548ea0e91421ba68d40fd",
+      "status": "reviewed"
+    },
+    "reference/runtime/durable.mdx": {
+      "sourceHash": "4835cf1fb7d275ff25c03c3c306fea62235a9d1e7f7505f27f8d3a02073ef8ec",
+      "translationHash": "395f6d2c417078f720458775359a80eabfa7512e1b36d2e7fbab5465a4618a8e",
+      "status": "reviewed"
+    },
+    "reference/runtime/testing.mdx": {
+      "sourceHash": "1fbe75bdc7a2f983dd8ef0a4bca60ebfc783273c6528cdd71130f8d96d455901",
+      "translationHash": "883dade6b463ebd6acee0dcc8902b072d5f3277b48eea5c2141fa7ac3e9f780c",
+      "status": "reviewed"
+    },
+    "docs/performance/redis.mdx": {
+      "sourceHash": "641af3d48a464643f7c6f271fa95dcb310d34c0545333a43856132637750931b",
+      "translationHash": "43b4c6f4340e9d3c278ff2bb9b1a1f8c137d38b8f6450b184a36b7cb92659c8f",
+      "status": "reviewed"
+    },
+    "reference/runtime/types.mdx": {
+      "sourceHash": "1cf8061857b9806f84ecc68c2ebcca590bdc150d1965f48bbbdb5fe1c61dd4cf",
+      "translationHash": "e9d0be559d9f905bd10eb0a8c7d6cce8a53424fe296f71cc35c134d9e7823ce7",
+      "status": "reviewed"
+    },
+    "reference/errors-and-output.mdx": {
+      "sourceHash": "b4c0f1849252797359fc17b91bb62a9d0c0a1c6621d882f03a2e28949861f150",
+      "translationHash": "6703555343b4b012af239d5c6753555cdb99a72ecbbdc59d3532ae98869bf217",
+      "status": "reviewed"
+    },
+    "reference/runtime/application.mdx": {
+      "sourceHash": "00c3afa36bec61bf80805a9ffb14d2b085f703ae4c1295884ee84c6b79996a9e",
+      "translationHash": "3954af320a3a454b1c33bb66c961d6943872dfb0642014fa7bf38237cb3a27eb",
+      "status": "reviewed"
+    },
+    "reference/runtime/capabilities.mdx": {
+      "sourceHash": "91f7fcccda197ee88328bc04924d549982483890743ae0369aa977db7d98a124",
+      "translationHash": "544fe729792b5f7983475cb61b1a1e2ebc3328282b8aae7f83a1866bbc3addff",
+      "status": "reviewed"
+    },
+    "docs/guides/wasm-component-go.mdx": {
+      "sourceHash": "5a86d1a69d42f0e52bb1a5285735372ca331d4b7afa8be330206608ec27521ec",
+      "translationHash": "b7870be7658d5acf5e3b73a9a437e29d3007c96e2cffdb4fe23a283e0b01b684",
+      "status": "reviewed"
+    },
+    "docs/guides/wasm-component-rust.mdx": {
+      "sourceHash": "bdf1470ad9de6928f8180a9808e3fc36216449060dc0cfba85f316cf94dfe8d0",
+      "translationHash": "a731ebb7bc37162dcfcc2f7f8ff77920d488dcc1e8e04ef5603a12c2948ec2f9",
+      "status": "reviewed"
+    },
+    "docs/guides/concurrency-backpressure.mdx": {
+      "sourceHash": "de69dabd5700e284947ed5dd91935f1e02c9062247244a302ed2e05ca6b8e782",
+      "translationHash": "490a0aeffc261282742e9671a289608f249e8761c41aa0fe6dd5b077f38f726a",
+      "status": "reviewed"
+    },
+    "docs/guides/cron-queue.mdx": {
+      "sourceHash": "5a11ef0c1d10143f299031aa96dd7dcec8af582be7e5588daa27e3b529adab74",
+      "translationHash": "1e120533497d6e1935f791fce31ed2918927ab83128d3c1f82a5f64b9ec58833",
+      "status": "reviewed"
+    },
+    "docs/guides/examples.mdx": {
+      "sourceHash": "42327cd1d99f7e302670406d6c60156d5941e4c9a9b8f643692c26fc03cd80a1",
+      "translationHash": "8c23f0cc8c577598e6ea70c2cbf34c6e9d1a442b3bb9a75b398db6eb68362c3d",
+      "status": "reviewed"
+    },
+    "docs/guides/llm-gateway.mdx": {
+      "sourceHash": "af49d85b07422ccc01c8ecc42c4db658e9cf72117c713d7dfc14d4a4decb8f1c",
+      "translationHash": "bba4315677782503a632dcfcf3a397198b90f40668443362e158922a35529ccf",
+      "status": "reviewed"
+    },
+    "docs/guides/sqlite.mdx": {
+      "sourceHash": "478cca2dc1001f230934bd62e8c294c83a78ab55caf52cbbdd7dab5ef0632f55",
+      "translationHash": "348cf0653a061b6e9a6a8a7ad833f60327c75d5de453e02aebf4c56931eb0d7a",
+      "status": "reviewed"
+    },
+    "docs/guides/filesystem.mdx": {
+      "sourceHash": "81bae04c3b88835c78e8e4079bdbfe9f75d37b14803222d13d5663ca72e7ccb3",
+      "translationHash": "e10543afd4ff3e83043362fb37c8493fb5fdb22dbb26cedf4e7a1b77bc65af04",
+      "status": "reviewed"
+    },
+    "docs/guides/postgresql.mdx": {
+      "sourceHash": "fb05bd8adcb7b45e4bf9ad2bf5bff84e939b7e399be315c9351ef2f4cb333c53",
+      "translationHash": "4b4298d32e39076644b7565087ad59efebbf18d5593d7bac679d7affd48c8325",
+      "status": "reviewed"
+    },
+    "docs/guides/service-networking.mdx": {
+      "sourceHash": "5a0de23abde0ad45cf46e8554e9bd13adfad758741934de9b0f5b6a8aef653a2",
+      "translationHash": "27371cd2f01db74a1f933ee578953673b8936417bee868daebcfe2a22e3bd0c7",
+      "status": "reviewed"
+    },
+    "docs/operations/continuous-delivery.mdx": {
+      "sourceHash": "24638b3ee37bdafd0001fec5ecb8934d03dc282ef47e560fec6bb2957d60560d",
+      "translationHash": "f270e88ea52025d1ed2a6a9042d46626688179d874c352b9bfd9c61128e8d955",
+      "status": "reviewed"
+    },
+    "docs/guides/debugging.mdx": {
+      "sourceHash": "b4a60e9452d5907c0905e6e2fa9e1f657793e55016af0d4b12b734b4c99edf81",
+      "translationHash": "9e1e4acdffc837aa234177bac63ceb940dddc0da0c32be750a3a553f6365acf8",
+      "status": "reviewed"
+    },
+    "docs/guides/observability.mdx": {
+      "sourceHash": "660a17eaca7a226fb4f54d28d31b8a94d8369d90bdf974680cf01940ef0ed3f9",
+      "translationHash": "54e0462264673cb9a3c3ae0ccfb60ad135fb51a2c8188fe87d6141c0c3871ff4",
+      "status": "reviewed"
+    },
+    "reference/cli/project.mdx": {
+      "sourceHash": "c9eecfd943d692c18fccfdd27303a677b7bfb1242da764620bf4de0b57ba75f1",
+      "translationHash": "07b0c467ac2892ef6c67601318b1597568329889ff4f93102871e1ba9a515304",
+      "status": "reviewed"
+    },
+    "blog/why-tysel-is-not-another-nodejs-runtime.mdx": {
+      "sourceHash": "c8db949570e52a463a2ca479e79aa3dc99f387b8e374a5bca66cfbfa6c11da6a",
+      "translationHash": "b2be08bc491581ecc90fdca4269fa1fd7ab057802c64e91443779e839f684ae1",
+      "status": "reviewed"
+    },
+    "blog/tysel-v0-1-1.mdx": {
+      "sourceHash": "af2cbfa293e7d3103ac3f0cd86593df173918093afaddca5e034f60a4a4f1ef1",
+      "translationHash": "4812323a0cd4dd84ae4f1c30bb6d437dac4e80cd854bffb167bde2ff089f559f",
+      "status": "reviewed"
+    },
+    "blog/capability-by-default.mdx": {
+      "sourceHash": "5dcaa2145921904e11ae136ff186c412758b7c8d5c483b3f6aa9f87037d50d77",
+      "translationHash": "ffeb415abe583dddb31f9bdd676196765d4fe50fc779e7edd2664a882b41ca78",
+      "status": "reviewed"
+    },
+    "docs/guides/reproducible-release.mdx": {
+      "sourceHash": "57311fbbcecc03e4f69e3f19887d67e45c351d46f6ccbac29d0bdfbd2b61c698",
+      "translationHash": "347b36303bb78f76e6c62f4f51d8f2a71a17158acec7412654f4c4d6928100ef",
+      "status": "reviewed"
+    },
+    "docs/guides/container-image.mdx": {
+      "sourceHash": "00edd4e5891e2461b06746b49a9a48b0a13fc8b0c487598c57a753a16c6d0677",
+      "translationHash": "20811423df2a7e1e020b09f31f6b9106daf400adef341060bf3a95a6b2f39a5e",
+      "status": "reviewed"
+    },
+    "docs/operations/production.mdx": {
+      "sourceHash": "641b9cbc094cd04e82334f8b7a707e6234eee599fc9e8e2ba9e5a7325628a733",
+      "translationHash": "31ecfd97d5004432ce8874cded686af7215c4c97a6d77a12b928eb505e4b912e",
+      "status": "reviewed"
+    },
+    "blog/durable-execution-recovery-semantics.mdx": {
+      "sourceHash": "51edb3c89592023faf481d7cd0a41bdeb60bdc498fab4d5106d768d0c3993e9d",
+      "translationHash": "f5a27973ebaf85dd796c26ab2f7d06bd460df3f58c7ee4353eb282dcc04bbb79",
+      "status": "reviewed"
+    },
+    "blog/from-typescript-to-one-executable.mdx": {
+      "sourceHash": "71d5457c7234102b1520e448efb51af224d20f8da6fb609844b9f04007d4af0e",
+      "translationHash": "55a3306c8f26510709250ed405809182f4fa3bb80f84a2fd701a8f991e88065a",
+      "status": "reviewed"
+    },
+    "docs/concepts/projects-and-configuration.mdx": {
+      "sourceHash": "ec050b6483e6bc5bf91a276a59f208c43c006edddf7680f2d5d89e2318fc6012",
+      "translationHash": "028df783385fea0143155579f0a6b713254ec50ee95cc8cce6fe53658c2f5fbc",
+      "status": "reviewed"
+    },
+    "reference/manifest/index.mdx": {
+      "sourceHash": "23c9cd73c6ccb0abfdb06e1b36345a651b90136cee97297977e22e31fb3891b2",
+      "translationHash": "558082d4f301e0457db8a7decd25373da1741b6c22549ea7f874378891c17c42",
+      "status": "reviewed"
+    }
+  }
+}

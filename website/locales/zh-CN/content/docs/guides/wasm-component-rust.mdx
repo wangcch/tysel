@@ -1,0 +1,102 @@
+---
+title: "构建 Rust Wasm Component"
+description: "本指南使用已发布的 Tysel Component 起始项目构建 Rust 来宾，验证其 ABI，运行一个 JSON 任务，并将其打包为原生可执行文件。"
+---
+
+本指南使用已发布的 Tysel Component 起始项目构建 Rust 来宾，验证其 ABI，运行一个 JSON 任务，并将其打包为原生可执行文件。
+
+## 前置条件
+
+安装：
+
+- 已发布的 Tysel [工具链](/docs/install)；
+- 稳定版 Rust 和 `wasm32-unknown-unknown` 目标；
+- Bytecode Alliance `wasm-tools` `1.247.0`。
+
+```sh
+cargo install wasm-tools --version 1.247.0 --locked
+rustup target add wasm32-unknown-unknown
+tysel doctor --install
+```
+
+## 下载起始项目
+
+每个 Tysel GitHub Release 都包含版本匹配的起始项目包。下载并验证后，进入 Rust 项目：
+
+```sh
+version="$(tysel --version | awk '{print $2}')"
+release="https://github.com/wangcch/tysel/releases/download/v${version}"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz.sha256"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz.sig.json"
+expected="$(tr -d '[:space:]' < tysel-component-starters.tar.gz.sha256)"
+actual="$(shasum -a 256 tysel-component-starters.tar.gz | awk '{print $1}')"
+test "$actual" = "$expected"
+tysel release verify-metadata \
+  tysel-component-starters.tar.gz \
+  tysel-component-starters.tar.gz.sig.json \
+  --trust "${TYSEL_HOME:-$HOME/.tysel}/trust.json"
+tar -xzf tysel-component-starters.tar.gz
+cd tysel-component-starters/rust-echo
+```
+
+不可变标签来自已安装的 CLI，因此项目包与原生工具链保持在同一版本。项目包内置匹配的 `tysel-component-sdk` 源码和 Component WIT 包，并固定经过测试的 `wit-bindgen` 版本，无需检出 Tysel 仓库。如果 Tysel 安装在自定义托管前缀下且未设置 `TYSEL_HOME`，请将该前缀中的 `trust.json` 传给 `--trust`。
+
+未使用起始项目时，应依赖公开 SDK crate，并将匹配的 WIT 包复制到项目中：
+
+```toml
+tysel-component-sdk = "0.2.0"
+```
+
+crate 版本跟随 Tysel 产品版本。WIT 约定使用独立的 `tysel:component/task@0.4.0` ABI 版本。
+
+## 构建来宾
+
+在 `tysel-component-starters/rust-echo` 中运行：
+
+```sh
+cargo build --target wasm32-unknown-unknown --release
+wasm-tools component new \
+  target/wasm32-unknown-unknown/release/tysel_rust_echo_component.wasm \
+  -o target/echo.component.wasm
+```
+
+第一条命令生成 Core Wasm 模块。`wasm-tools component new` 将其封装为 Tysel 接受的 Component Model 二进制文件。把 Core 模块直接传给 Tysel 会验证失败。
+
+## 验证并运行
+
+起始项目清单选择 `profile = "component"` 和生成的入口。
+
+```sh
+tysel check
+printf '{"value":42}' | tysel run
+```
+
+`run` 的预期 stdout：
+
+```json
+{"value":42}
+```
+
+`run` 等待 stdin EOF，调用 Component 一次，打印一个 JSON 值后退出。Component 应用不支持 `tysel dev`。
+
+## 打包为单个可执行文件
+
+```sh
+tysel build --release
+printf '{"value":"packaged"}' | ./dist/rust-echo-component
+```
+
+输出的可执行文件包含可移植 Component 和原生宿主，并可包含兼容的宿主专用优化元数据。目标宿主不需要 Rust、Go、单独安装的运行时引擎或来宾 SDK。构建目标仍是构建宿主。
+
+## 故障排查
+
+| 现象 | 检查项 |
+| --- | --- |
+| `run` 导出或 ABI 错误 | 使用匹配起始项目附带的 WIT 包和 `task` world。 |
+| Core 模块被拒绝 | 运行 `wasm-tools component new`，并让清单指向生成的 Component。 |
+| 输入 JSON 错误 | 只发送一个 JSON 值，并关闭 stdin。 |
+| Component 超出限额 | 查看 [Component 运行时限额](/reference/component/runtime#resource-bounds)。 |
+| 能力导入被拒绝 | 目前只实现了文档列出的[文件系统导入](/reference/component/capabilities)。 |
+
+接下来阅读 [Rust SDK 参考](/reference/component/rust-sdk)，将 echo 处理程序替换为类型化任务。

@@ -1,0 +1,16 @@
+{
+  "title": "参考手册",
+  "pages": [
+    "index",
+    "javascript",
+    "runtime",
+    "component",
+    "cli",
+    "manifest",
+    "environment",
+    "limits-and-defaults",
+    "errors-and-output",
+    "[能力矩阵](/docs/capabilities)",
+    "[npm 兼容性](/docs/compatibility)"
+  ]
+}

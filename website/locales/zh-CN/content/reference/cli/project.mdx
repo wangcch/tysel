@@ -1,0 +1,72 @@
+---
+title: "项目与配置命令"
+description: "创建项目，或安全地向现有目录添加 Tysel 文件。"
+---
+
+## `tysel init`
+
+创建项目，或安全地向现有目录添加 Tysel 文件。
+
+```text
+tysel init [PATH] [OPTIONS]
+```
+
+在交互式终端中省略 `PATH` 时，`init` 会询问项目目录，并建议 `my-tysel-app`。非交互模式默认为 `.`。使用全局 `-C` 时，相对路径从所选基础目录解析。
+
+| 选项 | 接受的值 | 行为 |
+| --- | --- | --- |
+| `--template` | `http`、`worker`、`mcp`、`minimal` | 选择生成的应用内容。 |
+| `--manifest-format` | `toml`、`json` | 只选择清单序列化格式；两者使用同一 schema，并可与其他所有选项组合。 |
+| <code>{"--entry <path>"}</code> | 项目相对路径 | 复用现有 JavaScript 或 TypeScript 入口。新生成的入口必须使用 `.ts`、`.tsx` 或 `.mts`；由于 `init` 尚不生成 Component 项目，因此拒绝 `.wasm`。 |
+| `--package-json` | `auto`、`create`、`reuse`、`none` | 只控制可选 npm 伴随文件。`auto` 复用现有文件或创建新文件；`create` 要求文件不存在；`reuse` 要求文件存在；`none` 保持文件不存在或不改动。 |
+| `--add-scripts` | 标志 | 向复用的 `package.json` 添加 Tysel scripts。 |
+| `--package-manager` | `npm`、`pnpm`、`yarn`、`bun` | 选择为生成包显示或执行的安装命令。省略时使用最近的锁文件。 |
+| `--install` | 标志 | 创建项目文件后运行所选包管理器。要求 `init` 创建 `package.json`。 |
+| `--verify` | 标志 | 创建和可选安装后运行 `tysel check`。新生成的包要求同时使用 `--install`，避免跳过 TypeScript。 |
+| `--no-tests` | 标志 | 不创建起始测试、测试依赖/script，也不在生成的 `verify` 任务中加入 `test` 步骤。 |
+| `--dry-run` | 标志 | 打印计划，不写入文件。 |
+| `--json` | 标志 | 将 dry-run 计划序列化为 JSON，包括文件变更前后的内容。要求 `--dry-run`。 |
+| `--diff` | 标志 | 在人类可读的 dry-run 输出中包含完整统一 diff。要求 `--dry-run`。 |
+| `-y, --yes` | 标志 | 接受建议的计划。 |
+| `--no-interactive` | 标志 | 禁用提示，对省略的选择使用文档规定的默认值。 |
+
+`init` 不会静默覆盖现有文件。在现有仓库中应使用 `--dry-run`，并在接受前审查接入计划。现有 `.gitignore` 只会补充缺少的 Tysel 生成路径，其余条目保持不变。
+
+不提供路径时，第一个交互选择会明确区分创建新项目与向当前目录添加 Tysel。其他选择支持方向键和 Enter；不具备光标控制的终端会回退到编号选项。项目目标和入口路径会在对应提示处验证，使无效值可以在向导继续前得到修正。
+
+对于接入的项目，默认计划会报告将添加的各个 package script 和忽略模式。`--diff` 展示精确内容变更，包括重写 `package.json` 导致的格式变化；`--json` 为自动化提供相同的变更前后内容。
+
+模板、清单格式、入口、包集成和测试彼此独立。没有 npm 依赖的应用无需 `package.json` 也可以运行、测试或构建。新项目会获得 `tsconfig.json`；已有 JavaScript 或 TypeScript 配置的项目会在需要时获得独立的 `tsconfig.tysel.json`。如果该 Tysel 专用配置已有显式 `files` 列表，`init` 要求其中包含选定入口和所有生成的类型化测试。验证时支持 TypeScript 配置文件允许的注释和尾随逗号。
+
+Wasm Component 应从已发布的 Rust 或 Go Component 起始项目及其版本匹配清单开始；请使用 [Rust](/docs/guides/wasm-component-rust) 或 [Go](/docs/guides/wasm-component-go) 指南，而不是 `tysel init`。
+
+```sh
+tysel init api --template http --manifest-format toml --yes
+tysel init . --package-json reuse --add-scripts --dry-run
+tysel init . --package-json reuse --add-scripts --dry-run --diff
+tysel init worker --template worker --manifest-format json --package-json none --yes
+tysel init tool --template mcp --package-json none --no-tests --yes
+```
+
+## `tysel config`
+
+定位、验证、检查、转换清单，或打印其 schema。
+
+| 子命令 | 语法 | 输出与行为 |
+| --- | --- | --- |
+| `path` | `tysel config path [--manifest FILE]` | 打印发现的路径。即使清单格式错误也可以定位。 |
+| `validate` | `tysel config validate [--manifest FILE]` | 加载并验证配置。 |
+| `show` | `tysel config show [--format toml\|json] [--manifest FILE]` | 打印实际配置，并展开省略的默认值。 |
+| `convert` | `tysel config convert --to toml\|json [-o FILE] [--manifest FILE]` | 转换已验证的清单。默认写入 stdout。 |
+| `schema` | `tysel config schema` | 打印附带的 Draft 2020-12 JSON Schema；无需项目。 |
+
+`config convert --output` 使用仅新建语义：绝不覆盖文件，父目录必须已经存在，文件扩展名必须与 `--to` 匹配。
+
+```sh
+tysel config validate
+tysel config show --format json
+tysel config convert --to json --output generated/tysel.json
+tysel config schema
+```
+
+所有字段请参阅[清单参考](/reference/manifest)，发现与接入工作流请参阅[项目与配置](/docs/concepts/projects-and-configuration)。

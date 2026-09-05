@@ -1,0 +1,179 @@
+---
+title: "安装 Tysel"
+description: "一套 Tysel 安装包含同一版本发布的三个原生可执行文件。"
+---
+
+一套 Tysel 安装包含同一版本发布的三个原生可执行文件：
+
+- `tysel` — CLI；
+- `tysel-service` — 原生服务运行时和构建 stub；
+- `tysel-worker` — isolated 执行配置使用的工作进程。
+
+请将它们作为一个整体安装和升级。只复制 `tysel` 会造成安装不完整。
+
+## 安装
+
+在 Linux 或 macOS（x64 或 arm64）上安装最新发布版本：
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh
+```
+
+托管安装不需要 Rust、Node.js、npm、管理员权限或 `sudo`。如果安装器修改了
+shell 启动文件，它会输出用于在当前 shell 中启用 `tysel` 的 `source`（或 `.`）
+命令。你也可以重新启动 shell。然后运行 `tysel doctor --install`。
+
+创建项目：
+
+```sh
+tysel init hello-tysel
+cd hello-tysel
+tysel check
+tysel test
+```
+
+每个原生版本都会发布匹配的 `@tysel/types`、`@tysel/test` 和 `@tysel/sdk` 包。
+安装这些可选的开发依赖可以获得编辑器类型声明、编译器反馈和 MCP schema 推断；
+Tysel 命令和打包后的生产可执行文件不需要 Node.js 或 `node_modules`。
+
+Rust Wasm 组件项目可以依赖 crates.io 中匹配版本的 `tysel-component-sdk` crate。
+它是客户程序开发库，不属于 Tysel 原生安装。签名的组件入门包也内置了 SDK，
+可用于版本匹配和离线构建。
+
+## 安装器选项
+
+选择一个不可变的已发布版本：
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh -s -- --version VERSION
+```
+
+从持续更新的 canary 渠道安装。最终的 `MAJOR.MINOR.PATCH` 版本属于 `stable`；
+带有 SemVer 预发布后缀的版本属于 `canary`：
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh -s -- --channel canary
+```
+
+指定 `--version` 时，会从经过认证且不可变的清单中读取该版本所属渠道。
+同时提供两个选项时，请求的渠道必须与清单一致。
+
+预览目标、路径和 URL，而不修改机器：
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh -s -- --dry-run
+```
+
+使用其他绝对托管根目录，或不修改 shell 启动文件：
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh -s -- \
+  --prefix "$HOME/Tools/tysel" --no-modify-path
+```
+
+`TYSEL_HOME` 也可以指定持久根目录。`TYSEL_DOWNLOAD_BASE` 仅保留给显式 CI fixture、
+可信镜像或企业发布端点使用。未知选项、相对根目录、不受支持的目标，以及属于其他
+用户的根目录都会被拒绝。
+
+默认目录布局如下：
+
+```text
+~/.tysel/
+  versions/vVERSION/bin/{tysel,tysel-service,tysel-worker}
+  build-targets/vVERSION/TARGET/bin/{tysel,tysel-service,tysel-worker}
+  bin -> versions/vVERSION/bin
+  state.json
+  trust.json
+  upgrade.lock
+```
+
+单个 `bin` 链接会同时启用三个可执行文件。系统会在启用前检查下载内容、校验和、
+签名、所选渠道指针、归档成员、发布清单、文件哈希、权限和二进制身份。健康的托管
+安装会先使用已安装的验证器，再执行下载的工具链。重新安装损坏的托管版本时，会用
+经过验证的暂存目录替换它。安装失败则恢复之前的链接、状态、信任策略、版本目录和
+shell 配置内容。只有当 `tysel build --target` 需要其他平台时才会创建
+`build-targets`；每套缓存工具链仍按版本保存，并可验证签名。
+
+## 诊断
+
+本地安装、平台和最近项目的检查不需要网络，也不会执行应用：
+
+```sh
+tysel doctor
+tysel doctor --install
+tysel doctor --project path/to/project
+tysel doctor --json
+```
+
+网络检查需要显式启用。它使用已安装的信任策略认证 stable 或 canary 渠道指针和
+不可变清单，然后检查目标资产：
+
+```sh
+tysel doctor --network
+```
+
+警告返回退出状态 0；检查失败返回 1。JSON 输出具有稳定的 schema 版本和检查 ID，
+适合支持工具使用。
+
+## 升级与回滚
+
+检查更新而不修改安装：
+
+```sh
+tysel upgrade --check
+```
+
+交互式升级，或在自动化中显式确认：
+
+```sh
+tysel upgrade
+tysel upgrade --yes --json
+```
+
+显式切换保存的滚动更新渠道：
+
+```sh
+tysel upgrade --channel canary
+tysel upgrade --channel stable
+```
+
+显式切换渠道可能回到数值上更低的 stable 版本；确认提示仍然适用。后续不带
+`--channel` 的升级会继续跟随已选渠道。已发布渠道按照 SemVer 优先级向前移动。
+
+如果原生版本已经是最新，但经过认证的信任策略发生了变化，`upgrade` 会在应用
+`trust-refresh` 前请求确认。JSON 输出使用 `action: "trust-refresh"` 和
+`changed: true` 报告这项修改；`--check` 绝不会更改 `trust.json`。
+
+选择一个不可变的已发布版本。降级还需要提供 `--force`：
+
+```sh
+tysel upgrade --version VERSION
+tysel upgrade --version OLDER_VERSION --force
+```
+
+回到保留的上一版本：
+
+```sh
+tysel upgrade --rollback
+```
+
+升级仅适用于托管安装。它会认证发布元数据和完整归档，在同一文件系统上暂存，
+原子切换唯一的 `bin` 链接，使用经过验证的暂存目录修复损坏的目标版本缓存，并在
+切换后运行安装诊断。失败时会恢复之前的版本及所有被替换的版本目录。解析发布元数据
+之前，升级会使用当前安装的策略认证独立于渠道的签名信任策略；升级成功时会在同一个
+回滚事务中轮换 `trust.json`。这条全局信任流可以防止从 canary 切回 stable 被误判
+为信任策略回滚。离线时间超过已安装策略有效期的系统必须通过官方 HTTPS bootstrap
+重新安装。策略资产缺失、元数据无效、信任过期或签名密钥不匹配时会以失败关闭，
+不会隐式修复。
+
+## 安全边界
+
+bootstrap 模型先使用 HTTPS 和发布版本的 SHA-256，再执行下载的 CLI；然后在启用前
+验证全局信任策略、清单和归档签名。内置的 bootstrap 信任根仍来自 HTTPS 分发源，
+因此这些检查无法独立防御该分发源本身遭到入侵。已有托管安装还要求每次替换信任策略
+都由已安装策略认证，并且版本单调递增。`tysel upgrade` 要求信任、渠道、清单和归档
+元数据均有有效签名。stable 只解析最终的 `MAJOR.MINOR.PATCH` 版本；canary 只解析
+预发布版本。每个原生版本都会配套发布匹配的 `@tysel/types`、`@tysel/test`、
+`@tysel/sdk` 应用 SDK 和 `tysel-component-sdk` 包。
+
+目前不支持 Windows 原生归档。请在 Windows 上使用 WSL。

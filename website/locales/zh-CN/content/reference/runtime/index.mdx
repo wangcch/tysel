@@ -1,0 +1,42 @@
+---
+title: "运行时参考"
+description: "Tysel 应用导出处理程序并使用浏览器风格的全局对象。HTTP 处理程序通过第二个参数接收 Tysel 能力宿主；为兼容旧代码和非 HTTP 处理程序，globalThis.tysel 仍然可用。"
+---
+
+Tysel 应用导出处理程序并使用浏览器风格的全局对象。HTTP 处理程序通过第二个参数接收 Tysel 能力宿主；为兼容旧代码和非 HTTP 处理程序，`globalThis.tysel` 仍然可用。`@tysel/types` 为编辑器和静态检查提供公开声明；它不会安装 JavaScript polyfill。
+
+```ts
+import type { TyselApp } from "@tysel/types";
+
+const app = {
+  async fetch(request, runtime) {
+    return new Response(`isolate ${runtime.isolateId} received ${request.method}`);
+  },
+} satisfies TyselApp;
+
+export default app;
+```
+
+## 界面索引
+
+| 界面 | 参考 |
+| --- | --- |
+| JSON 值、执行配置、信任模式和共享值类型 | [核心类型](/reference/runtime/types) |
+| 默认导出、HTTP 处理程序、cron、队列和 MCP 任务 | [应用模块](/reference/runtime/application) |
+| 密钥、SQLite、Postgres、Redis、文件系统、LLM 和 WebSocket API | [宿主能力](/reference/runtime/capabilities) |
+| 回放安全的工作流和信号 | [持久执行 API](/reference/runtime/durable) |
+| 测试声明、断言和处理程序调用 | [测试 API](/reference/runtime/testing) |
+| `Request`、`Response`、`Headers`、`fetch`、加密、定时器和其他全局对象 | [JavaScript API 参考](/reference/javascript) |
+
+## 稳定性边界
+
+公开应用代码应只使用：
+
+- 此处描述的默认应用导出；
+- 兼容性清单中列出的 Web 全局对象；
+- `@tysel/types` 声明的 `globalThis.tysel` 成员；
+- 测试模块中为 `@tysel/test` 记录的导出。
+
+以下划线开头的宿主钩子，以及来自内部运行时文件的导入，都不属于公开约定。`@tysel/types` 中的声明描述可接受的 TypeScript 结构；实际可用性仍取决于执行配置、清单授权和宿主配置。
+
+这三项可用性检查请参阅[能力矩阵](/docs/capabilities)，固定载荷边界请参阅[限额与默认值](/reference/limits-and-defaults)。

@@ -1,0 +1,116 @@
+---
+title: "文件系统"
+description: "本指南授予两个目录根，转换一个 UTF-8 JSON 文件，将结果写入独立输出根目录，并验证白名单之外的路径仍被拒绝。"
+---
+
+本指南授予两个目录根，转换一个 UTF-8 JSON 文件，将结果写入独立输出根目录，并验证白名单之外的路径仍被拒绝。
+
+## 准备根目录
+
+启动 Tysel 前先创建目录。运行时会将每个已配置根固定为目录，不会代为创建缺失的根目录：
+
+```sh
+mkdir -p input output
+printf '%s\n' '{"items":["alpha","beta"]}' > input/jobs.json
+```
+
+分别授予读写权限：
+
+```toml
+[app]
+name = "filesystem-transform"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+fs_read = ["./input"]
+fs_write = ["./output"]
+```
+
+项目命令从清单目录解析相对根目录，绝对根目录保持不变。打包后的可执行文件从进程工作目录解析相对运行时路径，因此生产环境必须设置稳定工作目录，或有意使用绝对部署根目录。
+
+`fs_read` 绝不隐含写权限，`fs_write` 也绝不隐含读权限。即使应用当前同时需要两者，也应保持分离。
+
+## 转换一个文件
+
+更新清单后生成能力环境：
+
+```sh
+tysel types
+```
+
+```ts
+import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "../tysel-env.js";
+
+export default {
+  async fetch(_request, runtime) {
+    const source = await runtime.fs.read("input/jobs.json");
+    const input = JSON.parse(source) as { items: string[] };
+    const result = {
+      count: input.items.length,
+      items: input.items.map((item) => item.toUpperCase()),
+    };
+    await runtime.fs.write("output/result.json", JSON.stringify(result, null, 2));
+    return Response.json(result);
+  },
+} satisfies TyselApp<TyselEnv>;
+```
+
+运行完整的[文件系统转换示例](https://github.com/wangcch/tysel/tree/main/examples/filesystem-transform)：
+
+```sh
+cd examples/filesystem-transform
+tysel check
+tysel inspect
+tysel run
+```
+
+在另一个终端运行：
+
+```sh
+curl -sS http://127.0.0.1:3000/transform
+cat output/result.json
+```
+
+两个命令都会显示两个转换为大写的条目。
+
+## 理解路径限制
+
+该能力在 Unix 平台上只接受 UTF-8 普通文件。每次读写限制为 1 MiB。写操作会以模式 `0644` 创建或截断最终文件；父目录必须已存在。
+
+Tysel 会拒绝：
+
+- 空路径，或没有对应根目录的操作；
+- 位于所有已声明根目录之外的路径；
+- 根目录或请求路径中的 `..` 穿越；
+- 固定根目录下的符号链接和 magic link 穿越；
+- 目录、FIFO、设备、套接字和其他非普通文件；
+- 读取无效 UTF-8；
+- 大于 1 MiB 的读写。
+
+访问前会固定根目录描述符。启动后即使将已配置目录路径替换为符号链接，后续操作也不会被重定向到原根目录之外。
+
+无需修改清单即可验证拒绝行为：
+
+```ts
+try {
+  await tysel.fs.read("./tysel.toml");
+  throw new Error("unexpected filesystem grant");
+} catch (error) {
+  console.log(String(error)); // path is not permitted
+}
+```
+
+不要向不受信任的调用方返回原始文件系统错误。应结合请求 ID 记录有边界的能力失败，并返回应用自行定义的错误。
+
+## 执行配置与部署差异
+
+- `service` 可通过匹配的根目录使用 JavaScript 文件系统客户端。
+- `isolated` 即使列出根目录也会拒绝文件系统调用。
+- `component` 使用带版本的 WIT 导入，并且还需要明确的打包部署授权；请参阅 [Component 能力](/reference/component/capabilities)。
+- 原生 JavaScript 文件系统限制要求 Unix。Windows 用户应使用 WSL，不能依赖隐式 Win32 路径行为。
+
+应在操作系统层将生产根目录以只读或读写方式挂载，与清单保持一致；激活前创建输出目录；并将临时或不受信任的上传内容放在应用源码和可执行文件路径之外。
+
+请参阅[文件系统权限](/reference/manifest/permissions#filesystem)、[宿主能力](/reference/runtime/capabilities#filesystem)和[限额与默认值](/reference/limits-and-defaults#data-capabilities)。

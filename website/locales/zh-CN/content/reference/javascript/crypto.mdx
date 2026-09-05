@@ -1,0 +1,26 @@
+---
+title: "Crypto"
+description: "Tysel JavaScript 运行时支持的 Crypto 约定。"
+---
+
+状态：`partial`。本页描述受支持的服务端子集，而非完整的浏览器规范。
+下列清单以外的行为不属于兼容性约定。
+
+事实来源：`runtime-js/web-api/compatibility.json`
+（稳定的 `tysel-server-web-subset`）。
+
+## 支持
+
+- getRandomValues
+- SHA-256/384/512 摘要
+- 导入原始 HMAC 密钥以及签名和验证
+
+## 不支持
+
+- randomUUID
+- 导出密钥
+- 加密
+- 非对称算法
+
+另请参阅 [JavaScript API 索引](/reference/javascript)和
+[npm 兼容性指南](/docs/compatibility)。

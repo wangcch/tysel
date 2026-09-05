@@ -1,3 +1,7 @@
+import { publishedLocales, sourceLocale } from "@/lib/i18n/config";
+import { availablePaths } from "@/lib/i18n/pages";
+import { localePath } from "@/lib/i18n/routing";
+import { alternates } from "@/lib/i18n/seo";
 import type { MetadataRoute } from "next";
 import { getBlogPosts, getBlogUpdatedAt } from "@/lib/blog";
 import { referenceSource, source } from "@/lib/source";
@@ -26,5 +30,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.85,
   }));
 
-  return [...productPages, ...blogPages, ...contentPages];
+  const localizedPages = publishedLocales().filter((locale) => locale !== sourceLocale).flatMap((locale) =>
+    availablePaths(locale).map((pathname) => ({ url: canonicalUrl(localePath(pathname, locale)) })));
+  return [...productPages, ...blogPages, ...contentPages, ...localizedPages].map((page) => ({
+    ...page,
+    alternates: { languages: alternates(new URL(page.url).pathname.replace(/\/$/, "") || "/").languages },
+  }));
 }

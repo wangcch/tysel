@@ -24,3 +24,8 @@ yarn-error.log*
 .env*.local
 .vercel
 next-env.d.ts
+# Prepared, reviewed translations (sources live in locales/)
+/content/translations/
+
+# Locale routes are emitted only when at least one target locale is published.
+/app/(localized)/

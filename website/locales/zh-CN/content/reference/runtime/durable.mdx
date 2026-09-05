@@ -1,0 +1,78 @@
+---
+title: "持久 API"
+description: "持久处理程序记录副作用边界，使中断的工作可以恢复，而不会重复已经提交的外部操作。"
+---
+
+持久处理程序记录副作用边界，使中断的工作可以恢复，而不会重复已经提交的外部操作。
+
+```ts
+interface DurableContext {
+  step<T>(name: string, operation: () => MaybePromise<T>): Promise<T>;
+  effect<T>(name: string, operation: () => MaybePromise<T>): Promise<T>;
+  sleep(duration: number | string): Promise<void>;
+  waitForSignal<T = JsonValue>(name: string): Promise<T>;
+  retry<T>(policy: DurableRetryPolicy,
+    operation: (attempt: number) => MaybePromise<T>): Promise<T>;
+  now(): Date;
+  random(): number;
+}
+```
+
+## 边界
+
+| 方法 | 记录的约定 |
+| --- | --- |
+| `step` | 持久化可回放的计算结果。 |
+| `effect` | 持久化外部副作用的结果。 |
+| `sleep` | 按数字或字符串时长持久化暂停状态。 |
+| `waitForSignal` | 暂停，直至收到具名 JSON 信号。 |
+| `retry` | 根据重试策略记录每次有界尝试。 |
+| `now` | 返回回放安全的 `Date`。 |
+| `random` | 返回回放安全的随机值。 |
+
+传给 `step` 和 `effect` 的名称以及信号名称都属于持久化历史。应保持这些名称稳定，并按顺序 `await` 持久边界。输入、边界结果、信号和处理程序结果都必须可序列化为 JSON。
+
+## 重试策略
+
+```ts
+interface DurableRetryPolicy {
+  maxAttempts?: number;
+  delay?: number | string;
+  factor?: number;
+  maxDelay?: number | string;
+}
+```
+
+数字形式的 `delay` 和 `maxDelay` 以毫秒为单位；两者也接受运行时的时长字符串格式。`factor` 控制退避增长系数。
+
+## 处理程序示例
+
+```ts
+import type { DurableContext, TyselApp } from "@tysel/types";
+
+const app: TyselApp = {
+  durable: {
+    async provision(ctx: DurableContext, input) {
+      const id = await ctx.step("allocate-id", () => ({ value: cryptoValue() }));
+      await ctx.effect("notify", () => notifyOwner(id));
+      const approval = await ctx.waitForSignal("approval");
+      return { id, approval };
+    },
+  },
+};
+
+export default app;
+```
+
+示例中的应用函数如果其结果没有被记录边界包裹，就必须自身具备确定性。
+
+## 控制 API
+
+```ts
+const status = tysel.durable.start("provision", input);
+tysel.durable.sendSignal(status.taskId, "approval", { approved: true });
+```
+
+`start` 返回已完成结果或暂停状态。`sendSignal` 为等待中的工作流追加一个 JSON 信号。
+
+持久输入和结果限制为 1 MiB；其他历史、信号和程序边界列在[限额与默认值](/reference/limits-and-defaults)中。修改存在运行中实例的处理程序之前，请阅读[持久执行](/docs/concepts/durable-execution)。

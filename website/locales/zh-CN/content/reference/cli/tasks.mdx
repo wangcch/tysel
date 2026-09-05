@@ -1,0 +1,54 @@
+---
+title: "任务与协议命令"
+description: "列出或执行清单原生工作流。"
+---
+
+## `tysel task`
+
+列出或执行清单原生工作流。
+
+```text
+tysel task [NAME] [--list] [--manifest FILE]
+```
+
+使用 `--list` 时，命令会打印已配置的任务。指定 `NAME` 时，它会按照依赖顺序解析一次依赖并执行每个 argv 步骤。任何步骤失败都会停止工作流。步骤继承选定的项目根目录和清单。
+
+```sh
+tysel task --list
+tysel task verify
+```
+
+任务步骤是参数数组，并非 shell 命令。可接受的命令和验证规则请参阅[清单任务](/reference/manifest/tasks)。
+
+## `tysel queue`
+
+向已注册的队列处理程序提交一条 JSON 消息，并打印结果。
+
+```text
+tysel queue <NAME> [ENTRY] [--input JSON] [--message-id ID] [--manifest FILE]
+```
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `NAME` | 必填 | 已注册的队列名称。 |
+| `ENTRY` | 清单入口 | 可选的入口覆盖值。 |
+| `--input` | `null` | 传递给处理程序的 JSON 值。 |
+| `--message-id` | 自动生成 | 由调用方提供的稳定消息标识符。 |
+
+JSON 格式错误、队列未知或处理程序失败时，命令会以非零状态退出。
+
+```sh
+tysel queue orders --input '{"id":"ord_123"}' --message-id msg_1
+```
+
+## `tysel mcp`
+
+通过有边界、以换行分隔的标准输入输出提供已注册的 MCP 工具。
+
+```text
+tysel mcp [ENTRY] [--manifest FILE]
+```
+
+`ENTRY` 会覆盖 `app.entry`。协议输入和输出专用于 MCP 消息；人类可读的诊断信息会单独写出。工具注册来自应用 `tasks` 导出中 `kind: "mcp"` 的条目。
+
+队列和 MCP 处理程序类型请参阅[应用模块](/reference/runtime/application)，协议边界请参阅[限额与默认值](/reference/limits-and-defaults)。

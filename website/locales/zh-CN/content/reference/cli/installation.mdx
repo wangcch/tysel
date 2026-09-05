@@ -1,0 +1,49 @@
+---
+title: "安装生命周期命令"
+description: "诊断安装、平台和项目状态。"
+---
+
+## `tysel doctor`
+
+诊断安装、平台和项目状态。
+
+```text
+tysel doctor [-C PROJECT_OR_MANIFEST] [--install] [--network] [--json]
+```
+
+| 选项 | 行为 |
+| --- | --- |
+| `--install` | 重点检查托管安装的健康状态。 |
+| `--network` | 主动启用网络诊断；默认检查仅在本地进行。 |
+| `--json` | 将机器可读的诊断报告写入 stdout。 |
+
+为保持向后兼容，该命令还接受 `--project`，其值可以是项目目录或明确的清单路径。其他命令使用全局 `-C` 指定目录，并使用 `--manifest` 指定确切文件。
+
+## `tysel upgrade`
+
+以原子方式检查、更新或回滚托管安装。
+
+```text
+tysel upgrade [OPTIONS]
+```
+
+| 选项 | 默认值 | 行为 |
+| --- | --- | --- |
+| `--check` | 关闭 | 报告是否有可用更新，但不安装。 |
+| <code>{"--version <version>"}</code> | 当前渠道版本 | 选择一个确切且不可变的版本，并采用其清单渠道。 |
+| <code>{"--channel <stable\\\|canary>"}</code> | 已安装渠道 | 选择并持久保存一个滚动更新渠道。 |
+| `--yes` | 关闭 | 不提示，直接确认。 |
+| `--force` | 关闭 | 即使常规保护条件会跳过，也重新安装。 |
+| `--rollback` | 关闭 | 恢复之前的托管安装。 |
+| `--json` | 关闭 | 将机器可读结果写入 stdout。 |
+
+```sh
+tysel doctor --install
+tysel upgrade --check --json
+tysel upgrade --channel canary --yes
+tysel upgrade --channel stable --yes
+tysel upgrade --version 0.2.0 --yes
+tysel upgrade --rollback
+```
+
+`upgrade` 仅适用于托管安装。路径、校验和平台支持请参阅[安装](/docs/install)，镜像和安装根目录控制请参阅[环境变量](/reference/environment)。

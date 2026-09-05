@@ -1,0 +1,52 @@
+---
+title: "清单任务"
+description: "可选的 [tasks] 映射以 Tysel 参数向量定义项目工作流，无需平台 shell 或 package.json scripts。"
+---
+
+可选的 `[tasks]` 映射以 Tysel 参数向量定义项目工作流，无需平台 shell 或 `package.json` scripts。
+
+```toml
+[tasks.verify]
+description = "Check and test"
+steps = [
+  ["check"],
+  ["test"],
+]
+
+[tasks.release]
+depends = ["verify"]
+steps = [["build", "--release"]]
+```
+
+## 任务对象
+
+| 字段 | 是否必需 | 约定 |
+| --- | --- | --- |
+| `description` | 否 | 人类可读字符串或 `null`。 |
+| `depends` | `depends` 或 `steps` 至少一个 | 在当前任务之前执行的唯一任务名称。 |
+| `steps` | `depends` 或 `steps` 至少一个 | 有序且非空的 argv 数组。 |
+
+任务名称以字母或数字开头，后续可包含字母、数字、`:`、`_` 或 `-`。`depends` 和 `steps` 至少有一个非空。加载清单时会拒绝未知依赖、依赖环、重复依赖和空步骤。
+
+## 步骤命令
+
+每个步骤的第一个参数必须是以下命令之一：
+
+```text
+check  test  build  inspect  compat  run  dev  mcp  queue  image
+```
+
+步骤不能调用 `init`、`config`、`task`、`doctor`、`upgrade`、`bench` 或 `release`。同时禁止 `--`、`-C`、`--project`、`--project-dir` 和 `--manifest`，防止步骤脱离选定项目。
+
+运行器不会调用 shell。每个字符串都是一个参数，因此管道、重定向、展开和 shell 引号规则均不适用。
+
+## 执行
+
+```sh
+tysel task --list
+tysel task verify
+```
+
+依赖按依赖顺序执行一次。步骤按声明顺序执行，并继承任务的项目根目录和清单。第一个失败步骤会停止工作流，并使命令以非零状态退出。
+
+调用方式请参阅 [`tysel task`](/reference/cli/tasks)，工作流设计指南请参阅[项目与配置](/docs/concepts/projects-and-configuration)。

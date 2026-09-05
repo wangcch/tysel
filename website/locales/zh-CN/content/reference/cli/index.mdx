@@ -1,0 +1,47 @@
+---
+title: "CLI 参考"
+description: "tysel 可执行文件用于管理项目、验证兼容性、运行应用并生成交付验证材料。本节记录当前的命令界面；已安装的二进制文件始终是最终依据。"
+---
+
+`tysel` 可执行文件用于管理项目、验证兼容性、运行应用并生成交付验证材料。本节记录当前的命令界面；已安装的二进制文件始终是最终依据。
+
+## 全局语法
+
+```text
+tysel [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS]
+```
+
+| 选项 | 默认值 | 含义 |
+| --- | --- | --- |
+| <code>{"--error-format <human\|json>"}</code> | `human` | 设置 stderr 错误格式；JSON 模式还会输出 `dev` 诊断流。 |
+| <code>{"-C, --project <directory>"}</code> | 当前目录 | 从另一个项目目录发现并运行。`--project-dir` 是别名。 |
+| `-h, --help` | — | 打印帮助。 |
+| `-V, --version` | — | 打印已安装版本。 |
+
+全局选项可以写在子命令之前或之后。`-C` 不能与命令级的 `--manifest` 同时使用。
+
+## 项目选择
+
+项目命令会向上搜索唯一的 `tysel.toml` 或 `tysel.json`。如果同一目录中两者并存，发现过程会失败，而不会自行猜测。发现清单后，相对入口、存储和文件系统根目录均以清单所在目录为基准解析。
+
+```sh
+tysel -C services/worker check
+tysel run --manifest services/worker/tysel.toml
+```
+
+## 命令分组
+
+| 分组 | 命令 |
+| --- | --- |
+| 项目设置 | [`init`, `config`](/reference/cli/project) |
+| 开发 | [`check`, `types`, `compat`, `test`, `dev`, `run`, `inspect`](/reference/cli/development) |
+| 任务与协议 | [`task`, `queue`, `mcp`](/reference/cli/tasks) |
+| 交付 | [`build`, `image`](/reference/cli/delivery) |
+| 安装 | [`doctor`, `upgrade`](/reference/cli/installation) |
+| 验证材料 | [`bench`, `release`](/reference/cli/evidence) |
+
+## 退出状态与输出流约定
+
+成功的命令以状态 `0` 退出；验证、策略、测试、构建、基准门禁和运行时失败会以非零状态退出。人类可读诊断与致命 JSON 错误写入 stderr。通过 `test --json`、`compat --json` 和 `bench --format json` 等标志请求的命令报告写入 stdout。
+
+在自动化流程中解析 CLI 输出前，请先阅读[错误与机器可读输出](/reference/errors-and-output)。

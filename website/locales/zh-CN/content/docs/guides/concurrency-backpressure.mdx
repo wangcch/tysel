@@ -1,0 +1,92 @@
+---
+title: "并发与背压"
+description: "本指南配置服务工作线程和 HTTP 准入，使过载受到限制且清晰可见，而不会形成无界队列。"
+---
+
+本指南配置服务工作线程和 HTTP 准入，使过载受到限制且清晰可见，而不会形成无界队列。
+
+## 从一个工作线程开始
+
+每个 `service` 工作线程都有独立的 QuickJS 隔离实例、全局作用域和内存预算。应从一个工作线程开始，先将共享状态外置，再增加数量：
+
+```toml
+[server]
+workers = 1
+
+[limits]
+memory_mb = 128
+request_timeout_ms = 15000
+max_in_flight = 100
+max_request_mb = 4
+max_response_mb = 8
+```
+
+只有 `service` 执行配置允许 `workers` 在 1 至 64 之间。`isolated` 和 Component 应用要求 `workers = 1`。增加数量会成倍增加隔离实例内存预算，并不会让模块全局变量变为共享状态。
+
+## 理解准入许可
+
+HTTP 监听器共享 `max_in_flight`。Tysel 会在分派请求前尝试获取许可：
+
+- 没有许可时立即返回 HTTP `503`；
+- JSON 错误码为 `OVERLOADED`；
+- 响应包含 `Retry-After: 1`；
+- Tysel 不会创建无界等待队列；
+- 许可保持到响应正文完成或响应被丢弃；
+- 已接受的 WebSocket 会持续占用许可，直至升级后的连接关闭。
+
+将 `max_in_flight = 0` 会有意拒绝所有请求，可用作熔断器。零不表示无限制。
+
+## 选择初始值
+
+可使用测得的服务时间和目标吞吐量进行初步估算：
+
+```text
+in-flight demand ≈ peak requests/second × p95 service time in seconds
+```
+
+增加一个较小且明确的突发余量，再对完整部署进行负载测试。例如，每秒 200 个请求、p95 为 250 ms 时，可从约 50 个并发请求开始，再加上选定的突发余量。这只是容量估算假设，并非通用建议。
+
+如果 WebSocket 共用监听器，应为其预期并发生存期预留容量，或在运维层面拆分工作负载。少量持久套接字就可能长期耗尽较小的准入限额。
+
+## 验证过载行为
+
+运行服务，然后使用团队的负载工具生成超过配置限额的并发请求。直接检查响应约定：
+
+```sh
+curl -i http://127.0.0.1:3000/slow
+```
+
+过载期间，客户端应观察到如下响应：
+
+```http
+HTTP/1.1 503 Service Unavailable
+content-type: application/json
+retry-after: 1
+
+{"error":{"code":"OVERLOADED","message":"maximum in-flight request limit reached","requestId":"…"}}
+```
+
+只应自动重试幂等操作。调用方应使用有上限、带抖动的指数退避；`Retry-After: 1` 是最短时间提示，并非要求所有客户端同时重试。
+
+## 按正确顺序调优
+
+1. 限制请求和响应正文。
+2. 将请求截止时间设为短于调用方和 Ingress 的截止时间。
+3. 在具有代表性的 CPU、SQL、LLM 和流式工作负载下测量单个工作线程。
+4. 根据观察到的服务时间和可接受的排队程度设置准入限额。
+5. 只有处理程序无状态，且 CPU 或隔离实例调度已被证明是瓶颈时，才增加工作线程。
+6. 重新检查内存、启动时间、p95/p99 延迟、`503` 比例和 WebSocket 生存期。
+
+增加工作线程或 `max_in_flight` 可能加剧内存压力和尾延迟。两项设置都不能替代上游连接池、数据库边界、提供商并发限额或部署级 CPU 与内存控制。
+
+## 故障解读
+
+| 现象 | 可能的边界 | 处理方式 |
+| --- | --- | --- |
+| 立即返回 `503 OVERLOADED` | HTTP 准入已满 | 降低需求、缩短处理时间，或谨慎提高经过测量的限额。 |
+| `413 BODY_TOO_LARGE` | 请求正文限额 | 更早拒绝或分块；只有明确的载荷需求才提高限额。 |
+| `500 RESPONSE_TOO_LARGE` | 响应正文限额 | 分页、在边界内流式传输，或减少输出。 |
+| 运行时超时 | 处理程序截止时间 | 限制上游调用，并使 Ingress 截止时间长于 Tysel。 |
+| 增加工作线程后内存增长 | 每个隔离实例的预算倍增 | 减少工作线程或状态；确认外部存储和缓存策略。 |
+
+请参阅[应用限额](/reference/manifest/limits)、[限额与默认值](/reference/limits-and-defaults)以及[性能验证材料](/docs/performance)。

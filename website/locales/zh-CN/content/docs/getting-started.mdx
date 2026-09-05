@@ -1,0 +1,125 @@
+---
+title: "快速开始"
+description: "创建、验证、运行并打包一个 HTTP 服务。"
+---
+
+创建、验证、运行并打包一个 HTTP 服务。
+
+## 安装
+
+```sh
+curl -fsSL https://tysel.dev/install.sh | sh
+tysel doctor --install
+```
+
+托管安装包含 Tysel CLI 和原生运行时。完成这条上手路径不需要 Rust、
+Node.js、npm，也不需要检出 Tysel 源码。
+
+## 创建并运行
+
+```sh
+tysel init hello-tysel --yes
+cd hello-tysel
+tysel task verify
+tysel dev
+```
+
+`--yes` 会采用生成的 HTTP 服务默认配置。在另一个终端中运行：
+
+```sh
+curl http://127.0.0.1:3000/hello
+```
+
+预期响应：
+
+```json
+{
+  "message": "Hello from Tysel",
+  "path": "/hello"
+}
+```
+
+按 `Ctrl-C` 停止开发服务器。
+
+如果要接入现有项目、使用其他模板或 JSON 清单，或者采用不同的包集成方式，
+请参阅[项目与配置](/docs/concepts/projects-and-configuration#choose-the-files-you-need)
+中的命令矩阵。
+
+## 编写 Fetch 处理函数
+
+生成的 `src/index.ts` 会导出一个 Fetch 风格的应用：
+
+```ts
+import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "../tysel-env.js";
+
+export default {
+  async fetch(request) {
+    return Response.json({
+      message: "Hello from Tysel",
+      path: new URL(request.url).pathname,
+    });
+  },
+} satisfies TyselApp<TyselEnv>;
+```
+
+`tysel-env.d.ts` 根据清单生成。修改权限后，请刷新并验证它：
+
+```sh
+tysel types
+tysel types --check
+tysel check
+tysel compat
+```
+
+`compat` 报告依赖所作的环境假设，不能替代应用测试。
+
+## 授予能力
+
+出站资源在声明前默认不可访问。例如：
+
+```toml
+[permissions]
+fetch = ["api.example.com"]
+secrets = ["API_TOKEN"]
+```
+
+清单请求所需权限，执行配置和部署策略还可以进一步收紧权限。请参阅
+[清单字段索引](/reference/manifest#complete-field-index)和
+[能力矩阵](/docs/capabilities)。
+
+## 构建单个可执行文件
+
+```sh
+tysel task release
+./dist/hello-tysel
+```
+
+发布任务会先运行生成的验证流程，然后执行 `tysel build --release`。
+目标机器只需要这个可执行文件，无需 Node.js 或 `node_modules`。
+
+默认情况下，可执行文件面向当前宿主平台。托管安装也可以在验证并缓存版本相同的
+官方运行时后，为其他受支持的 Linux 或 macOS x64/arm64 目标打包：
+
+```sh
+tysel build --release --target linux-arm64 \
+  --output dist/hello-tysel-linux-arm64
+```
+
+验证并缓存该目标运行时后，可以使用 `--offline`。
+
+构建容器时，请使用监听地址为 `0.0.0.0:3000` 的完整清单。macOS 宿主可以先用
+`--target` 构建 Linux 可执行文件，再通过 `tysel image --binary` 传入该文件。
+请参阅[容器镜像](/docs/guides/container-image)。
+
+## 在 CI 中使用
+
+```sh
+tysel --error-format json check
+tysel compat --json --strict
+tysel test --json
+tysel build --release
+```
+
+致命 JSON 错误写入 stderr，测试和兼容性报告写入 stdout。部署前请阅读
+[生产运维](/docs/operations/production)。

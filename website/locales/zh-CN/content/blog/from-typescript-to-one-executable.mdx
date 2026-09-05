@@ -1,0 +1,231 @@
+---
+title: "从 TypeScript 到单一可执行文件"
+description: "从项目检查到生成发布验证材料，逐步了解 Tysel 如何将 TypeScript 应用打包为一个可执行文件。"
+author: "Tysel"
+date: "2026-09-03T10:00:00Z"
+cover: "/blog/from-typescript-to-one-executable/hero.jpg"
+coverAlt: "五个宽阔的源码平面经过一道青柠色构建接缝汇聚成一个完整的可执行文件块"
+tags:
+  - build
+  - typescript
+  - delivery
+---
+
+> 要理解“交付一个可执行文件”，需要先看清它是怎样构建出来的。
+
+Tysel 最简短的承诺很容易记住：编写 TypeScript，交付二进制文件。从工程角度看，更值得了解的是从编写到交付经历了哪些步骤，以及最终产物包含和不包含什么。
+
+Tysel 不会把 TypeScript 直接转换为原生机器指令。构建时，它先检查应用并生成 JavaScript 代码包，再将代码和相关配置封装后嵌入原生运行时。启动后，其中的 JavaScript 由 QuickJS 隔离实例执行。Rust 宿主管理套接字、存储、机密信息、限制、执行配置和持久调度。
+
+这里的“原生”指最终交付的产物：一个操作系统可执行文件，其中包含应用及运行它所需的运行时。
+
+## 输入
+
+Tysel 项目从三类输入开始：
+
+```text
+TypeScript source
+project dependencies
+tysel.toml or tysel.json
+```
+
+清单是唯一的 Tysel 项目配置文件。`package.json` 和 `tsconfig.json` 可以辅助开发，但不能替代或覆盖清单。应用入口、执行配置、监听地址、权限请求、资源限制、持久存储、可观测性需求和项目任务，都由清单声明。
+
+一个最小 HTTP 服务可以完全不请求宿主能力：
+
+```toml
+schema_version = 1
+
+[app]
+name = "hello-service"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+
+[permissions]
+
+[limits]
+memory_mb = 64
+cpu_ms_per_turn = 50
+request_timeout_ms = 30000
+max_in_flight = 256
+```
+
+清单中的未知字段会被视为错误。相对路径以发现的项目根目录为基准解析，任何试图逃逸该根目录的操作都会被拒绝。
+
+## 第 1 步：检查项目配置与兼容性
+
+打包前，Tysel 会验证清单，并检查项目是否符合所选运行时约定：
+
+```sh
+tysel check
+tysel compat --strict --deny-unknown
+tysel inspect
+```
+
+这些命令回答彼此相关但不同的问题：
+
+- 清单结构是否有效？
+- TypeScript 项目能否成功通过检查？
+- 依赖图能否纳入受支持的兼容性范围？
+- 哪些能力和限制会实际生效？
+- 应用使用的能力是否与清单一致？
+
+Node.js 内置模块、原生扩展、子进程和动态库不在应用约定范围内。应在生产构建前找出对这些功能的依赖，避免部署到目标机器后才暴露问题。
+
+`tysel types --check` 还可以验证清单限定的 TypeScript 环境是否为最新状态。类型为开发者提供反馈；权限最终仍由运行时检查并执行。
+
+## 第 2 步：报告类型检查状态并打包 TypeScript
+
+项目包含 `tsconfig.tysel.json` 或 `tsconfig.json` 且本地存在 TypeScript 编译器时，构建会使用 `--noEmit` 运行该编译器，并在出现类型错误时停止。如果任一条件不满足，构建会报告跳过类型检查，然后继续。要求类型检查成功的发布流水线应将报告的状态作为准入判定，而不能假定打包成功就证明类型正确。
+
+随后，构建会根据 TypeScript 入口点生成 JavaScript 代码包和源映射。开发期间仍可以使用 npm 包、编辑器工具和 TypeScript 声明。生产层面的承诺范围更窄：运行打包应用的机器不需要安装这些工具。
+
+打包也建立了清晰的兼容性边界。能够解析为受支持 JavaScript 的依赖可以纳入代码包。依赖 Node 专用全局变量或原生行为的包必须明确分类，而不能默认它能够运行。
+
+代码包是应用代码，并非整个运行时。QuickJS 和宿主能力位于原生可执行文件存根中。
+
+## 第 3 步：创建应用程序包
+
+应用程序包包含以下内容：
+
+```text
+JavaScript bundle
+source map
+validated manifest
+compatibility metadata
+```
+
+程序包把代码与构建时验证过的配置绑定在一起，记录该应用的入口、执行配置、监听地址、能力请求和资源限制。
+
+源映射仍有助于诊断，但目标环境启动服务时不需要原始 TypeScript 源码树。当前源映射包含 `sourcesContent`，因此打包产物内部存在源码文本。将应用源码视为敏感信息的团队在检查和分发可执行文件时应考虑这一点。
+
+## 第 4 步：选择并验证运行时
+
+为本机平台构建时，Tysel 使用匹配的本地运行时存根。也可以为以下受支持的目标平台打包：
+
+- `linux-x64`；
+- `linux-arm64`；
+- `darwin-x64`；
+- `darwin-arm64`。
+
+```sh
+tysel build --release \
+  --target linux-arm64 \
+  --output dist/orders-linux-arm64
+```
+
+这是经过验证的跨目标打包，而不是原生运行时交叉编译。当目标平台与宿主不同时，Tysel 会验证同版本的官方运行时、目标平台、发布清单、归档签名和文件哈希，然后将该运行时放入受管理缓存。
+
+`--offline` 会拒绝网络访问，并要求缓存中已经存在经过验证的目标运行时。跨目标构建显式指定的 `--stub` 必须与经过验证的官方运行时逐字节一致。
+
+这些校验确保跨目标打包使用的是经过验证的运行时，避免借此替换成来源不明的文件。
+
+## 第 5 步：嵌入程序包
+
+原生运行时与应用程序包会合并到 `--output` 选择的可执行文件中：
+
+```text
+native Tysel runtime
+        +
+embedded application package
+        =
+one executable
+```
+
+启动时，宿主读取嵌入的程序包，强制执行其执行配置和限制，创建所需的 QuickJS 隔离实例或工作进程边界，并且只公开已准入的运行时能力。
+
+目标机器不需要 Node.js、V8、npm 或 `node_modules`。它仍需要与所选产物兼容的操作系统和架构，以及该可执行文件需要的系统库。“单一可执行文件”并不意味着“能在所有内核和架构上运行”。
+
+## 第 6 步：生成发布记录
+
+使用 `--release` 时，可执行文件只是产物集的一员：
+
+| 文件 | 用途 |
+| --- | --- |
+| 可执行文件 | 嵌入应用的原生运行时 |
+| `.sha256` | 可执行文件摘要 |
+| `.compat.json` | 运行时和程序包的兼容性判定 |
+| `.sbom.cdx.json` | 应用产物和嵌入式运行时清单的 CycloneDX 1.5 文档 |
+| `.licenses.json` | 运行时组件许可证清单 |
+| `.evidence.json` | 将产物与伴随文件关联起来的索引 |
+
+这些伴随文件有意保持独立。运行服务只需要可执行文件；审计并判断该版本是否允许发布，则需要完整文件集。请按可执行文件摘要将它们存放在一起，不要独立重新生成或编辑其中一个文件。
+
+运行时清单会列举 Tysel 嵌入的原生组件。目前，打包的 npm 依赖不会作为独立 SBOM 组件列出，因此应用依赖锁定、审查和许可证策略仍由项目负责。
+
+所以，不应将“单一二进制文件”理解为“把所有发布信息隐藏在一个不透明文件中”。可执行文件用于启动服务，发布验证材料用于审查和核验，两者可以分别交付和使用。
+
+## 一次实际构建会输出什么
+
+撰写本文时，我们在 `darwin-arm64` 上使用仓库中的发布构建工具，构建了随仓库提供的 `hello-service` 示例，输出摘要如下：
+
+```text
+Type check       passed
+Bundle           143 B
+Capabilities     sqlite
+Runtime          service
+Executable       12.6 MB
+Target           darwin-arm64
+```
+
+输出目录包含：
+
+```text
+hello-service
+hello-service.sha256
+hello-service.compat.json
+hello-service.sbom.cdx.json
+hello-service.licenses.json
+hello-service.evidence.json
+```
+
+这只是一次实际构建的结果，不代表所有应用都能达到相同体积。它使用已经构建好的本地 Tysel 工具链和极小的参考应用。不同的应用、目标平台、依赖图或运行时版本可能产生不同大小的可执行文件。
+
+校验和文件包含可执行文件的 SHA-256，独立计算的 SHA-256 与之一致。验证材料 JSON 另行记录了规范目标平台、产物大小和产物摘要。这些检查能够确定伴随文件描述的是所生成的文件，但不能证明不同且未统一配置的构建机器能够生成逐字节相同的产物。
+
+## 哪些内容可以复现
+
+Tysel 会记录源码提交、目标平台、应用标识、兼容性判定、运行时清单、产物哈希、SBOM、许可证和构建关系。运维人员可以依据部署方管理的信任策略对该集合签名和验证。
+
+这些验证材料证明某一产物及其伴随文件属于同一集合，却不承诺任意构建宿主都能生成逐字节相同的可执行文件。发布流水线仍需控制工具链版本、操作系统、依赖状态、源码修订版本和目标平台。
+
+一个实用的发布流程如下：
+
+```sh
+tysel doctor --install
+tysel task verify
+tysel inspect
+tysel build --release --target linux-arm64 --output dist/orders
+tysel release sign dist/orders --key /secure/offline-release.key
+tysel release verify dist/orders --trust deploy/trust.json
+```
+
+签名密钥和信任策略由部署方管理。机密信息的值、数据库 URL 和凭据不应进入产物验证材料。
+
+## 容器仍是可选项
+
+单一可执行文件可以直接由服务管理器运行，也可以放入精简的容器镜像。`tysel image` 会创建以非 root 身份运行的 Linux 容器上下文，并能复制已验证的发布伴随文件以供准入，而无需将它们放入运行时镜像。
+
+容器仍能提供有价值的分发、文件系统、身份和编排边界。Tysel 产物减少了容器需要组装的内容，但容器或宿主策略仍然不可或缺。
+
+## 将各项检查串成完整的构建流程
+
+因此，完整路径如下：
+
+```text
+source and manifest
+  → validation
+  → reported TypeScript-check state and bundle
+  → compatibility decision
+  → application package
+  → authenticated runtime selection
+  → one native executable
+  → release evidence and optional signature
+```
+
+这一流程的价值不仅是得到一个便于分发的文件，还在于应用代码、权限请求、运行时、目标平台和发布验证材料都经过了同一套构建检查。
+
+请按照[可复现发布指南](/docs/guides/reproducible-release)操作，或查阅完整的 [`tysel build` 参考](/reference/cli/delivery#tysel-build)。

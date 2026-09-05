@@ -1,0 +1,76 @@
+---
+title: "持续交付约定"
+description: "本页定义 CI、镜像仓库与部署平台之间的产物交接。Tysel 不创建晋级记录，也不部署到镜像仓库。"
+---
+
+本页定义 CI、镜像仓库与部署平台之间的产物交接。Tysel 不创建晋级记录，也不部署到镜像仓库。以下命令和记录字段属于运维方管理的约定。
+
+## 流水线阶段
+
+| 阶段 | 必需输入 | 必需输出 |
+| --- | --- | --- |
+| 验证 | 源码和完整部署清单 | 通过检查和测试 |
+| 构建 | 已验证源码及选定的受支持 Linux 目标 | 发布可执行文件及五个已验证伴随文件 |
+| 打包 | 已准入的可执行文件及匹配清单 | 包含该可执行文件的 OCI 镜像 |
+| 发布 | 带版本镜像 | 镜像仓库中的镜像或 OCI 索引摘要 |
+| 晋级 | 准入验证材料和镜像仓库摘要 | 固定到已准入摘要的平台变更 |
+
+不要在环境之间重新构建。应将同一可执行文件和镜像摘要从测试环境晋级到生产环境。
+
+## 构建并保存验证材料
+
+```sh
+tysel task verify --manifest tysel.container.toml
+tysel build --release \
+  --target linux-x64 \
+  --manifest tysel.container.toml \
+  --output dist/hello-service
+
+tysel image \
+  --manifest tysel.container.toml \
+  --binary dist/hello-service \
+  --copy-sidecars \
+  --image-version VERSION \
+  --context-only \
+  --output-dir dist/image
+```
+
+`--copy-sidecars` 会验证可执行文件及全部五个发布伴随文件，再确认记录的目标与 ELF 架构一致，然后将它们复制到生成的 Dockerfile 旁。Dockerfile 只将可执行文件复制进运行时镜像。应将伴随文件归档为 CI 验证材料，不能依赖从运行中的容器里找到它们。
+
+## 添加源码标签并发布
+
+生成的上下文已经标记应用标题、执行配置、运行时版本、应用版本和可执行文件摘要。构建时添加由源码方管理的元数据：
+
+```sh
+docker build \
+  --label org.opencontainers.image.source=https://github.com/OWNER/REPOSITORY \
+  --label org.opencontainers.image.revision=COMMIT \
+  --tag registry.example/hello-service:VERSION \
+  dist/image
+
+docker push registry.example/hello-service:VERSION
+docker buildx imagetools inspect registry.example/hello-service:VERSION
+```
+
+部署应使用镜像仓库检查返回的摘要。本地镜像 ID 和 `io.tysel.artifact.digest` 标签都不是镜像仓库摘要。镜像仓库身份验证、签名、漏洞策略和准入仍由平台负责。
+
+使用仓库内的多阶段 Dockerfile 时，通过 `docker build --label` 传入相同 OCI 标签。其源码构建阶段不会自动向外层 CI 作业公开经过验证的可执行文件摘要；除非 CI 已独立提取并验证该摘要，否则应省略对应标签。
+
+## 晋级记录
+
+记录格式由平台管理。至少保留下列值，并且不要将一种摘要写入其他摘要字段：
+
+| 字段 | 来源 |
+| --- | --- |
+| 源码修订 | 版本控制检出 |
+| 清单身份 | 构建使用的确切部署清单 |
+| 可执行文件 SHA-256 | `io.tysel.artifact.digest` 和已验证的 `.sha256` 伴随文件 |
+| 兼容性、SBOM、许可证、验证材料 | 四个匹配的发布伴随文件 |
+| 应用版本 | `org.opencontainers.image.version` |
+| 源码与修订标签 | OCI 镜像配置 |
+| 镜像或 OCI 索引摘要 | 发布后镜像仓库的响应 |
+| 上一个已准入镜像摘要 | 用于回滚的部署历史 |
+
+伴随文件验证失败、可执行文件摘要标签与已准入可执行文件不同，或缺少镜像仓库摘要时，晋级必须失败。回滚应选择上一个已准入的镜像仓库摘要，而不是重新构建旧源码标签。
+
+请参阅[容器镜像](/docs/guides/container-image)、[可复现发布](/docs/guides/reproducible-release)和[生产运维](/docs/operations/production)。

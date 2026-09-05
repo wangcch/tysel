@@ -1,0 +1,85 @@
+---
+title: "开发与测试命令"
+description: "本页所有命令都接受 --manifest <file>，用于选择一个清单，而不使用向上查找。"
+---
+
+本页所有命令都接受 `--manifest <file>`，用于选择一个清单，而不使用向上查找。
+
+## 静态验证
+
+| 命令 | 选项 | 约定 |
+| --- | --- | --- |
+| `tysel check` | `--manifest` | 验证清单、打包、TypeScript、能力使用和 Node 内置模块使用情况。 |
+| `tysel types` | `--output`、`--check`、`--manifest` | 生成或验证限定于清单的 TypeScript 能力环境。 |
+| `tysel compat` | `--json`、`--strict`、`--deny-unknown`、`--manifest` | 根据兼容性目录对导入和依赖进行分类。 |
+| `tysel inspect` | `--manifest` | 打印实际生效的能力和限额。 |
+
+`compat --strict` 应用该命令的严格兼容性策略；`--deny-unknown` 还会把未分类依赖视为失败。如果 CI 作业需要报告而非人类可读文本，请使用 `--json`。
+
+## `tysel types`
+
+```text
+tysel types [-o FILE] [--check] [--manifest FILE]
+```
+
+根据实际生效的清单生成 `tysel-env.d.ts`。导出的 `TyselEnv` 包含核心运行时工具，以及清单声明的 `service` 能力。密钥名称会成为字符串字面量；文件系统读写方法独立选择；只读 Postgres 只公开 `query`；只读 Redis 只公开 `get` 和 `exists`。`tysel init` 会为类型化项目生成该文件，并自动将入口模块连接到 `TyselApp<TyselEnv>`。
+
+使用生成的环境类型收窄应用处理程序：
+
+```ts
+import type { TyselApp } from "@tysel/types";
+import type { TyselEnv } from "../tysel-env.js";
+
+export default {
+  async fetch(_request, runtime) {
+    return Response.json({ isolateId: runtime.isolateId });
+  },
+} satisfies TyselApp<TyselEnv>;
+```
+
+`--output` 必须保持为项目根目录下的相对路径。`--check` 不会写入文件；声明缺失或过期时以非零状态退出。更改清单权限后应在 CI 中运行该命令。运行时强制检查始终是最终依据；生成的类型不会授予能力。LLM 提供商配置目前位于清单之外，因此不会自动加入 `TyselEnv`。全局 Web `fetch` 声明也无法收窄到清单中的主机名，仍必须依靠运行时白名单强制检查。
+
+## `tysel test`
+
+```text
+tysel test [PATHS]... [--filter TEXT] [--list] [--timeout-ms MILLISECONDS] [--json] [--manifest FILE]
+```
+
+`PATHS` 默认为 `tests/`。每个测试文件在新的 QuickJS 隔离实例中运行。单项测试超时默认为 `5000` 毫秒。`--json` 将测试报告写入 stdout；断言失败或超时会以非零状态退出。
+
+`--filter`（短形式 `-t`）运行名称包含 `TEXT` 的测试。它也接受 `--list --json` 返回的确切测试 ID，因此即使名称重复，工具仍可选择单项测试。没有匹配项时以非零状态退出。`--list` 只发现测试，不运行测试体。其 JSON 报告包含稳定的项目相对 ID 和源码位置，供编辑器集成使用。
+
+```sh
+tysel test
+tysel test -t "health endpoint"
+tysel test --list --json
+tysel test tests/http.test.ts --timeout-ms 10000 --json
+```
+
+测试声明和断言请参阅 [`@tysel/test` API](/reference/runtime/testing)。
+
+## `tysel dev`
+
+```text
+tysel dev [ENTRY] [--manifest FILE]
+```
+
+打包并提供应用服务，监视项目文件，并在成功重新构建后重新加载。显式 `ENTRY` 会覆盖本次运行的 `app.entry`。开发模式可以读取 `.env`，但只有声明的密钥以及具名 Postgres 和 Redis 连接会通过宿主能力暴露。
+
+启动和重新加载时，dev 会验证清单并同步默认的 `tysel-env.d.ts`，然后构建应用。输出相同时不会写入，生成的声明发生变化也不会触发再次重新加载。清单被拒绝时，会保留原声明和正在运行的应用。清单有效时，即使随后的源码构建失败，也可以更新类型。
+
+Dev 拒绝覆盖用户所有的声明文件，也不会沿输出符号链接写入。自定义的 `tysel types --output` 目标仍需手动维护。CI 中使用 `tysel types --check`，它绝不更新文件。`tysel run` 和 `tysel check` 同样不会改动生成的类型。
+
+`tysel dev` 拒绝 `.wasm` Component 入口。Component 是一次性任务；请使用 `tysel run`，并在 stdin 上提供一个 JSON 值。
+
+## `tysel run`
+
+```text
+tysel run [ENTRY] [--manifest FILE]
+```
+
+打包并提供应用服务，但不监视文件。显式 `ENTRY` 会覆盖本次运行的 `app.entry`。相对于运行时的路径从所选项目根目录解析。
+
+对于 `.wasm` Component，`run` 不会启动服务器。它验证 Component，通过有边界的 stdin/stdout 执行一次，然后退出。本地运行会根据已检查的清单推导 Component 文件系统部署权限。请参阅 [Wasm Component](/reference/component)。
+
+HTTP 和进程行为请参阅[应用与服务器](/reference/manifest/app-server)以及[错误与机器可读输出](/reference/errors-and-output)。

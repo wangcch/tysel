@@ -149,10 +149,16 @@ html > body[data-scroll-locked] {
   margin-inline: 0;
 }
 
-.blog-prose :where(table):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
-  display: block;
+/* Fill the column when content is narrow; scroll instead of crushing wide tables. */
+.blog-prose .blog-table-scroll {
+  max-width: 100%;
   overflow-x: auto;
-  white-space: nowrap;
+  margin-block: 1.25em;
+}
+
+.blog-prose .blog-table-scroll > table {
+  width: 100%;
+  margin-block: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

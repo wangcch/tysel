@@ -1,6 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import { T, SourceText } from "@/components/locale-provider";
+import { SiteLink as Link } from "@/components/locale-provider";
 import {
   formatGate,
   formatMeasured,
@@ -116,7 +117,7 @@ function MetricRow({
       <div className="min-w-0">
         <div className="flex items-baseline justify-between gap-3 sm:block">
           <p className="text-sm font-medium tracking-tight text-white/85">
-            {row.metric}
+            <SourceText text={row.metric} />
           </p>
           <p
             className={`font-mono text-[11px] tracking-[0.14em] sm:hidden ${
@@ -130,11 +131,11 @@ function MetricRow({
             }`}
             style={{ opacity: 0.35 + progress * 0.65 }}
           >
-            {status}
+            <SourceText text={status} />
           </p>
         </div>
         <p className="mt-1 max-w-md text-xs leading-5 text-white/40">
-          {row.detail}
+          <SourceText text={row.detail} />
         </p>
         <div className="mt-3 max-w-sm">
           <div className="flex items-baseline justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.12em] text-white/35">
@@ -176,7 +177,7 @@ function MetricRow({
         }`}
         style={{ opacity: 0.35 + progress * 0.65 }}
       >
-        {status}
+        <SourceText text={status} />
       </p>
     </article>
   );
@@ -203,28 +204,28 @@ export function AdmissionScoreboard({
       <div className="grid gap-4 border-b border-white/10 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end sm:gap-6 sm:px-8 sm:py-6">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/40">
-            CI admission · Linux x64
+            <T id="ui.ci.admission.linux.x64" />
           </p>
           {claim ? (
             <p className="font-heading mt-2 text-3xl tracking-tighter sm:text-4xl">
               <span className="text-tysel-lime">{shownPassed}</span>
               <span className="text-white/35">/{rows.length}</span>
               <span className="ml-2 text-xl text-white/65 sm:text-2xl">
-                clear
+                <T id="ui.clear" />
               </span>
             </p>
           ) : sample ? (
             <p className="font-heading mt-2 text-3xl tracking-tighter text-white/55 sm:text-4xl">
-              Sample layout
+              <T id="ui.sample.layout" />
             </p>
           ) : (
             <p className="font-heading mt-2 text-3xl tracking-tighter text-white/35 sm:text-4xl">
-              Waiting on CI
+              <T id="ui.waiting.on.ci" />
             </p>
           )}
           {sample ? (
             <p className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-white/30">
-              Not a CI claim
+              <T id="ui.not.a.ci.claim" />
             </p>
           ) : null}
         </div>
@@ -236,7 +237,7 @@ export function AdmissionScoreboard({
               {provenance.memoryKind.toUpperCase()}
             </p>
             {sample ? (
-              <p className="text-white/30">illustrative snapshot</p>
+              <p className="text-white/30"><T id="ui.illustrative.snapshot" /></p>
             ) : (
               <>
                 <p>
@@ -253,14 +254,14 @@ export function AdmissionScoreboard({
                         href={provenance.workflowRunUrl}
                         className="text-white/70 underline-offset-4 hover:text-white hover:underline"
                       >
-                        CI run
+                        <T id="ui.ci.run" />
                       </Link>
                     </>
                   ) : null}
                 </p>
                 {provenance.fetchedAt ? (
                   <p className="text-white/30">
-                    fetched {provenance.fetchedAt}
+                    <T id="ui.fetched" /> {provenance.fetchedAt}
                   </p>
                 ) : null}
               </>
@@ -268,7 +269,7 @@ export function AdmissionScoreboard({
           </div>
         ) : (
           <p className="max-w-xs font-mono text-[11px] leading-5 text-white/30 sm:text-right">
-            Gates stay public. Measured cells fill from{" "}
+            <T id="ui.gates.stay.public.measured.cells.fill.from" />{" "}
             <span className="text-white/50">benchmark-evidence-linux-x64</span>.
           </p>
         )}
@@ -287,7 +288,7 @@ export function AdmissionScoreboard({
       </div>
 
       <div className="border-t border-white/10 px-5 py-2.5 font-mono text-[10px] leading-5 text-white/30 sm:flex sm:justify-between sm:gap-6 sm:px-8">
-        <p>Admit on p50 · Linux PSS · regression budget, not capacity</p>
+        <p><T id="ui.admit.on.p50.linux.pss.regression.budget.not" /></p>
         {provenance && !sample ? (
           <p className="mt-1 truncate sm:mt-0 sm:max-w-md sm:text-right">
             {provenance.os} {provenance.arch}

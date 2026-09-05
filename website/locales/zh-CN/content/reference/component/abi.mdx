@@ -1,0 +1,55 @@
+---
+title: "Component ABI"
+description: "Tysel 的公开 Component 入口点是带版本的 world：tysel:component/task@0.4.0。"
+---
+
+Tysel 的公开 Component 入口点是带版本的 world：`tysel:component/task@0.4.0`。
+
+## WIT 约定
+
+```wit
+package tysel:component@0.4.0;
+
+world task {
+    export run: func(input: string) -> result<string, string>;
+}
+```
+
+唯一事实来源：`wit/component/task.wit`。
+
+输入字符串和成功输出字符串都必须包含一个有效的 UTF-8 JSON 值。宿主在实例化前验证输入，并在来宾完成 canonical ABI 清理后验证输出。JSON 可以是对象、数组、字符串、数字、布尔值或 `null`。
+
+错误分支是有长度限制、供人阅读的诊断字符串，无需包含 JSON。
+
+## 必需的导出结构
+
+Component 必须导出名为 `run` 的顶层函数，其参数和结果必须与上文完全一致。以下情况无法通过验证：
+
+- 输入是 Core WebAssembly 模块，而非 Component 二进制文件；
+- Component 没有 `run`；
+- `run` 的参数或结果有增减或不同；
+- 宿主边界上的 JSON 格式错误或超过大小限制。
+
+仅有文件扩展名并不能通过验证。`.wasm` 路径会选择 Component 构建流程，随后 Tysel 会解析并验证 Component Model 二进制文件。
+
+宿主从结构上验证导出函数。顶层 Component 函数不会保留来源 WIT 包的身份，因此 Tysel 无法区分产生完全相同 `run` 结构的其他包或版本。Tysel 包中记录的 `0.4.0` 标识其打包器使用的约定；该版本无法单独从来宾中提取。
+
+## 版本兼容性
+
+| 约定 | 当前值 | 兼容规则 |
+| --- | --- | --- |
+| Component 任务 ABI | `0.4.0` | 宿主要求与上文完全一致的 `run` 结构；打包器记录该约定版本。 |
+| 文件系统能力 ABI | `0.4.0` | 只准入确切实现的导入。 |
+| 受限 WASI 导入 | `0.2.x` | 只接受白名单中的语言运行时接口。 |
+
+Component ABI 仍处于实验阶段。版本变化应视为来宾和打包应用的重新构建边界。Tysel 会在可执行文件中保留可移植源码，但这无法使不兼容的 WIT 导入或导出变得兼容。
+
+## SDK 分派
+
+宿主会在调用前验证输入。生成的来宾绑定收到字符串后，Rust 和 Go SDK 辅助函数会在处理程序解码和结果编码前后再次实施相同的 JSON 与字节边界：
+
+```text
+JSON string → decode → typed/raw handler → encode → JSON string
+```
+
+这些辅助函数不会生成 WIT 绑定。绑定生成仍取决于来宾语言和工具链。请参阅 [Rust SDK](/reference/component/rust-sdk) 和 [Go SDK](/reference/component/go-sdk)。

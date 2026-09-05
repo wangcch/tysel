@@ -1,0 +1,50 @@
+---
+title: "部署 Component 任务"
+description: "本页适用于清单中 app.profile = 'component' 的应用。Component 是一次性 JSON 任务，不是 HTTP 服务。"
+---
+
+本页适用于清单中 `app.profile = "component"` 的应用。Component 是一次性 JSON 任务，不是 HTTP 服务。`tysel image` 会拒绝该执行配置，因为它生成的是包含监听器和暴露端口约定的 HTTP 服务镜像。
+
+## 构建约定
+
+为目标架构构建打包后的可执行文件。如果存在经过验证、版本相同的官方目标运行时，构建宿主可以与目标不同：
+
+```sh
+tysel build --release \
+  --target linux-x64 \
+  --manifest tysel.toml \
+  --output dist/task
+```
+
+请将可执行文件及其五个发布伴随文件放在一起，以供准入和回滚使用。可执行文件会从 stdin 读取一个 JSON 值直至 EOF，调用 Component 一次，向 stdout 写入一个 JSON 值并附加换行符，然后退出。输入和输出各自限制为 1 MiB。
+
+## 仅运行时容器
+
+需要容器调度器时，可以直接打包可执行文件：
+
+```dockerfile
+ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
+FROM ${RUNTIME_IMAGE}
+WORKDIR /task
+COPY --chown=65532:65532 dist/task /task/task
+USER 65532:65532
+ENTRYPOINT ["/task/task"]
+```
+
+构建并在连接 stdin 的情况下调用：
+
+```sh
+docker build --tag registry.example/component-task:VERSION .
+printf '%s\n' '{"job":"example"}' \
+  | docker run --rm --interactive registry.example/component-task:VERSION
+```
+
+最终镜像只需要可执行文件。除非镜像仓库的准入流程明确要从构建上下文读取发布伴随文件，否则应将它们保留在运行时镜像之外。
+
+## 调度器集成
+
+进程监督器可以将 JSON 通过管道写入 stdin，并把退出状态和 stdout 作为任务结果。Kubernetes Job 清单无法直接为容器 stdin 提供任意 JSON 值。请使用由部署方维护的启动器，从队列、对象存储、挂载文件或其他受控来源读取输入，再调用打包后的可执行文件。Tysel 不提供该启动器。
+
+不要为 Component 任务配置 HTTP Service、Ingress、就绪探针或监听器。请在调度器中配置 CPU、内存、截止时间、重试、密钥和输出保留策略。
+
+调用方式和资源限额请参阅 [Component 运行时与 WASI](/reference/component/runtime)。构建来宾组件请使用 [Rust](/docs/guides/wasm-component-rust) 或 [Go](/docs/guides/wasm-component-go) 指南。

@@ -1,0 +1,72 @@
+---
+title: "Rust Component SDK"
+description: "Rust Component 项目应使用与已安装 Tysel 次版本匹配的已发布 crate。"
+---
+
+状态：**实验性且带版本**。Rust Component 项目应使用与已安装 Tysel 次版本匹配的已发布 crate：
+
+```toml
+tysel-component-sdk = "0.2.0"
+```
+
+发布起始项目同样是自包含的：它内置相同版本的 SDK，并使用 `tysel-component-sdk = { path = "sdk/tysel-component-sdk" }`。自己的项目可以使用 crates.io 依赖；如果可复现或离线构建起始项目更重要，则保留内置的路径依赖。
+
+## 来宾接口
+
+```rust
+pub trait Task {
+    type Input: serde::de::DeserializeOwned;
+    type Output: serde::Serialize;
+
+    fn run(input: Self::Input) -> Result<Self::Output, String>;
+}
+
+pub fn dispatch<T: Task>(input: &str) -> Result<String, String>;
+```
+
+`dispatch` 验证并解码 JSON、调用 `Task::run`、序列化结果，并强制实施 1 MiB 输入、1 MiB 输出和 4 KiB 错误信息的边界。
+
+## WIT 绑定
+
+SDK 不生成绑定。来宾使用 `wit-bindgen` 处理 `wit/component`，并将生成的 `Guest::run` 连接到 `dispatch`：
+
+```rust
+use serde::{Deserialize, Serialize};
+use tysel_component_sdk::{dispatch, Task};
+
+wit_bindgen::generate!({
+    path: "wit/component",
+    world: "task",
+});
+
+#[derive(Deserialize)]
+struct Input { value: serde_json::Value }
+
+#[derive(Serialize)]
+struct Output { value: serde_json::Value }
+
+struct Echo;
+
+impl Task for Echo {
+    type Input = Input;
+    type Output = Output;
+
+    fn run(input: Input) -> Result<Output, String> {
+        Ok(Output { value: input.value })
+    }
+}
+
+struct Component;
+
+impl Guest for Component {
+    fn run(input: String) -> Result<String, String> {
+        dispatch::<Echo>(&input)
+    }
+}
+
+export!(Component);
+```
+
+发布起始项目固定使用 `wit-bindgen` `0.57.1`，先构建 `wasm32-unknown-unknown` 核心模块，再由 `wasm-tools` `1.247.0` 封装为 Component。这些是经过验证的固定样例版本，不代表开放式的工具链兼容性承诺。
+
+经过测试的命令请参阅[构建 Rust Component](/docs/guides/wasm-component-rust)，宿主验证规则请参阅 [Component ABI](/reference/component/abi)。

@@ -1,0 +1,23 @@
+---
+title: "JavaScript API"
+description: "受支持的服务端 Web API 子集。每个页面都定义一个全局对象的兼容性约定。"
+---
+
+Tysel 实现了一个有明确边界的服务端 Web API 执行配置。需要查询全局对象时使用这些页面；
+需要完成具体工作流时，请使用[指南](/docs/guides)。
+
+`partial` 表示列出的行为属于受支持约定，并不表示完整实现了对应的浏览器规范。
+机器可读清单位于 `runtime-js/web-api/compatibility.json`。
+
+| API | 状态 |
+| --- | --- |
+| [URL 与 URLSearchParams](/reference/javascript/url) | `partial` |
+| [Headers](/reference/javascript/headers) | `partial` |
+| [Request 与 Response](/reference/javascript/request) | `partial` |
+| [TextEncoder 与 TextDecoder](/reference/javascript/textencoder) | `partial` |
+| [定时器](/reference/javascript/timers) | `supported` |
+| [Event 与 EventTarget](/reference/javascript/event) | `partial` |
+| [AbortController 与 AbortSignal](/reference/javascript/abortcontroller) | `partial` |
+| [Crypto](/reference/javascript/crypto) | `partial` |
+| [fetch](/reference/javascript/fetch) | `partial` |
+| [WebSocket](/reference/javascript/websocket) | `partial` |

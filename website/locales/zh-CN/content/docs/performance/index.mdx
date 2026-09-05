@@ -1,0 +1,24 @@
+---
+title: "性能与验证材料"
+description: "Tysel 记录基准测试方法，使体积、启动、内存、隔离实例、持久执行、任务和 HTTP 的结果可以复现，而不是成为缺少依据的性能宣传。"
+---
+
+Tysel 记录基准测试方法，使体积、启动、内存、隔离实例、持久执行、任务和 HTTP 的结果可以复现，而不是成为缺少依据的性能宣传。请测量你准备部署的版本、应用和目标环境；公开的基准测试结果并非普遍保证。
+
+## 运行基准测试
+
+```sh
+tysel bench startup
+tysel bench all --format json
+tysel bench all --evidence dist/benchmark-evidence.json
+```
+
+完整的验证材料需要以发布模式、完整规模运行 `all`。材料会记录原始样本、产物摘要、源码提交、命令、CPU、操作系统、目标平台，以及可用的 p50/p95/p99 数值。短时或单样本测量会省略没有依据的尾部百分位数。
+
+Linux PSS 是正式采用的内存结果。macOS RSS 仅作为开发阶段的近似值。只有当产物、环境、命令和测量规模相同时，结果才适合比较。
+
+各套件的准备方法和结果解读见[基准测试 README](https://github.com/wangcch/tysel/tree/main/benchmarks)。只有同时提供产生该数值的产物、环境、命令和验证材料文档时，才应发布精确数值。
+
+特定能力的验证材料：
+
+- [Redis 提供程序与 QuickJS 端到端评估](/docs/performance/redis)

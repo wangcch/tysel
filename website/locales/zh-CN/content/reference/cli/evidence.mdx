@@ -1,0 +1,42 @@
+---
+title: "基准测试与发布验证材料"
+description: "运行基准测试套件，并按需记录验证材料。"
+---
+
+## `tysel bench`
+
+运行基准测试套件，并按需记录验证材料。
+
+```text
+tysel bench <SUITE> [OPTIONS]
+```
+
+`SUITE` 可取 `startup`、`memory`、`isolate`、`task`、`durable`、`http` 或 `all`。
+
+| 选项 | 默认值 | 含义 |
+| --- | --- | --- |
+| <code>{"--format <human\|json>"}</code> | `human` | 选择报告格式。 |
+| <code>{"--evidence <path>"}</code> | — | 写入带版本的验证材料文档。 |
+| <code>{"--source-commit <sha>"}</code> | 尽可能自动发现 | 记录源码身份。 |
+| <code>{"--command <text>"}</code> | 自动生成的调用命令 | 记录用于复现的命令。 |
+| `--allow-unavailable` | — | 已弃用的兼容选项。 |
+
+完整的发布验证材料要求以发布模式、完整规模运行 `all`。当外部依赖不可用时，可选测量可以标记为 `skipped`；只有文档明确列出的准入指标会导致门禁失败。
+
+## `tysel release`
+
+签名和验证应用发布材料。
+
+| 子命令 | 必需参数 | 重要选项 |
+| --- | --- | --- |
+| `sign` | <code>{"<ARTIFACT> --key <key>"}</code> | 签名验证材料产物。 |
+| `verify` | <code>{"<ARTIFACT> --trust <key>"}</code> | 验证材料签名。 |
+| `key-info` | <code>{"--key <key>"}</code> | 打印公钥信息。 |
+
+`sign` 和 `verify` 接收一个应用可执行文件，验证其完整的发布伴随文件集，并创建或检查 `<artifact>.evidence.sig.json`。
+
+`sign` 和 `key-info` 接受的 `--key` 文件必须是 UTF-8 文本，其中包含一个以恰好 64 个十六进制字符编码的 32 字节 Ed25519 私钥。它必须是大小不超过 256 字节的普通文件。在 Unix 上，必须关闭所有组用户和其他用户权限；模式 `0600` 可以通过检查。
+
+私有签名材料不得存储在仓库中或通过日志传递。请使用子命令的 `--help` 查看已安装版本所采用的确切验证材料格式。
+
+完整产物流转请参阅[可复现的应用发布](/docs/guides/reproducible-release)，测量方法和准入策略请参阅[性能与验证材料](/docs/performance)。

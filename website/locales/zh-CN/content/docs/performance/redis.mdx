@@ -1,0 +1,90 @@
+---
+title: "Redis 性能评估"
+description: "本报告同时测量有边界的 Rust Redis 提供程序，以及公开 tysel.redis 路径经过 QuickJS、能力策略、宿主 I/O 反应器、Promise 结算、值转换和 HTTP 响应处理的性能。"
+---
+
+本报告同时测量有边界的 Rust Redis 提供程序，以及公开 `tysel.redis` 路径经过 QuickJS、能力策略、宿主 I/O 反应器、Promise 结算、值转换和 HTTP 响应处理的性能。
+
+这些结果是本地对比材料，并非生产容量承诺。
+
+## 环境
+
+- 日期：2026-08-27
+- 宿主：Apple M5 Pro、arm64、macOS 26.6
+- 容器虚拟机：Podman、8 个 CPU、4096 MiB 内存
+- Redis：7.4.9、Linux arm64、jemalloc，禁用 RDB 和 AOF
+- Rust Redis 客户端：0.32.7，发布构建
+- 传输：回环地址转发至 Podman 虚拟机；无 TLS、身份验证或集群
+- 方法：三个测量轮次，每轮轮换模式顺序；表格报告轮次中位数
+- 每轮提供程序样本：16 B 和 1 KiB 各 3,000 个；64 KiB 为 750 个
+- 每轮端到端样本：16 B 和 1 KiB 各 1,000 个；64 KiB 为 250 个
+
+每次基准测试都会创建限定于进程和时间范围的键。清理守卫会在成功或栈展开时删除这些键；运行后扫描确认没有遗留 `tysel:*` 键。
+
+## 提供程序微基准测试
+
+`bounded Redis` 使用与 Tysel 相同的原子 `GETRANGE + EXISTS` 事务，但不包含 Tysel 的验证、并发门禁和运行时值转换。
+
+### 顺序 GET
+
+| 值大小 | 原始 Redis ops/s | 有边界 Redis ops/s | Tysel 提供程序 ops/s | 提供程序 p50 | 提供程序 p95 |
+|---:|---:|---:|---:|---:|---:|
+| 16 B | 2,730 | 2,533 | 2,654 | 362.3 us | 412.0 us |
+| 1 KiB | 2,723 | 2,575 | 2,566 | 376.2 us | 415.0 us |
+| 64 KiB | 2,489 | 2,136 | 2,067 | 476.7 us | 542.6 us |
+
+原子有界读取语义造成了小值 GET 差异中的大部分。大值剩余开销包括 UTF-8 验证和运行时字符串实体化。
+
+### 顺序 SET
+
+| 值大小 | 原始 Redis ops/s | Tysel 提供程序 ops/s | 提供程序 p50 | 提供程序 p95 |
+|---:|---:|---:|---:|---:|
+| 16 B | 2,677 | 2,660 | 360.1 us | 399.1 us |
+| 1 KiB | 2,643 | 2,737 | 352.8 us | 397.4 us |
+| 64 KiB | 1,353 | 1,292 | 723.5 us | 861.9 us |
+
+SET 与原始客户端表现接近。正向差异来自测量波动，不能证明包装层使 Redis 更快。
+
+## QuickJS 端到端基准测试
+
+端到端处理程序会一次加载到包含四个工作线程的 `IsolatePool` 中。每个测量操作都通过复用的隔离实例分派 HTTP 请求。`runtime-noop` 路由执行相同的分派和响应处理，但不调用 Redis，用于对比运行时基线。
+
+### 顺序操作
+
+| 操作 | 值大小 | Runtime-noop p50 | `tysel.redis` p50 | `tysel.redis` p95 | ops/s |
+|---|---:|---:|---:|---:|---:|
+| GET | 16 B | 26.8 us | 362.4 us | 412.0 us | 2,486 |
+| GET | 1 KiB | 23.2 us | 358.5 us | 401.0 us | 2,723 |
+| GET | 64 KiB | 25.7 us | 394.6 us | 427.5 us | 2,508 |
+| SET | 16 B | 24.4 us | 355.3 us | 383.5 us | 2,793 |
+| SET | 1 KiB | 23.2 us | 358.0 us | 388.4 us | 2,772 |
+| SET | 64 KiB | 22.8 us | 620.2 us | 780.0 us | 1,447 |
+
+在该经虚拟机转发的本地环境中，可复用 QuickJS 请求路径在 p50 下约增加 20–30 us；Redis/网络时间主导端到端结果。
+
+### 四路并发吞吐量
+
+| 操作 | 16 B | 1 KiB | 64 KiB |
+|---|---:|---:|---:|
+| GET | 8,850 ops/s | 9,049 ops/s | 5,712 ops/s |
+| SET | 9,539 ops/s | 9,854 ops/s | 2,505 ops/s |
+
+四路并发调用覆盖受支持的 Redis 在途上限。更高并发有意不纳入本次基准测试。
+
+## 复现
+
+```sh
+podman run --rm -d --name tysel-redis-bench \
+  -p 127.0.0.1:16379:6379 \
+  docker.io/library/redis:7-alpine \
+  redis-server --save '' --appendonly no
+
+TYSEL_REDIS_BENCH_URL=redis://127.0.0.1:16379 \
+cargo run --release --locked -p tysel-cap-redis --example benchmark
+
+TYSEL_REDIS_BENCH_URL=redis://127.0.0.1:16379 \
+cargo run --release --locked -p tysel-engine-qjs \
+  --example redis_end_to_end_benchmark
+```
+
+两个工具都会输出每轮原始结果，并在其后输出 `median` CSV 行。需要不同测量规模时，可覆盖 `TYSEL_REDIS_BENCH_ROUNDS`、`TYSEL_REDIS_BENCH_ITERS` 或 `TYSEL_REDIS_E2E_BENCH_ITERS`。

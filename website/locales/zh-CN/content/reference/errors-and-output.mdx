@@ -1,0 +1,106 @@
+---
+title: "错误与机器可读输出"
+description: "Tysel 将人类可读诊断与稳定 JSON 信封分离。自动化流程应明确选择机器可读模式，并分别解析 stdout 和 stderr。"
+---
+
+Tysel 将人类可读诊断与稳定 JSON 信封分离。自动化流程应明确选择机器可读模式，并分别解析 stdout 和 stderr。
+
+## CLI 退出状态
+
+| 状态 | 含义 |
+| --- | --- |
+| `0` | 命令成功完成。 |
+| 非零 | 验证、兼容性策略、测试、构建、基准门禁、运行时或命令用法失败。 |
+
+不要仅根据数字状态推断具体失败类型。请使用选定的 JSON 报告或致命错误信封。
+
+## CLI 致命错误
+
+该选项为全局选项，可出现在命令之前或之后：
+
+```sh
+tysel --error-format json check
+```
+
+致命错误以单个 JSON 对象写入 stderr。当 Oxc 提供 span 时，构建失败还会包含带原始源码位置的 `diagnostics` 数组：
+
+```json
+{
+  "error": {
+    "code": "TYSEL_CLI_ERROR",
+    "message": "manifest validation failed: ..."
+  },
+  "diagnostics": [{
+    "code": "TYSEL_PARSE_ERROR",
+    "message": "...",
+    "severity": "error",
+    "phase": "parse",
+    "file": "src/index.ts",
+    "start": { "line": 4, "column": 7, "byteOffset": 52 },
+    "end": { "line": 4, "column": 8, "byteOffset": 53 }
+  }]
+}
+```
+
+`code` 目前统一为 `TYSEL_CLI_ERROR`；`message` 用于人类诊断，不能作为稳定的程序化判别字段。该致命错误路径以状态 `1` 退出。
+
+单项静态诊断使用以下稳定错误码：
+
+| 错误码 | 含义 |
+| --- | --- |
+| `TYSEL_MANIFEST_PARSE_ERROR` | TOML/JSON 语法分析或反序列化失败。 |
+| `TYSEL_MANIFEST_INVALID` | 清单语义规则验证失败。 |
+| `TYSEL_NODE_BUILTIN_UNSUPPORTED` | 运行时导入请求 Node 内置模块。 |
+| `TYSEL_IMPORT_UNRESOLVED` | 无法解析运行时导入。 |
+
+清单诊断使用 `manifest` 阶段；导入诊断使用 `resolve`。清单验证报告第一个失败，并在可用时提供字段范围。缺失字段可能没有范围，解析器错误也可能指向插入位置或所在表。导入诊断覆盖构建解析器可达的模块，包括依赖，并指向原始 TypeScript 源码，而非生成的 JavaScript。已擦除的纯类型导入不会包含在内。TypeScript 类型检查输出仍是编译器文本，不属于该结构化协议。
+
+## 开发诊断流
+
+服务器持续运行期间，`tysel --error-format json dev` 会在每次诊断更新时向 stderr 写入一个 JSON 对象。重新加载失败时发布非空数组；下一次成功重新加载会发布空数组，使编辑器可以清除过期诊断。`generation` 随每次重新加载尝试递增，当前 `schemaVersion` 为 `1`。
+
+未处理的处理程序失败会发布独立的 `runtimeDiagnostic` 事件，其中包含一项经过源码映射的诊断和十六进制 `requestId`。它表示一次事件，并不会替换当前构建诊断快照。运行时堆栈限制为 64 KiB，并通过容量为 64 项的有界队列传递。队列溢出时，Tysel 会在恢复输出后发出 `TYSEL_DIAGNOSTICS_DROPPED`。行号和列号从一开始；编译器提供的 `byteOffset` 是从零开始的 UTF-8 偏移量。
+
+## 命令报告
+
+机器可读命令报告写入 stdout：
+
+```sh
+tysel test --json
+tysel compat --json
+tysel bench all --format json
+tysel doctor --json
+tysel upgrade --check --json
+```
+
+命令完成分析但发现策略或测试失败时，JSON 报告可以与非零状态同时出现。必须同时检查两者。应保留 stderr，以接收阻止报告生成的致命准备错误。
+
+## HTTP 错误信封
+
+未处理的运行时失败返回 HTTP `500` 和以下 JSON：
+
+```json
+{
+  "error": {
+    "code": "RUNTIME_ERROR",
+    "message": "...",
+    "requestId": "000000000000002a"
+  }
+}
+```
+
+过大的入站正文返回 HTTP `413`，结构相同，错误码为 `BODY_TOO_LARGE`。`requestId` 是固定宽度的十六进制关联值。内部序列化回退可能只返回 `{"error":{"code":"INTERNAL_ERROR"}}`。
+
+`tysel dev` 使用生成的源码映射解析应用堆栈信息。虽然打包时会嵌入映射，但打包后的 HTTP 分派器目前不会应用它，因此生产消息可能包含打包位置。所有运行时消息都应视为运维诊断：向公共客户端暴露前，应将错误映射为应用自行定义的响应，以免泄露敏感内部信息。
+
+## 应用错误
+
+Tysel 不会对 fetch 处理程序返回的响应强制规定错误 schema。应明确设计应用状态码和 JSON 信封，并包含安全的关联标识符。返回的 `Response` 属于应用响应；处理程序抛出异常或返回被拒绝的 Promise 时，会转为运行时 `500` 信封。
+
+## Component 进程输出
+
+Component 调用成功时，向 stdout 写入恰好一个 JSON 值和一个换行符，并以 `0` 退出。编译、ABI、策略、来宾错误、资源限额或输出验证失败属于 stderr 上的致命 CLI/运行时错误，并以非零状态退出；它们不使用 HTTP 错误信封。
+
+Component 来宾的 WIT 错误分支会保留为最长 4 KiB 的 UTF-8 诊断。该文本供人阅读，不应作为稳定错误码。请参阅 [Component ABI](/reference/component/abi)和 [Component 运行时限额](/reference/component/runtime#resource-bounds)。
+
+另请参阅[调试服务故障](/docs/guides/debugging)、[应用模块](/reference/runtime/application)、[应用限额](/reference/manifest/limits)和[生产运维](/docs/operations/production)。

@@ -1,0 +1,54 @@
+---
+title: "应用与服务器"
+description: "必需的 app 表标识产物、入口模块和执行配置。"
+---
+
+## `[app]`
+
+必需的 `app` 表标识产物、入口模块和执行配置。
+
+| 字段 | 是否必需 | 默认值 | 接受的值 |
+| --- | --- | --- | --- |
+| `name` | 是 | — | 字母、数字、`.`、`_` 和 `-`；首字符必须是字母或数字。 |
+| `entry` | 是 | — | 项目相对的 TypeScript、JavaScript 或 WebAssembly Component 路径。 |
+| `profile` | 否 | `service` | `service`、`isolated` 或 `component`。 |
+
+`entry` 不能是绝对路径，不能使用 `..` 穿越目录，不能带 Windows 驱动器前缀，也不能包含反斜杠或控制字符。执行配置会改变信任边界和宿主能力边界，并非单纯的优化预设。
+
+对于 `component` 执行配置，应使用实现 `tysel:component/task@0.4.0` 的 `.wasm` Component Model 二进制文件。Core Wasm 模块会被拒绝。应用是一次性 stdin/stdout 任务，因此监听器和 WebSocket 字段不会创建 HTTP 服务；`server.workers` 必须保持为 `1`。`.wasm` 入口必须使用 `component` 执行配置，该配置也必须使用 `.wasm` 入口。CLI 命令收到显式 `ENTRY` 覆盖值时，同样执行此项检查。
+
+```toml
+[app]
+name = "orders-api"
+entry = "src/index.ts"
+profile = "service"
+```
+
+请参阅[执行配置](/docs/concepts/execution-profiles)和[能力矩阵](/docs/capabilities)。Component 特有行为见 [Wasm Component 参考](/reference/component)。
+
+## `[server]`
+
+可选的 server 表控制入站监听器和协议。
+
+| 字段 | 默认值 | 接受的值与行为 |
+| --- | --- | --- |
+| `listen` | `127.0.0.1:3000` | 套接字地址。容器需要接受外部流量时使用 `0.0.0.0`。 |
+| `workers` | `1` | `service` 应用的 QuickJS 隔离实例数，范围为 `1` 至 `64`。`isolated` 和 `component` 执行配置拒绝大于 `1` 的值。 |
+| `http1` | `true` | 启用 HTTP/1.1。 |
+| `http2` | `false` | 启用明文 HTTP/2。 |
+| `websocket` | `false` | 允许入站 HTTP/1.1 WebSocket 升级。 |
+
+`http1` 和 `http2` 至少启用一个。`websocket = true` 要求启用 HTTP/1.1。两个 HTTP 版本都启用时，监听器接受 HTTP/1.1 和 h2c；仅启用 HTTP/2 时要求客户端预先知道使用 h2c。Tysel 不终止公网 TLS，因此 HTTPS 部署需要使用 Ingress 或反向代理。
+
+每个服务工作线程都有独立的 JavaScript 全局作用域和运行时内存限额。只有处理程序无状态，或应用状态已明确外置时，才应增加 `workers`。更多工作线程可以提高并行吞吐量，但会成倍增加隔离实例内存，并可能恶化启动或尾延迟。默认值保持为一，以维持单一全局状态语义。
+
+```toml
+[server]
+listen = "0.0.0.0:3000"
+workers = 2
+http1 = true
+http2 = true
+websocket = true
+```
+
+服务器正文和并发设置位于[限额](/reference/manifest/limits)下；处理程序响应和错误约定见[错误与机器可读输出](/reference/errors-and-output)。

@@ -84,3 +84,62 @@ TYSEL_BENCHMARK_SAMPLE=1 pnpm dev
 ```
 
 The homepage follows bun.sh’s information density and developer-tool layout, using Tysel brand color, the official wordmark, and product copy from the docs. It does not publish unverified performance numbers.
+
+## Localization
+
+The website has build-time localization. English remains the source language and
+is published at unprefixed URLs. Simplified Chinese has a complete reviewed UI and
+content release set; publication is controlled by `locales/config.json`.
+Development and builds never call a translation model or service.
+
+After changing canonical files under the repository-level `docs/` directory,
+run `pnpm import:docs` before exporting translation work. Source changes invalidate
+the corresponding reviewed translation by hash; update and review that unit again
+instead of editing generated content. Run `pnpm i18n:check` before submitting any
+UI or documentation copy change.
+
+UI messages live in `locales/<locale>/messages.json`; document translations live
+in `locales/<locale>/content/{docs,reference,blog}/`. Keep UI keys stable and use
+`T` or `useLocale().t()` for new UI copy. Follow the locale's `glossary.json`.
+`manifest.json` records source and translation hashes plus review status.
+
+Translate outside the build using the model of your choice:
+
+```sh
+pnpm i18n:export --locale zh-CN --output /tmp/tysel-zh-CN-job.json
+# Return job units with a translation string; partial results are accepted.
+pnpm i18n:import --input /tmp/tysel-zh-CN-result.json
+# Review wording and technical meaning before marking the result reviewed.
+pnpm i18n:import --input /tmp/tysel-zh-CN-result.json --reviewed
+pnpm i18n:check
+```
+
+Imports default to draft. Preserve code blocks, URLs, placeholders, metadata,
+navigation IDs/order and heading counts/depths. Review technical qualifications,
+terminology and paragraph logic; blog translations should read naturally while
+preserving historical version context. Editing reviewed text requires another
+review. Published stale or draft translations fail the build.
+
+To add a language, register its BCP-47 code with `published: false`, create its
+message catalog and version-1 manifest (empty `messages` and `content` maps), then
+export, translate and review. Enable publication after all UI messages and the
+included documents are reviewed and current. Documents can be added gradually.
+
+English URLs remain unprefixed; Chinese uses `/zh-CN/`. Only existing translations
+receive localized URLs and language alternates. Links to untranslated pages fall
+back to English. `lib/i18n/pages.ts` controls availability, and each published
+language has its own search data. Never edit generated `app/(localized)` adapters
+or `content/translations/` content; preparation recreates them. Translated headings retain
+English anchor aliases.
+
+After building, verify the exported pages:
+
+```sh
+python3 scripts/check-localized-html.py
+python3 scripts/check-seo.py
+```
+
+CI runs both checks for section links, document roots, blog titles, sitemap pages,
+canonical URLs, reciprocal language alternates and structured data. These local
+checks do not establish search indexing or real-world performance; verify those
+after deployment with Search Console and performance measurements.

@@ -1,0 +1,75 @@
+---
+title: "环境变量"
+description: "环境变量用于配置宿主和安装，而不是应用 JavaScript。"
+---
+
+环境变量用于配置宿主和安装，而不是应用 JavaScript。运行时会过滤应用访问：声明密钥只会通过 `tysel.secrets` 提供不透明引用，而不会通过 `process.env` 暴露。
+
+## 安装与工具链
+
+| 变量 | 默认值 | 作用域 |
+| --- | --- | --- |
+| `TYSEL_HOME` | `$HOME/.tysel` | 托管安装及其状态的绝对根目录。 |
+| `TYSEL_DOWNLOAD_BASE` | 官方发布端点 | 安装、doctor 和 upgrade 使用的受信任镜像或 CI 固定资源。 |
+| `TYSEL_STUB` | 位于 CLI 旁或构建树中 | `build`、`image` 和基准测试工具使用的运行时存根。 |
+| `TYSEL_WORKER` | 位于 CLI 旁或构建树中 | 隔离工作进程可执行文件覆盖值。 |
+| `DOCKER` | `docker` | `tysel image` 使用的容器构建器可执行文件；`--builder` 优先级更高。 |
+
+`TYSEL_DOWNLOAD_BASE` 会改变可执行产物的来源。只应将其设为具有同等验证策略的受控镜像。仅针对一次调用的覆盖值，优先使用 `build --stub` 等命令选项。`DOCKER` 必须指定一个不含附加命令参数的可执行文件。单次调用需要替代工具时，使用 `tysel image --builder podman`。
+
+## 应用能力
+
+| 变量 | 必需条件 | 说明 |
+| --- | --- | --- |
+| <code>{"TYSEL_POSTGRES_<NAME>"}</code> | 清单授予具名 Postgres 访问权限 | 唯一已配置授权的连接 URL。将名称转为大写，并把 `-` 替换为 `_`。 |
+| <code>{"TYSEL_REDIS_<NAME>"}</code> | 清单授予具名 Redis 访问权限 | 唯一已配置授权的连接 URL。将名称转为大写，并把 `-` 替换为 `_`。 |
+| `permissions.secrets` 中的名称 | 宿主能力需要该密钥 | 名称和值由部署方管理；JavaScript 只会收到 `SecretReference`。 |
+
+名为 `review-ro` 的授权对应宿主键 `TYSEL_POSTGRES_REVIEW_RO`；Redis 使用相同映射。连接 URL 和密钥值不得写入清单、命令行、构建产物或日志。
+
+在 `tysel dev` 下，`.env` 参与本地解析，但只会导入已声明的密钥名称以及选定的 Postgres 和 Redis 连接。无关变量不会成为应用全局变量。
+
+## 持久存储
+
+| 变量 | 优先级 | 含义 |
+| --- | ---: | --- |
+| `TYSEL_DURABLE_POSTGRES_URL` | 1 | 选择 Postgres 持久存储。非空值优先。 |
+| `TYSEL_DURABLE_SQLITE_PATH` | 2 | 覆盖 SQLite 持久事件日志路径。 |
+| 清单 `[durable].path` 所在目录 | 3 | 未设置宿主覆盖值时，将 `durable-events.db` 放在应用 SQLite 数据库旁。 |
+
+生产 Postgres 应使用经过证书验证的 TLS，并将连接 URL 保存在服务管理器或密钥管理器中。
+
+## LLM 提供商
+
+| 变量 | 默认值 | 含义 |
+| --- | --- | --- |
+| `TYSEL_LLM_ENDPOINT` | 未设置 | 在该 responses 端点启用 OpenAI 兼容提供商。 |
+| `TYSEL_LLM_MODEL` | 设置端点时必需 | 上游提供商模型。 |
+| `TYSEL_LLM_ALIAS` | `default` | `generate` 接受的面向应用的模型别名。 |
+| `TYSEL_LLM_SECRET` | `OPENAI_API_KEY` | 用作提供商凭据的已声明密钥名称。 |
+
+如果 `TYSEL_LLM_ENDPOINT` 未设置或为空，LLM 能力会被禁用。`TYSEL_LLM_SECRET` 指定的密钥还必须出现在 `permissions.secrets` 中，并由宿主提供。
+
+## OpenTelemetry
+
+| 变量 | 含义 |
+| --- | --- |
+| `OTEL_SDK_DISABLED=true` | 即使端点仍已设置，也禁用追踪和指标导出。 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 共享 OTLP/HTTP 端点。 |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | 追踪专用端点。 |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | 指标专用端点。 |
+
+按信号指定的端点会根据 OpenTelemetry exporter 规则覆盖或补充共享导出配置。清单中的 `traces` 和 `metrics` 字段尚未传递到打包执行环境。端点必须使用 HTTP(S)，最长 2 KiB，且不能包含用户信息、查询参数或片段。采集器凭据应放入标准 OTLP headers 配置，绝不能写入 URL。
+
+## 高级宿主集成
+
+| 变量 | 平台 | 用途 |
+| --- | --- | --- |
+| `TYSEL_CGROUP` | Linux | 用于挂接隔离工作进程的 cgroup v2 子树。 |
+| `TYSEL_COMPONENT_CAPABILITIES` | Component 宿主 | 以逗号分隔的 `tysel:fs`、`tysel:fs/read` 或 `tysel:fs/write` 部署授权。未知值会以默认拒绝方式失败。 |
+
+这些变量是部署集成点，不是应用输入。仅用于测试的变量和仓库发布签名变量有意不纳入应用参考。
+
+对于打包后的 Component，该变量默认未设置，因此即使清单请求了应用能力，访问仍会被拒绝。三层交集和本地 `tysel run` 行为请参阅 [Component 能力](/reference/component/capabilities)。
+
+另请参阅[权限](/reference/manifest/permissions)、[宿主能力](/reference/runtime/capabilities)、[可观测性指南](/docs/guides/observability)和[生产运维](/docs/operations/production)。

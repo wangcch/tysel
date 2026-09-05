@@ -1,0 +1,69 @@
+---
+title: "Component 能力"
+description: "Component 默认不获得任何应用能力。最终权限是三个独立检查层的交集。"
+---
+
+Component 默认不获得任何应用能力。最终权限是三个独立检查层的交集：
+
+```text
+actual Component import
+  ∩ manifest permission
+  ∩ deployment policy
+  = effective capability
+```
+
+缺少任意一层都会拒绝实例化或链接。未知能力导入和未知部署策略值会直接失败，而不会被忽略。
+
+## 已实现的导入
+
+当前 Component 宿主只实现以下应用接口：
+
+```wit
+package tysel:fs@0.4.0;
+
+interface read {
+    call: func(input: string) -> result<string, string>;
+}
+
+interface write {
+    call: func(input: string) -> result<string, string>;
+}
+```
+
+| 导入 | 清单请求 | 部署授权 | 输入 | 成功输出 |
+| --- | --- | --- | --- | --- |
+| `tysel:fs/read@0.4.0` | 非空 `permissions.fs_read` | `tysel:fs` 或 `tysel:fs/read` | 包含路径的 JSON 字符串 | 包含 UTF-8 文件内容的 JSON 字符串 |
+| `tysel:fs/write@0.4.0` | 非空 `permissions.fs_write` | `tysel:fs` 或 `tysel:fs/write` | `{"path": string, "data": string}` | JSON `null` |
+
+每个导入接口都导出名为 `call` 的函数。文件仍限制为 1 MiB，且必须解析到固定的清单根目录之下。
+
+## 清单与部署配置
+
+```toml
+[permissions]
+fs_read = ["./input"]
+fs_write = ["./output"]
+```
+
+对于打包后的可执行文件，除非明确设置，否则部署策略为空：
+
+```sh
+export TYSEL_COMPONENT_CAPABILITIES=tysel:fs/read,tysel:fs/write
+printf '{"path":"./input/job.json"}' | ./dist/file-component
+```
+
+可接受的策略标记如下：
+
+| 标记 | 效果 |
+| --- | --- |
+| `tysel:fs` | 当清单请求且来宾导入时，允许两个已实现的文件系统接口。 |
+| `tysel:fs/read` | 只允许读取。 |
+| `tysel:fs/write` | 只允许写入。 |
+
+标记以逗号分隔，空白会被忽略。拼写错误或任何其他能力都会导致错误。本地执行 `tysel run` 时，Tysel 从清单推导部署授权，使通过检查的项目可以运行；构建后的可执行文件仍然默认拒绝部署权限。
+
+对于 Component 执行配置，`tysel check` 和 `tysel inspect` 只会在能力列表中显示文件系统请求。HTTP、密钥、数据库、LLM、WebSocket 和持久处理程序会列在 `Denied` 下；`tysel build` 同样不会在能力摘要中包含它们。
+
+HTTP、SQLite、LLM、密钥、MCP 和持久 Component 能力目前不可用。当前应用约定只有 `tysel:component/task@0.4.0` 和上面的两个文件系统导入。
+
+请参阅[清单权限](/reference/manifest/permissions)、[安全模型](/docs/security)和[运行时与 WASI](/reference/component/runtime)。

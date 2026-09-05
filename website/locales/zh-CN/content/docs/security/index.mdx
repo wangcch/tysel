@@ -1,0 +1,52 @@
+---
+title: "安全模型"
+description: "Tysel 将宿主权限视为显式约定。"
+---
+
+Tysel 将宿主权限视为显式约定。网络目标、密钥名称、数据库授权、文件系统根目录、限额和执行配置均在带版本的 TOML 或 JSON 应用清单中声明，并由原生宿主强制实施。
+
+## Tysel 提供的保护
+
+- 拒绝访问未声明的宿主资源；
+- JavaScript 接收不透明句柄，而非原始密钥值；
+- 数据库和文件系统访问仅限具名授权和固定根目录；
+- 请求大小、响应大小、内存、CPU 轮次、截止时间和并发数均有边界；
+- 隔离 JavaScript 在服务进程之外运行；
+- 持久副作用和信号会保存，以支持恢复和审计。
+
+最终生效的权限是以下四项输入的交集：
+
+```text
+manifest grants ∩ deployment policy ∩ execution profile ∩ runtime support
+```
+
+在清单中添加权限无法绕过执行配置或部署施加的限制。
+
+## 信任边界
+
+`service` 执行配置适用于受信任的第一方代码。其 JavaScript 隔离实例受到能力限制，但与原生宿主共享进程。
+
+`isolated` 执行配置将应用移至 `tysel-worker` 中运行，并拒绝面向宿主的能力。在 Linux 上，工作进程还会应用 Landlock、seccomp、资源限额和尽力而为的 cgroup 内存限制。工作进程崩溃后，监督器会将其替换。macOS 隔离仅支持开发阶段检查，不作为生产沙箱的准入条件。
+
+实验性的 `component` 执行配置会在 `isolated-task` 信任模式下运行可移植 Wasm Component。它获得空的 WASI 上下文，默认不具备任何应用能力。只有来宾导入、清单根目录和部署策略三者相交时，文件系统访问才会生效。内存、燃料、时间、输入、输出和错误载荷均有边界。这并不承诺能够安全或兼容地运行任意 WASI 应用。
+
+Tysel 不会在该边界内运行任意原生插件或二进制文件。子进程、动态库、Node.js 内置模块和隐式操作系统访问都不属于应用约定。
+
+## 部署方的责任
+
+Tysel 无法替代操作系统加固或网络策略。生产运维人员仍需负责：
+
+- 使用专用的非 root 身份运行可执行文件；
+- 在持续维护的 Ingress 或反向代理上终止公网 TLS；
+- 在基础设施层限制出站流量；
+- 保护环境变量、数据库、签名密钥和持久存储；
+- 应用宿主更新并保留发布验证材料；
+- 监控访问拒绝、超时、工作进程崩溃和恢复行为。
+
+生产隔离工作负载应使用 Linux。请在目标环境中使用 `tysel doctor`、`tysel check`、`tysel inspect` 和应用测试套件，验证确切的产物和配置。
+
+## 报告漏洞
+
+不要创建包含漏洞利用细节或密钥的公开 issue。仓库提供私有安全报告渠道时，请使用该渠道。
+
+接下来可以阅读[能力矩阵](/docs/capabilities)、[执行配置](/docs/concepts/execution-profiles)、[Wasm Component 能力](/reference/component/capabilities)，或[生产运维](/docs/operations/production)。

@@ -1,0 +1,252 @@
+---
+title: "容器镜像"
+description: "最终镜像只包含一个 Tysel 可执行文件，运行时不需要 Tysel、Node.js、npm 或 node_modules。"
+---
+
+请选择以下一种镜像布局：
+
+| 布局 | 构建位置 | 适用场景 |
+| --- | --- | --- |
+| [多阶段 Dockerfile](#build-from-source-in-docker) | Docker 构建阶段 | 希望由 `docker build` 编译应用。 |
+| [仅运行时 Dockerfile](#package-an-existing-executable) | Docker 构建前的 Linux 构建作业 | 需要将已验证的可执行文件及其发布验证材料推进到部署阶段。 |
+| [`tysel image`](#generate-the-runtime-image) | Linux 宿主；使用 `--binary` 时除外 | 希望由 Tysel 生成仅运行时上下文。 |
+
+最终镜像只包含一个 Tysel 可执行文件，运行时不需要 Tysel、Node.js、npm 或 `node_modules`。
+
+## 容器清单
+
+Tysel 不会合并清单。复制完整的开发清单；如果其余生产设置完全相同，只修改监听地址：
+
+```sh
+cp tysel.toml tysel.container.toml
+```
+
+在 `tysel.container.toml` 中：
+
+```toml
+[server]
+listen = "0.0.0.0:3000"
+```
+
+不要用这段配置替换清单的其余部分。权限、限制、持久执行设置、可观测性和项目任务必须保留在完整文件中。`tysel build` 使用的清单会嵌入可执行文件。请参阅检入仓库的[开发清单](https://github.com/wangcch/tysel/blob/main/examples/hello-service/tysel.toml)和[容器清单](https://github.com/wangcch/tysel/blob/main/examples/hello-service/tysel.container.toml)。
+
+## 在 Docker 中从源码构建
+
+仓库中的 [Dockerfile](https://github.com/wangcch/tysel/blob/main/examples/hello-service/Dockerfile) 使用版本匹配的 Tysel 工具链镜像编译应用，然后只把可执行文件复制到运行时阶段：
+
+```dockerfile
+# syntax=docker/dockerfile:1
+ARG TYSEL_VERSION=VERSION
+ARG TYSEL_TOOLCHAIN_IMAGE=ghcr.io/wangcch/tysel-toolchain:${TYSEL_VERSION}
+ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
+
+FROM ${TYSEL_TOOLCHAIN_IMAGE} AS build
+WORKDIR /src
+COPY . .
+
+RUN tysel task verify \
+    --manifest tysel.container.toml
+RUN tysel build --release \
+    --manifest tysel.container.toml \
+    --output /out/tysel-app
+
+FROM ${RUNTIME_IMAGE}
+# CI may add version, source, revision, and admitted artifact digest labels with
+# docker build --label. Do not substitute the registry image digest for the
+# executable digest from the verified .sha256 sidecar or `tysel image` output.
+WORKDIR /app
+COPY --from=build --chown=65532:65532 /out/tysel-app /app/tysel-app
+USER 65532:65532
+EXPOSE 3000
+ENTRYPOINT ["/app/tysel-app"]
+```
+
+从项目根目录构建：
+
+```sh
+docker build \
+  --build-arg TYSEL_VERSION=VERSION \
+  --tag hello-service:local .
+```
+
+将 `VERSION` 替换为准确的已发布 Tysel 版本。仓库中的 hello service 没有包依赖。工具链镜像包含 `tysel`、`tysel-service` 和 `tysel-worker`，不包含 Node.js 或 JavaScript 包管理器。
+
+如果应用包含 `package-lock.json`，请在独立的 Node 构建阶段安装锁定的依赖，并且只把 `node_modules` 复制到 Tysel 构建阶段：
+
+```dockerfile
+ARG TYSEL_VERSION
+FROM node:22-bookworm-slim AS dependencies
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM ghcr.io/wangcch/tysel-toolchain:${TYSEL_VERSION} AS build
+WORKDIR /src
+COPY --from=dependencies /src/node_modules ./node_modules
+COPY . .
+RUN tysel task verify --manifest tysel.container.toml
+RUN tysel build --release \
+    --manifest tysel.container.toml \
+    --output /out/tysel-app
+```
+
+请使用项目要求的 Node 版本和锁定安装命令。不要跨操作系统复制宿主的 `node_modules`。
+
+对于包含工具链镜像支持的版本，发布工作流会将 `ghcr.io/wangcch/tysel-toolchain:VERSION` 发布为 Linux amd64/arm64 OCI 索引。它从同一批已签名的 Linux 发布归档组装而成，不会进行第二次 Cargo 构建。其 Debian 基础镜像通过多平台索引摘要固定。镜像仓库摘要是不可变的镜像标识；发布后解析版本标签，并在生产 Dockerfile 中固定该摘要。OCI 索引本身不受 Tysel 发布清单签名保护；镜像签名与镜像仓库准入仍属于独立的部署策略。
+
+GHCR 创建的新包默认为私有。在首次发布工具链镜像时，如果已发布的包无法匿名读取，工作流会有意停止。维护者必须在必要时将其关联到仓库，把可见性改为 Public，然后重新运行失败的发布作业。后续版本会沿用该包的可见性。
+
+这是构建镜像，并非应用运行时镜像。它以 root 身份运行，以便 Docker 构建在工作区中创建输出。不要将它部署为 HTTP 服务。上面的最终阶段仍以非 root 身份运行，且只包含生成的应用可执行文件。
+
+示例中检入仓库的 `.dockerignore` 如下：
+
+```text
+.git
+dist
+node_modules
+*.log
+.env*
+```
+
+多阶段布局不会把校验和、兼容性、SBOM、许可证和验证材料伴随文件导出到构建容器之外。如果这些文件是发布准入输入，请使用仅运行时布局。
+
+## 打包已有可执行文件
+
+面向部署架构构建完整产物集。这一步可以在 Linux 发布作业中运行，也可以在其他受支持的宿主上使用已验证的目标运行时：
+
+```sh
+tysel task verify --manifest tysel.container.toml
+tysel build --release \
+  --target linux-x64 \
+  --manifest tysel.container.toml \
+  --output dist/hello-service
+```
+
+hello-service 示例中检入了这个[仅运行时 Dockerfile](https://github.com/wangcch/tysel/blob/main/examples/hello-service/Dockerfile.runtime)：
+
+```dockerfile
+ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
+FROM ${RUNTIME_IMAGE}
+WORKDIR /app
+COPY --chown=65532:65532 dist/hello-service /app/tysel-app
+USER 65532:65532
+EXPOSE 3000
+ENTRYPOINT ["/app/tysel-app"]
+```
+
+然后构建镜像：
+
+```sh
+docker build \
+  --file Dockerfile.runtime \
+  --tag registry.example/hello-service:VERSION .
+```
+
+在镜像外部将 `dist/hello-service` 与其五个发布伴随文件存放在一起。运行时镜像只需要可执行文件。
+
+## 生成运行时镜像
+
+`tysel image` 会生成同样的仅运行时 Dockerfile。
+
+| 调用方式 | 应用构建 | Docker 构建 |
+| --- | --- | --- |
+| `tysel image` | 是，在 Linux 上以发布模式构建 | 是 |
+| `tysel image --context-only` | 是，在 Linux 上以发布模式构建 | 否 |
+| `tysel image --binary PATH` | 否；复制 `PATH` | 是 |
+| `tysel image --binary PATH --context-only` | 否；复制 `PATH` | 否 |
+
+用一条命令构建应用和镜像：
+
+```sh
+tysel image \
+  --manifest tysel.container.toml \
+  --tag registry.example/hello-service:VERSION
+```
+
+生成上下文，以供检查或另行执行 Docker 构建：
+
+```sh
+tysel image \
+  --manifest tysel.container.toml \
+  --context-only \
+  --output-dir dist/image
+
+docker build --tag registry.example/hello-service:VERSION dist/image
+```
+
+打包已经准入的可执行文件，不重新构建：
+
+```sh
+tysel image \
+  --manifest tysel.container.toml \
+  --binary dist/hello-service \
+  --copy-sidecars \
+  --tag registry.example/hello-service:VERSION
+```
+
+`--binary` 要求提供带有嵌入式 TAP 元数据的 64 位小端 Linux x86-64 或 arm64 Tysel 可执行文件。嵌入的应用名称、执行配置和监听地址必须与所选清单一致。请使用 `tysel.container.toml` 构建 `dist/hello-service`；只把该清单传给 `tysel image` 并不充分。
+
+`--copy-sidecars` 会先验证校验和、兼容性、SBOM、许可证和验证材料文件，检查验证材料中的目标平台是否与可执行文件的 ELF 架构匹配，然后将这五个文件复制到生成的上下文中。Dockerfile 仍只把 `tysel-app` 复制到运行时镜像。此选项适用于需要在 Docker 构建上下文旁保留已准入验证材料的 CI 作业；它不会重新生成缺失的验证材料。
+
+可通过以下任一方式选择其他兼容 Docker 的构建器：
+
+```sh
+tysel image --builder podman --manifest tysel.container.toml
+DOCKER=/usr/local/bin/podman tysel image --manifest tysel.container.toml
+```
+
+`--builder` 的优先级高于 `DOCKER`；两者都只能指定一个可执行文件，不能包含内嵌参数。
+
+生成的 Dockerfile 会把可执行文件摘要、执行配置、运行时版本和应用标题记录为标签。有发布元数据时可一并添加：
+
+```sh
+tysel image \
+  --manifest tysel.container.toml \
+  --image-version VERSION \
+  --label org.opencontainers.image.source=https://github.com/OWNER/REPOSITORY
+```
+
+不要在标签中放入凭据或其他密钥。可执行文件摘要标签不能取代部署所用的镜像仓库摘要。标签值会按字面保留，包括 `$` 字符。
+
+`--base-image` 保持默认值时，`tysel image` 接受链接 glibc 的可执行文件和静态可执行文件，并拒绝 musl 解释器。使用自定义基础镜像时，Tysel 仍会验证 ELF 格式、架构和解释器结构，但无法推断该镜像包含哪些 libc 或共享库。此时兼容性由镜像作者负责。
+
+## 运行和探测
+
+```sh
+docker run --rm --publish 127.0.0.1:3000:3000 hello-service:local
+curl --fail http://127.0.0.1:3000/healthz
+```
+
+distroless 运行时不包含 shell 或 `curl`，因此请使用外部 HTTP 探针，而不要使用 exec 探针。Tysel 不会添加健康检查路由。
+
+## 运行时约定
+
+| 要求 | 设置 |
+| --- | --- |
+| 用户 | 保持数字用户/组 `65532:65532`。 |
+| 根文件系统 | 设为只读；只添加下述可写挂载。 |
+| 临时文件 | 挂载容量受限的 `tmpfs`，例如挂载到 `/tmp`。 |
+| SQLite 或相对文件系统路径 | 在以 `/app` 为基准解析出的路径挂载可写卷。 |
+| 密钥和数据库 URL | 在运行时注入环境变量，绝不要使用 Dockerfile `ARG` 或 `ENV`。 |
+| 健康检查 | 从容器外部通过 HTTP 探测应用路由。 |
+| 生产标识 | 推送版本标签，记录镜像仓库摘要，并按摘要部署。 |
+| 回滚 | 重新部署之前已准入的摘要；不要重新构建旧标签。 |
+
+不要把密钥放入 Dockerfile、构建参数、清单、镜像标签或源码树。
+
+## 错误
+
+| 错误 | 修复方式 |
+| --- | --- |
+| 服务必须监听 `0.0.0.0` 或 `[::]` | 使用容器清单构建，其中 `[server].listen` 使用未指定地址和非零端口。 |
+| 需要 Linux 可执行文件 | 运行 `tysel build --target linux-x64` 或 `--target linux-arm64`，然后通过 `--binary` 传入输出。 |
+| 可执行文件没有 TAP 元数据，或与所选清单不同 | 使用传给 `tysel image` 的同一份完整容器清单重新构建。 |
+| Component 执行配置被拒绝 | 使用 [Component 任务](/docs/operations/component-tasks)打包一次性可执行文件。 |
+| 发布伴随文件验证失败 | 使用 `tysel build --release` 重新构建产物；不要复制不完整或已修改的验证材料集。 |
+| 生成的文件已存在 | 选择其他输出目录，或检查后传入 `--force`。 |
+| 容器构建器无法启动 | 设置 `--builder` 或 `DOCKER`，或者添加 `--context-only` 并在其他位置构建上下文。 |
+| 容器启动但无法访问 | 对比嵌入的监听地址、`EXPOSE`、已发布端口和代理目标。 |
+| 可执行文件在运行时镜像中失败 | 确认其 ELF 解释器和原生库与所选基础镜像兼容。 |
+| 镜像架构错误 | 使 Tysel 构建目标、Docker `--platform` 和部署节点相匹配。 |
+
+另请参阅[构建与镜像命令](/reference/cli/delivery)、[可复现发布](/docs/guides/reproducible-release)和[生产运维](/docs/operations/production)。

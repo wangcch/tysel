@@ -1,0 +1,73 @@
+---
+title: "测试 API"
+description: "@tysel/test 为 tysel test 执行的文件提供精简的测试注册与断言接口。"
+---
+
+`@tysel/test` 为 `tysel test` 执行的文件提供精简的测试注册与断言接口。
+
+## `test`
+
+```ts
+test(name: string, body: () => unknown | Promise<unknown>): void
+```
+
+注册具名测试。每个测试文件都在新的 QuickJS 隔离实例中运行，因此模块状态不会跨文件共享。
+
+## `assert`
+
+```ts
+assert(condition: unknown, message?: string): asserts condition
+assert.equal(actual: unknown, expected: unknown, message?: string): void
+assert.deepEqual(actual: unknown, expected: unknown, message?: string): void
+```
+
+`assert` 检查真值，`equal` 检查标量相等，`deepEqual` 比较结构化值。断言失败会使测试失败，并使 CLI 以非零状态退出。
+
+## `invokeFetch`
+
+```ts
+invokeFetch(
+  handler: (request: Request) => Response | Promise<Response>,
+  input: Request | string | URL,
+  init?: RequestInit,
+): Promise<Response>
+```
+
+无需启动监听器即可调用应用 fetch 处理程序。
+
+使用注入运行时的处理程序可以通过显式 mock 进行测试：
+
+```ts
+invokeFetchWithRuntime(
+  handler: (request: Request, runtime: Runtime) => Response | Promise<Response>,
+  runtime: Runtime,
+  input: Request | string | URL,
+  init?: RequestInit,
+): Promise<Response>
+```
+
+`invokeFetchWithRuntime` 对运行时结构使用泛型，因此聚焦单一行为的测试只需提供其处理程序声明的能力。
+
+```ts
+import { assert, invokeFetch, test } from "@tysel/test";
+import app from "../src/index.ts";
+
+test("health endpoint", async () => {
+  assert(app.fetch, "fetch handler is registered");
+  const response = await invokeFetch(app.fetch, "http://local/health");
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+});
+```
+
+运行测试套件：
+
+```sh
+tysel test
+tysel test --filter "health endpoint"
+tysel test --list --json
+tysel test tests/health.test.ts --timeout-ms 10000 --json
+```
+
+默认路径为 `tests/`，每项测试的默认超时为 `5000` 毫秒。`--filter` 根据名称子串或 `--list --json` 返回的确切 ID 选择测试。列出测试只会发现已注册测试，不会运行测试体。CLI 输出和退出行为请参阅 [`tysel test`](/reference/cli/development#tysel-test)。

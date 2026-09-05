@@ -1,0 +1,37 @@
+---
+title: "应用限额"
+description: "可选的 [limits] 表定义应用级资源预算。所有字段均为非负整数；省略的字段使用下列默认值。"
+---
+
+可选的 `[limits]` 表定义应用级资源预算。所有字段均为非负整数；省略的字段使用下列默认值。
+
+| 字段 | 默认值 | 单位 | 当前运行时用途 |
+| --- | ---: | --- | --- |
+| `memory_mb` | `128` | MiB | QuickJS 或隔离工作进程的内存预算。 |
+| `cpu_ms_per_turn` | `50` | ms | 单轮 JavaScript 执行的 CPU 预算。 |
+| `request_timeout_ms` | `30000` | ms | 调用截止时间；也限制已配置的 LLM 调用。 |
+| `max_in_flight` | `1000` | 请求 | 允许同时进入的 HTTP 请求上限，许可保持到响应正文完成。 |
+| `max_response_mb` | `16` | MiB | HTTP 响应正文的累计大小上限。 |
+| `max_request_mb` | `16` | MiB | 入站请求正文上限。 |
+
+```toml
+[limits]
+memory_mb = 256
+cpu_ms_per_turn = 100
+request_timeout_ms = 15000
+max_in_flight = 200
+max_response_mb = 8
+max_request_mb = 4
+```
+
+schema 允许相应字段使用完整的无符号整数范围（内存、并发请求和正文限额为 `u32`；CPU 和请求超时为 `u64`）。平台或运行时上限仍可能拒绝或收紧这些值。
+
+通过 schema 验证与受到运行时强制约束是两件事。在当前包格式中，`memory_mb`、`cpu_ms_per_turn`、`request_timeout_ms`、`max_in_flight`、`max_request_mb` 和 `max_response_mb` 都会传递给运行时。缓冲响应超过限额时会在发送响应头之前失败；流式响应则会在越过限额时中止。
+
+没有可用准入许可时，HTTP 服务器立即返回 `503`，错误码为 `OVERLOADED`，并包含 `Retry-After: 1`；它不会创建无界等待队列。缓冲或流式响应到达流末尾，或者响应被丢弃后，许可才会释放。将值设为零会有意拒绝所有 HTTP 请求，可用作熔断器。已接受的 WebSocket 会持续占用许可，直至升级后的连接关闭。
+
+各宿主能力还有固定安全边界，例如 SQL、文件系统、LLM、协议和持久载荷的最大大小。完整清单请参阅[限额与默认值](/reference/limits-and-defaults)。
+
+过大的入站请求返回 HTTP `413` 和 `BODY_TOO_LARGE`。其他限额失败通过相应宿主 API 或标准运行时错误信封报告。提高预算无法替代背压、有边界的输入验证或部署级资源限制。
+
+对于 Component 应用，`memory_mb` 会收紧到 Component 的 64 MiB 上限，`request_timeout_ms` 会收紧到 60 秒。`cpu_ms_per_turn` 不适用于 Wasm；引擎使用固定燃料预算和 epoch 中断。HTTP 正文和并发限额不适用于一次性 stdin/stdout 任务。请参阅 [Component 资源边界](/reference/component/runtime#resource-bounds)。

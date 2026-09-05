@@ -1,0 +1,28 @@
+---
+title: "Request 与 Response"
+description: "Tysel JavaScript 运行时支持的 Request 与 Response 约定。"
+---
+
+状态：`partial`。本页描述受支持的服务端子集，而非完整的浏览器规范。
+下列清单以外的行为不属于兼容性约定。
+
+事实来源：`runtime-js/web-api/compatibility.json`
+（稳定的 `tysel-server-web-subset`）。
+
+## 支持
+
+- 字符串、Uint8Array 和 ArrayBuffer 响应正文
+- 单次使用的 json/text/arrayBuffer 消费
+- bodyUsed
+- 克隆缓冲的请求和响应
+- 流式宿主请求和响应正文
+
+## 不支持
+
+- 公开的 ReadableStream 正文
+- formData/blob 辅助方法
+- 流 tee 和克隆流式响应
+- 浏览器的缓存、凭据和 mode 语义
+
+另请参阅 [JavaScript API 索引](/reference/javascript)和
+[npm 兼容性指南](/docs/compatibility)。

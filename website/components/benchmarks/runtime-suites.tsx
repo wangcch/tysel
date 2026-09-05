@@ -1,3 +1,4 @@
+import { T, SourceText } from "@/components/locale-provider";
 import { Fragment } from "react";
 import {
   formatMeasuredParts,
@@ -22,14 +23,13 @@ export function RuntimeSuites({ suites }: { suites: RuntimeSuite[] }) {
     <section className="mt-14">
       <div className="max-w-3xl">
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-fd-muted-foreground">
-          Runtime microbenchmarks
+          <T id="ui.runtime.microbenchmarks" />
         </p>
         <h2 className="font-heading mt-2 text-xl font-medium tracking-tight">
-          Same run · not release gates
+          <T id="ui.same.run.not.release.gates" />
         </h2>
         <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
-          Observational only — they never fail a release and are not production
-          throughput claims. Values in ms.
+          <T id="ui.observational.only.they.never.fail.a.release.and" />
         </p>
       </div>
 
@@ -43,7 +43,7 @@ export function RuntimeSuites({ suites }: { suites: RuntimeSuite[] }) {
           </colgroup>
           <thead>
             <tr className="border-b border-fd-border font-mono text-[10px] uppercase tracking-[0.12em] text-fd-muted-foreground">
-              <th className="px-4 py-2.5 font-normal sm:px-5">Metric</th>
+              <th className="px-4 py-2.5 font-normal sm:px-5"><T id="ui.metric" /></th>
               <th className="px-2 py-2.5 text-right font-normal">p50</th>
               <th className="px-2 py-2.5 text-right font-normal">p95</th>
               <th className="px-4 py-2.5 text-right font-normal sm:pr-5">
@@ -57,9 +57,9 @@ export function RuntimeSuites({ suites }: { suites: RuntimeSuite[] }) {
                 <tr className="bg-fd-muted/25">
                   <td colSpan={4} className="px-4 py-2 sm:px-5">
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                      <span className="text-sm font-medium">{suite.title}</span>
+                      <span className="text-sm font-medium"><SourceText text={suite.title} /></span>
                       <span className="text-[11px] text-fd-muted-foreground">
-                        {suite.intent}
+                        <SourceText text={suite.intent} />
                       </span>
                     </div>
                   </td>
@@ -71,10 +71,10 @@ export function RuntimeSuites({ suites }: { suites: RuntimeSuite[] }) {
                   >
                     <td className="px-4 py-2 align-middle sm:px-5">
                       <p className="text-sm font-medium leading-5">
-                        {row.metric}
+                        <SourceText text={row.metric} />
                       </p>
                       <p className="mt-0.5 text-[11px] leading-4 text-fd-muted-foreground">
-                        {row.detail}
+                        <SourceText text={row.detail} />
                         {row.samples != null ? ` · n=${row.samples}` : null}
                       </p>
                     </td>

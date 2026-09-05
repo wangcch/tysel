@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale } from "@/components/locale-provider";
+import { headerIconButtonClass, headerIconClass } from "@/components/header-chrome";
+
 import { Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -14,6 +17,7 @@ function applyTheme(dark: boolean) {
 }
 
 export function ThemeToggle() {
+  const { t } = useLocale();
   const [dark, setDark] = useState(true);
 
   useEffect(() => {
@@ -23,15 +27,15 @@ export function ThemeToggle() {
   return (
     <button
       type="button"
-      aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
-      className="inline-flex size-8 shrink-0 items-center justify-center text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+      aria-label={t(dark ? "theme.light" : "theme.dark")}
+      className={headerIconButtonClass}
       onClick={() => {
         const next = !isDarkMode();
         applyTheme(next);
         setDark(next);
       }}
     >
-      {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+      {dark ? <Sun className={headerIconClass} /> : <Moon className={headerIconClass} />}
     </button>
   );
 }

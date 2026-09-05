@@ -1,0 +1,48 @@
+---
+title: "Redis"
+description: "Tysel 提供一套有意保持精简的 Redis API，用于缓存条目、幂等键和短期协调状态。"
+---
+
+Tysel 提供一套有意保持精简的 Redis API，用于缓存条目、幂等键和短期协调状态。任意 Redis 命令、Lua 脚本、Pub/Sub、stream 和集群路由不属于版本 1 的支持范围。
+
+## 声明具名授权
+
+```toml
+[app]
+name = "redis-service"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+redis = ["cache:read-write"]
+```
+
+URL 由部署环境提供：
+
+```sh
+export TYSEL_REDIS_CACHE='rediss://app:password@redis.example.com:6380/0'
+```
+
+本地开发使用 `redis://`，生产环境使用经过证书验证的 `rediss://`。绝不要把 URL 或凭据写入清单或构建产物。
+
+## 使用有边界的 API
+
+```ts
+const previous = await tysel.redis.get("job:123");
+await tysel.redis.set("job:123", "running", { ttlSeconds: 300 });
+const present = await tysel.redis.exists("job:123");
+const extended = await tysel.redis.expire("job:123", 600);
+const removed = await tysel.redis.del("job:123", "job:124");
+```
+
+`get` 返回 UTF-8 字符串或 `null`。`set` 接受可选 TTL。`exists` 和 `expire` 报告键是否存在；`del` 返回删除的键数。`read-only` 授权只允许 `get` 和 `exists`。
+
+| 接口项 | 边界 |
+| --- | ---: |
+| 键 | 4 KiB |
+| 值 | 1 MiB |
+| 每次 `del` 的键数 | 128 |
+| TTL | 1 秒至 365 天 |
+| 并发操作数 | 4 |
+
+运行时复用一个多路复用连接，并在连接断开后自动重连。该 API 仅适用于 `service` 执行配置。除清单访问模式外，还应使用 Redis ACL，明确配置服务器端内存和淘汰策略；除非部署具备经过测试的持久化与恢复方案，否则应将 Redis 视为可丢弃存储。

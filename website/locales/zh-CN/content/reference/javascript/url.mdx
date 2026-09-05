@@ -1,0 +1,27 @@
+---
+title: "URL 与 URLSearchParams"
+description: "Tysel JavaScript 运行时支持的 URL 与 URLSearchParams 约定。"
+---
+
+状态：`partial`。本页描述受支持的服务端子集，而非完整的浏览器规范。
+下列清单以外的行为不属于兼容性约定。
+
+事实来源：`runtime-js/web-api/compatibility.json`
+（稳定的 `tysel-server-web-subset`）。
+
+## 支持
+
+- 基于 authority 的绝对和相对 URL
+- 规范化路径中的点号段
+- 实时同步 search 与 searchParams 的修改
+- 使用可迭代对象和 record 初始化 URLSearchParams
+
+## 不支持
+
+- 完整的 WHATWG 解析
+- IDNA
+- username/password 属性
+- file 和 blob URL
+
+另请参阅 [JavaScript API 索引](/reference/javascript)和
+[npm 兼容性指南](/docs/compatibility)。

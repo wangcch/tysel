@@ -1,0 +1,119 @@
+---
+title: "核心运行时类型"
+description: "本页索引 @tysel/types 导出的共享声明。请使用 import type 导入；该包仅包含声明。"
+---
+
+本页索引 `@tysel/types` 导出的共享声明。请使用 `import type` 导入；该包仅包含声明。
+
+## JSON 值
+
+```ts
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+
+interface JsonObject {
+  readonly [key: string]: JsonValue;
+}
+
+type MaybePromise<T> = T | Promise<T>;
+```
+
+宿主协议会序列化 JSON 值。`undefined`、函数、symbol、循环结构和类实例都不是可移植协议值。
+
+## 执行与信任
+
+```ts
+type ExecutionProfile = "service" | "isolated" | "component";
+type TrustMode = "trusted-service" | "isolated-task";
+
+interface CapabilityRequirement {
+  readonly id: string;
+  readonly resources: readonly string[];
+}
+```
+
+`ExecutionProfile` 与 `app.profile` 对应。`TrustMode` 描述宿主集成使用的实际 JavaScript 信任边界。`CapabilityRequirement` 标识一项能力及其资源选择器；它描述所需权限，但不会授予权限。
+
+请参阅[执行配置](/docs/concepts/execution-profiles)和[能力矩阵](/docs/capabilities)。
+
+## 请求上下文
+
+```ts
+interface RequestContext {
+  readonly requestId: string;
+  readonly deadlineMs: number;
+}
+```
+
+Queue、cron 和 MCP 处理程序会收到该上下文。`deadlineMs` 是以毫秒表示的绝对截止时间。HTTP 处理程序只接收 `Request`。
+
+## SQL 值
+
+```ts
+type SqlParameter = JsonPrimitive;
+type SqlRow = Readonly<Record<string, JsonValue>>;
+```
+
+应用已知查询列时，`SqlClient.query<Row>()` 可以提供更具体的行类型。该泛型属于静态断言，不会在运行时验证行。
+
+## Redis 值
+
+`RedisClient` 接受 UTF-8 字符串键和值。`RedisSetOptions` 携带可选且有边界的 `ttlSeconds` 值；操作和限额请参阅 [Redis 能力](/reference/runtime/capabilities#redis)。
+
+## 密钥引用
+
+```ts
+declare const secretReferenceBrand: unique symbol;
+type SecretReference = string & {
+  readonly [secretReferenceBrand]: "TyselSecretReference";
+};
+```
+
+私有品牌类型可以防止普通字符串被误认为不透明宿主密钥引用。应用无法导入 `secretReferenceBrand` 或读取密钥值。
+
+## LLM 值
+
+```ts
+interface LlmGenerateOptions<Input = JsonValue> {
+  readonly model: string;
+  readonly input: Input;
+  readonly system?: string;
+  readonly maxOutputTokens?: number;
+  readonly temperature?: number;
+}
+
+interface LlmUsage {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+}
+
+interface LlmResponse<Output = JsonValue> {
+  readonly output: Output;
+  readonly usage: LlmUsage;
+  readonly provider_request_id?: string;
+}
+```
+
+泛型 `Input` 和 `Output` 可以改善应用类型体验；协议仍要求值能够被已配置的提供商和有边界的宿主适配器接受。请参阅[宿主能力](/reference/runtime/capabilities#llm-generation)。
+
+## 已弃用别名
+
+`DurableHost` 作为 `DurableContext` 的已弃用别名保留。新代码应直接从 `@tysel/types` 导入 `DurableContext`。
+
+## 完整导出清单
+
+以下清单列出 `@tysel/types` 导出的每项声明。链接的约定页面包含行为细节；文档 CI 还会将该清单与包源码比较，确保新的公开声明不会无法被发现。
+
+| 领域 | 导出的声明 | 约定 |
+| --- | --- | --- |
+| JSON | `JsonPrimitive`、`JsonValue`、`JsonObject`、`MaybePromise` | [JSON 值](#json-values) |
+| 执行 | `ExecutionProfile`、`TrustMode`、`CapabilityRequirement`、`RequestContext` | [执行与信任](#execution-and-trust) |
+| 应用 | `FetchHandler`、`RuntimeFetchHandler`、`CronTask`、`QueueTask`、`McpInputType`、`McpInputSchema`、`InferMcpInput`、`McpTask`、`AppTask`、`TyselApp` | [应用模块](/reference/runtime/application) |
+| 持久处理程序 | `DurableHandler`、`DurableDuration`、`DurableRetryPolicy`、`DurableContext`、`DurableHost` | [持久 API](/reference/runtime/durable) |
+| 持久控制 | `DurableSuspendedResult`、`DurableCompletedResult`、`DurableStartResult`、`DurableControlClient` | [持久控制](/reference/runtime/durable#control-api) |
+| SQL 与文件 | `SqlParameter`、`SqlRow`、`SqlClient`、`FileSystemClient` | [宿主能力](/reference/runtime/capabilities) |
+| Redis | `RedisSetOptions`、`RedisClient` | [Redis](/reference/runtime/capabilities#redis) |
+| 密钥 | `SecretReference`、`SecretClient` | [密钥](/reference/runtime/capabilities#secrets) |
+| LLM | `LlmGenerateOptions`、`LlmUsage`、`LlmResponse`、`LlmClient` | [LLM 生成](/reference/runtime/capabilities#llm-generation) |
+| 已接受的 WebSocket | `AcceptedWebSocketEvent`、`AcceptedWebSocketEventType`、`AcceptedWebSocketListener`、`AcceptedWebSocket` | [WebSocket](/reference/runtime/capabilities#websockets) |
+| 运行时宿主 | `TyselRuntime`、`TyselRuntimeWith`、`Tysel` | [运行时概览](/reference/runtime) |

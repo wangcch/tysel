@@ -1,0 +1,61 @@
+---
+title: "部署方式选择"
+description: "在编写平台配置前，先确定产物边界。"
+---
+
+在编写平台配置前，先确定产物边界。
+
+| 部署目标 | 构建产物 | 从这里开始 |
+| --- | --- | --- |
+| Linux 进程监督器 | 发布可执行文件及五个伴随文件 | [生产运维](/docs/operations/production#build-admission) |
+| Docker 或其他 OCI 运行时 | OCI 镜像及外部发布伴随文件 | [容器镜像](/docs/guides/container-image) |
+| 一次性 Wasm Component | 发布可执行文件及五个伴随文件 | [Component 任务](/docs/operations/component-tasks) |
+
+生产应用可执行文件支持 `linux-x64` 和 `linux-arm64`。构建宿主无需与目标一致：`tysel build --target` 会使用经过验证、版本相同的官方目标运行时进行打包。Tysel 不会为任意目标三元组编译其原生运行时。
+
+## 平台边界
+
+Tysel 生成可执行文件或容器上下文，但不会生成：
+
+- systemd 单元；
+- Kubernetes 资源或 Helm chart；
+- Ingress、TLS、DNS 或负载均衡器配置；
+- 密钥管理器对象；
+- 镜像仓库身份验证或镜像签名。
+
+这些资源由部署平台负责。创建资源时，请遵守下面的运行时约定。
+
+## 必需的运行时约定
+
+| 关注点 | 要求 |
+| --- | --- |
+| 身份 | 使用专用的非特权账户运行。生成的容器使用 `65532:65532`。 |
+| 监听器 | 使用构建清单中嵌入的地址。容器需要使用 `0.0.0.0` 或 `[::]`。 |
+| 工作目录 | 保持稳定；相对文件系统路径和 SQLite 路径会在运行时以此为基准解析。 |
+| 可写存储 | 只允许清单声明的文件系统根目录和选定的 SQLite 路径。 |
+| 密钥 | 在运行时注入已声明的密钥和数据库环境变量。 |
+| 健康检查 | 探测由应用提供的 HTTP 路由；Tysel 不会自动添加。 |
+| 关闭 | 发送常规终止信号，并至少等待一个请求超时时间。 |
+| 晋级 | 部署已通过准入的可执行文件或镜像摘要，不要部署可变的重新构建结果。 |
+
+## 产物边界
+
+直接部署可执行文件时，请在产物存储中保留以下完整文件集：
+
+```text
+APP
+APP.sha256
+APP.compat.json
+APP.sbom.cdx.json
+APP.licenses.json
+APP.evidence.json
+```
+
+对于 `service` 执行配置，运行时宿主只需要 `APP`。`isolated` 应用还需要版本和平台均匹配的 `tysel-worker`，它应放在可执行文件旁边，也可以通过 `TYSEL_WORKER` 设置其路径。构建命令会报告该要求，但不会把工作进程复制到输出目录。请在部署产物集中将工作进程与应用放在一起；只复制隔离应用会在启动时以 `worker binary not found` 失败。准入和回滚仍依赖完整且不可变的文件集。使用容器时，请记录镜像摘要与已准入可执行文件摘要之间的映射。
+
+## 后续步骤
+
+- 使用[容器镜像](/docs/guides/container-image)构建或生成 OCI 镜像。
+- 使用[持续交付](/docs/operations/continuous-delivery)保存并晋级不可变身份。
+- 使用[应用发布](/docs/guides/reproducible-release)签名和验证产物集。
+- 按照[生产运维](/docs/operations/production)落实健康检查、备份、发布、监控和事件响应要求。

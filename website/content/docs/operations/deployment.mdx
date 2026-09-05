@@ -56,7 +56,13 @@ APP.licenses.json
 APP.evidence.json
 ```
 
-The runtime host needs only `APP`. Admission and rollback still depend on the
+For the `service` profile, the runtime host needs only `APP`. An `isolated`
+application also requires a matching-version, matching-platform `tysel-worker`
+beside the executable, or its path set through `TYSEL_WORKER`. The build command
+reports this requirement but does not copy the worker into the output directory.
+Keep the worker alongside the application in the deployment artifact set;
+copying only the isolated application will fail at startup with
+`worker binary not found`. Admission and rollback still depend on the
 complete immutable set. When using a container, record the mapping from the
 image digest to the admitted executable digest.
 

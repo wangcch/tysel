@@ -1,0 +1,124 @@
+---
+title: "应用模块"
+description: "应用默认导出一个 TyselApp 对象。它必须声明至少一组 HTTP、任务注册表或持久注册表入口；所选命令或协议仍要求该组中存在具体处理程序。"
+---
+
+应用默认导出一个 `TyselApp` 对象。它必须声明至少一组 HTTP、任务注册表或持久注册表入口；所选命令或协议仍要求该组中存在具体处理程序。
+
+应导出普通对象并使用 `satisfies TyselApp`（生成的能力类型可用时使用 `TyselApp<TyselEnv>`）。这是默认方式，不需要导入运行时 SDK。只有当一个属性需要根据另一个属性进行上下文推断时才使用 `defineApp`，例如根据输入 schema 推断 MCP 处理程序。
+
+```ts
+interface TyselAppMembers {
+  fetch?: RuntimeFetchHandler;
+  tasks?: Record<string, CronTask | QueueTask | McpTask>;
+  durable?: Record<string, DurableHandler>;
+}
+
+type TyselApp = RequireAtLeastOne<TyselAppMembers>;
+```
+
+## HTTP 处理程序
+
+```ts
+type FetchHandler = (request: Request) => Response | Promise<Response>;
+
+type RuntimeFetchHandler = (
+  request: Request,
+  runtime: TyselRuntime,
+) => Response | Promise<Response>;
+```
+
+运行时为入站 HTTP 请求调用 `fetch`，并以 `runtime` 参数注入公开能力宿主。单参数处理程序仍然有效；为保持兼容性，`globalThis.tysel` 也仍然可用。处理程序必须返回 `Response` 或其 Promise。请求与响应正文根据 [Request 和 Response 约定](https://tysel.dev/reference/javascript/request/)受到大小和单次使用限制。
+
+```ts
+import type { TyselApp } from "@tysel/types";
+
+export default {
+  async fetch(request, runtime) {
+    const url = new URL(request.url);
+    return Response.json({
+      method: request.method,
+      path: url.pathname,
+      isolateId: runtime.isolateId,
+    });
+  },
+} satisfies TyselApp;
+```
+
+应优先使用 `satisfies TyselApp`，避免重复参数和返回值注解。它会检查完整的默认导出约定，为每个处理程序提供上下文类型，同时保留应用的精确推断类型，供测试和适配器使用。如果处理程序只应公开一组明确的运行时能力子集，请使用 `TyselApp<TyselRuntimeWith<...>>`。
+
+## 请求上下文
+
+非 HTTP 任务处理程序会收到：
+
+```ts
+interface RequestContext {
+  requestId: string;
+  deadlineMs: number;
+}
+```
+
+`deadlineMs` 是以毫秒表示的绝对截止时间，并非持续时长。关联任务时，应将 `requestId` 传递到应用日志。
+
+## Cron 任务
+
+```ts
+interface CronTask {
+  kind: "cron";
+  expression: string;
+  handler(context: RequestContext): void | Promise<void>;
+}
+```
+
+```ts
+tasks: {
+  cleanup: {
+    kind: "cron",
+    expression: "0 * * * *",
+    async handler(context) {
+      console.log("cleanup", context.requestId);
+    },
+  },
+}
+```
+
+## Queue 任务
+
+```ts
+interface QueueTask {
+  kind: "queue";
+  name: string;
+  handler(message: JsonValue, context: RequestContext): unknown | Promise<unknown>;
+}
+```
+
+消息和结果必须可序列化为 JSON。可使用 [`tysel queue`](/reference/cli/tasks#tysel-queue) 从 CLI 调用已注册的处理程序。
+
+## MCP 任务
+
+MCP 是 `defineApp` 发挥价值的主要场景：它将字面量 `input` schema 作为处理程序参数类型的唯一来源。因此，`tysel init --template mcp` 会添加匹配的 `@tysel/sdk` 依赖。
+
+```ts
+import { defineApp } from "@tysel/sdk";
+
+export default defineApp({
+  tasks: {
+    lookup: {
+      kind: "mcp",
+      description: "Look up a customer",
+      input: { customerId: "string" },
+      async handler(input) {
+        return { customerId: input.customerId };
+      },
+    },
+  },
+});
+```
+
+`defineApp()` 使 `input` 保持为唯一事实来源，并据此推断处理程序参数。`InferMcpInput<Schema>` 仍可用于高级类型组合，但普通处理程序无需显式引用它。处理程序输入和结果必须可序列化为 JSON。TypeScript 会拒绝 `McpInputType` 词汇表之外的 schema 值。当前协议适配器要求每个声明的属性都必须提供。[`tysel mcp`](/reference/cli/tasks#tysel-mcp) 通过以换行分隔的标准输入输出提供已注册工具。
+
+对于单个 MCP 任务，或混合 MCP 与 cron/queue 任务的注册表，可选的 `mcp({...})` 构造函数可以在局部提供相同的推断能力。它是便捷辅助函数，不是默认的文档化应用结构。
+
+## 持久处理程序
+
+持久处理程序接收 `DurableContext` 和 JSON 输入，并返回 JSON 值。其回放规则比普通任务处理程序更严格；修改已部署工作流前，请阅读[持久 API](/reference/runtime/durable)。

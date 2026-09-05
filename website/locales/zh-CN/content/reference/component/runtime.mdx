@@ -1,0 +1,64 @@
+---
+title: "Component 运行时与 WASI"
+description: "Tysel 在有边界的 isolated-task 信任模式下执行可移植 Wasm Component。应用兼容性由公开 Component ABI、允许的 WASI 导入和已记录的资源限额定义。"
+---
+
+Tysel 在有边界的 `isolated-task` 信任模式下执行可移植 Wasm Component。应用兼容性由公开 Component ABI、允许的 WASI 导入和已记录的资源限额定义。嵌入式引擎及其依赖版本既不是应用 API，也不构成可移植兼容性保证。
+
+## 调用生命周期
+
+```text
+read bounded stdin
+  → validate JSON
+  → compile portable Component
+  → validate imports and policy
+  → instantiate restricted WASI
+  → call run(string)
+  → validate bounded JSON output
+  → write stdout + newline
+```
+
+每次进程执行只运行一次调用。`tysel run` 和打包后的可执行文件会读取 stdin 直至 EOF，因此调用方写入 JSON 值后必须关闭 stdin。
+
+## 受限 WASI 0.2 配置
+
+仅当来宾语言运行时需要时，Tysel 才接受以下 WASI 接口族：
+
+| 接口族 | 允许的接口 | 实际权限 |
+| --- | --- | --- |
+| CLI | environment、exit、stdin/stdout/stderr、terminal input/output 变体 | 不继承参数或环境；标准输入输出不会作为应用通道继承。JSON 任务通道由 Tysel 管理。 |
+| 时钟 | monotonic clock、wall clock | 供语言运行时使用的时钟支持。 |
+| 文件系统运行时 | types、preopens | 没有预打开目录。 |
+| I/O | error、poll、streams | 仅用于语言运行时内部连接。 |
+| 随机数 | random | 供语言运行时使用的随机数。 |
+
+导入必须使用 WASI `0.2.x`。其他 WASI 接口会在实例化前被拒绝，尤其不提供套接字和网络访问。应用的文件系统访问使用 Tysel 自己的能力 ABI，而非 WASI preopen。
+
+## 资源边界
+
+| 资源 | 默认或实际边界 | 最大值 |
+| --- | ---: | ---: |
+| 可移植 Component | 16 MiB | 16 MiB |
+| 线性内存 | `limits.memory_mb`，上限收紧至 64 MiB | 64 MiB |
+| 燃料 | 10,000,000 单位 | 100,000,000 单位 |
+| 执行时间 | `limits.request_timeout_ms`，默认 30 秒 | 60 秒 |
+| JSON 输入 | 1 MiB | 1 MiB |
+| JSON 输出 | 1 MiB | 1 MiB |
+| 保留的来宾错误 | 4 KiB | 4 KiB |
+| 宿主专用优化元数据 | — | 64 MiB |
+| Component 实例/内存/表 | 32 / 8 / 8 | 固定实现边界 |
+
+字节限制按 UTF-8 编码后的大小计算，而非字符数。燃料和 epoch 中断会限制 CPU 循环；宿主文件系统调用也共用本次调用的截止时间。
+
+## 可移植 Component 约定
+
+`tysel build` 将可移植 Component 保留为应用产物。宿主专用优化元数据如果存在，只有绑定以下信息时才会被接受：
+
+- Component ABI 版本；
+- 运行时引擎兼容性身份；
+- 宿主架构和操作系统；
+- 可移植源码的 SHA-256。
+
+运行时会拒绝不兼容或被篡改的优化元数据，并可使用保留的可移植 Component 执行。可移植性和正确性由可移植 Component 约定定义；可选的宿主专用元数据不代表启动性能保证。
+
+跨运行时清单请参阅[限额与默认值](/reference/limits-and-defaults)，来宾导出约定请参阅 [Component ABI](/reference/component/abi)。

@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/components/locale-provider";
+
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 
@@ -10,13 +12,14 @@ export function CopyButton({
   value: string;
   className?: string;
 }) {
+  const { t } = useLocale();
   const [copied, setCopied] = useState(false);
 
   return (
     <button
       type="button"
       className={`inline-flex size-8 items-center justify-center rounded-md text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground ${className}`}
-      aria-label={copied ? "Copied" : "Copy"}
+      aria-label={t(copied ? "common.copied" : "common.copy")}
       onClick={async () => {
         await navigator.clipboard.writeText(value);
         setCopied(true);
