@@ -47,6 +47,25 @@ Fatal errors are one JSON object on stderr. Build failures also include a
 diagnostic, not as a stable programmatic discriminator. The process exits with
 status `1` for this fatal path.
 
+Individual static diagnostics use these stable codes:
+
+| Code | Meaning |
+| --- | --- |
+| `TYSEL_MANIFEST_PARSE_ERROR` | TOML/JSON syntax or deserialization failed. |
+| `TYSEL_MANIFEST_INVALID` | A manifest semantic rule failed. |
+| `TYSEL_NODE_BUILTIN_UNSUPPORTED` | A runtime import requests a Node builtin. |
+| `TYSEL_IMPORT_UNRESOLVED` | A runtime import cannot be resolved. |
+
+Manifest diagnostics use phase `manifest`; import diagnostics use `resolve`.
+Manifest validation reports the first failure, with its field range when
+available. Missing fields may have no range, and parser errors may point to an
+insertion point or enclosing table. Import diagnostics cover modules reached by
+the build resolver, including dependencies, and refer to original TypeScript
+source rather than emitted JavaScript. Erased type-only imports are excluded.
+TypeScript typecheck output itself remains compiler text, not this structured
+protocol.
+
+
 ## Development diagnostic stream
 
 `tysel --error-format json dev` writes one JSON object per diagnostic update to

@@ -214,7 +214,7 @@ async fn serve(
     reload: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
-    let loaded = load(&manifest_path, entry.as_deref())?;
+    let loaded = load_for_serve(&manifest_path, entry.as_deref(), reload)?;
     let pool = SharedPool::with_server_limits(
         loaded.isolate,
         loaded.max_request_bytes,
@@ -252,7 +252,7 @@ async fn serve(
                 }
                 _ = wait_change(&mut changes.rx) => {
                     diagnostic_generation = diagnostic_generation.saturating_add(1);
-                    match load(&manifest_path, entry.as_deref()) {
+                    match load_for_serve(&manifest_path, entry.as_deref(), true) {
                     Ok(next) => {
                         task_generation = task_generation.saturating_add(1);
                         match start_task_service(next.task.clone(), task_generation).await {
@@ -456,9 +456,27 @@ fn listen_announcement(bound: std::net::SocketAddr) -> String {
     format!("tysel listen {bound}\ntysel url http://{bound}\n")
 }
 
+fn load_for_serve(manifest_path: &Path, entry: Option<&Path>, sync_types: bool) -> Result<Loaded> {
+    let manifest = Manifest::from_path(manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    if sync_types {
+        crate::typegen::sync(
+            manifest_path.parent().unwrap_or(Path::new(".")),
+            &manifest,
+            None,
+            false,
+        )?;
+    }
+    load_manifest(manifest_path, entry, manifest)
+}
+
 fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
     let manifest = Manifest::from_path(manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    load_manifest(manifest_path, entry, manifest)
+}
+
+fn load_manifest(manifest_path: &Path, entry: Option<&Path>, manifest: Manifest) -> Result<Loaded> {
     let root = manifest_path.parent().unwrap_or(Path::new("."));
     let entry = match entry {
         Some(path) => path.to_path_buf(),
@@ -701,6 +719,9 @@ fn relevant(event: notify::Result<Event>) -> bool {
 }
 
 fn is_watched(path: &Path) -> bool {
+    if path.file_name().and_then(|name| name.to_str()) == Some("tysel-env.d.ts") {
+        return false;
+    }
     if ignored(path) {
         return false;
     }
@@ -743,6 +764,7 @@ mod tests {
     fn watches_dotenv_and_source_but_not_ignored_paths() {
         assert!(is_watched(Path::new("/app/.env")));
         assert!(is_watched(Path::new("/app/src/index.ts")));
+        assert!(!is_watched(Path::new("/app/tysel-env.d.ts")));
         assert!(is_watched(Path::new("/app/tysel.toml")));
         assert!(!is_watched(Path::new("/app/README.md")));
         assert!(!is_watched(Path::new("/app/node_modules/pkg/.env")));

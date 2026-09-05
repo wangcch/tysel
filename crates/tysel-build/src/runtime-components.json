@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "1f7d8b76e2f5e4330473ff013afae3520afafec95f30ec42185bcf76fe6a99dd",
+  "cargo_lock_sha256": "124d6184ae5fe5b7fd53af46018f884b1448c5affa8fd1247f3bbb1452ba6d80",
   "roots": [
     "tysel-cli",
     "tysel-isolate",
@@ -392,6 +392,14 @@
       "checksum": "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
     },
     {
+      "name": "console",
+      "version": "0.16.4",
+      "license": "MIT",
+      "purl": "pkg:cargo/console@0.16.4",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "4fe5f465a4f6fee88fad41b85d990f84c835335e85b5d9e6e63e0d06d28cba7c"
+    },
+    {
       "name": "const-oid",
       "version": "0.10.2",
       "license": "Apache-2.0 OR MIT",
@@ -616,6 +624,14 @@
       "checksum": "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
     },
     {
+      "name": "dialoguer",
+      "version": "0.12.0",
+      "license": "MIT",
+      "purl": "pkg:cargo/dialoguer@0.12.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
+    },
+    {
       "name": "digest",
       "version": "0.10.7",
       "license": "MIT OR Apache-2.0",
@@ -686,6 +702,14 @@
       "purl": "pkg:cargo/embedded-io@0.6.1",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+    },
+    {
+      "name": "encode_unicode",
+      "version": "1.0.0",
+      "license": "Apache-2.0 OR MIT",
+      "purl": "pkg:cargo/encode_unicode@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
     },
     {
       "name": "encoding_rs",
@@ -2459,6 +2483,14 @@
       "purl": "pkg:cargo/sha2@0.11.0",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "checksum": "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+    },
+    {
+      "name": "shell-words",
+      "version": "1.1.1",
+      "license": "MIT OR Apache-2.0",
+      "purl": "pkg:cargo/shell-words@1.1.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "checksum": "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
     },
     {
       "name": "shlex",

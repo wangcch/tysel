@@ -236,6 +236,39 @@ root manifest that would make discovery ambiguous.
 `tysel config schema` prints the bundled Draft 2020-12 JSON Schema for editor,
 CI, and tooling integration. The runtime validator remains authoritative.
 
+New TOML projects include `.tysel/manifest.schema.json` and this header in
+`tysel.toml`:
+
+```toml
+#:schema .tysel/manifest.schema.json
+```
+
+A Taplo-enabled editor uses the local schema for field completion and schema
+validation without downloading it. Keep the schema in version control. For an
+existing project, export the installed toolchain's schema and add the header:
+
+```sh
+mkdir -p .tysel
+tysel config schema > .tysel/manifest.schema.json
+```
+
+New projects keep this schema visible to Git while ignoring other `.tysel`
+contents. If an existing project ignores `.tysel/`, append these ordered rules
+to `.gitignore` so the schema is available to other developers after checkout:
+
+```gitignore
+!.tysel/
+.tysel/*
+!.tysel/manifest.schema.json
+```
+
+Re-export after upgrading the toolchain. JSON projects can associate this schema
+through their editor's JSON schema settings; do not add a `$schema` property to
+`tysel.json`, because the manifest rejects unknown fields. Schema feedback does
+not replace `tysel check`: grant syntax and task dependency checks also use
+runtime validation rules.
+
+
 ## Reproducible project tasks
 
 The manifest can compose Tysel commands without shell-specific quoting or a

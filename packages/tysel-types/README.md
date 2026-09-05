@@ -26,7 +26,9 @@ export default {
 } satisfies TyselApp<TyselEnv>;
 ```
 
-Run `tysel types` after changing manifest permissions. The package exports
+`tysel dev` synchronizes `tysel-env.d.ts` at startup and on reload after valid
+manifest changes. Outside dev, run `tysel types` after changing permissions;
+use `tysel types --check` in CI to detect stale declarations without writing files. The package exports
 application, task, capability, WebSocket, and durable-execution types, including
 `TyselApp`, `RequestContext`, `DurableContext`, and `TyselRuntime`. It also
 declares `globalThis.tysel`; underscored native bindings remain private.

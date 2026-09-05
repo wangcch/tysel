@@ -352,6 +352,15 @@ fn init_writes_a_hello_service_skeleton() {
     assert!(source.contains("import type { TyselEnv } from \"../tysel-env.js\""));
     assert!(source.contains("} satisfies TyselApp<TyselEnv>;"));
     assert!(dir.join("tysel-env.d.ts").is_file());
+    assert_eq!(
+        fs::read_to_string(dir.join(".tysel/manifest.schema.json")).unwrap(),
+        tysel_manifest::JSON_SCHEMA
+    );
+    assert!(
+        fs::read_to_string(dir.join("tysel.toml"))
+            .unwrap()
+            .starts_with("#:schema .tysel/manifest.schema.json\n")
+    );
     let tsconfig: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("tsconfig.json")).unwrap()).unwrap();
     assert_eq!(
@@ -791,6 +800,37 @@ fn init_merges_tysel_entries_into_an_existing_gitignore() {
     assert_eq!(gitignore.matches("node_modules/").count(), 1);
     assert!(gitignore.contains("# Tysel\n"));
     assert!(gitignore.contains(".tysel/\n"));
+}
+
+#[test]
+fn init_keeps_the_schema_trackable_but_ignores_runtime_state() {
+    for (index, existing) in
+        ["", ".tysel/\n", "!.tysel/\n!.tysel/manifest.schema.json\n.tysel/\n"].iter().enumerate()
+    {
+        let dir = temp_app(&format!("init-schema-git-{index}"));
+        fs::write(dir.join(".gitignore"), existing).unwrap();
+        let output = Command::new(cli_exe())
+            .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--yes"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(Command::new("git").args(["init", "-q"]).arg(&dir).status().unwrap().success());
+        fs::write(dir.join(".tysel/local-cache"), "local state").unwrap();
+        let ignored = |path: &str| {
+            Command::new("git")
+                .current_dir(&dir)
+                .args(["check-ignore", "-q", path])
+                .status()
+                .unwrap()
+        };
+        assert_eq!(
+            ignored(".tysel/manifest.schema.json").code(),
+            Some(1),
+            "schema hidden for {existing:?}"
+        );
+        assert_eq!(ignored(".tysel/local-cache").code(), Some(0));
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 #[test]
@@ -1560,6 +1600,91 @@ fn dev_reloads_source_but_ignores_node_modules() {
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+fn check_ignores_erased_imports_and_locates_nested_runtime_imports() {
+    let dir = temp_app("check-import-diagnostics");
+    write_js_app(&dir, "export { default } from './nested.js';\n");
+    // write_js_app uses src/index.js; .js specifiers resolve to .ts sources.
+    let nested = dir.join("src/nested.ts");
+    fs::write(&nested, "import { type Stats } from 'node:fs';\nexport default {};\n").unwrap();
+    let invoke = || {
+        Command::new(cli_exe())
+            .args(["--error-format", "json", "check", "--manifest"])
+            .arg(dir.join("tysel.toml"))
+            .output()
+            .unwrap()
+    };
+    let output = invoke();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    fs::write(&nested, "import 'node:fs';\nexport default {};\n").unwrap();
+    let output = invoke();
+    assert!(!output.status.success());
+    let output: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(output["diagnostics"][0]["code"], "TYSEL_NODE_BUILTIN_UNSUPPORTED");
+    assert!(output["diagnostics"][0]["file"].as_str().unwrap().ends_with("src/nested.ts"));
+    assert_eq!(output["diagnostics"][0]["start"]["line"], 1);
+}
+
+#[test]
+fn dev_syncs_types_preserves_them_on_manifest_errors_and_recovers() {
+    let dir = temp_app("dev-type-sync");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    let manifest_path = dir.join("tysel.toml");
+    let valid =
+        "[app]\nname = 'type-sync'\nentry = 'src/index.ts'\n[server]\nlisten = '127.0.0.1:0'\n";
+    fs::write(&manifest_path, valid).unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "export default { fetch() { return new Response('ok'); } };\n",
+    )
+    .unwrap();
+    let mut child = ManagedChild::spawn(
+        Command::new(cli_exe())
+            .args(["--error-format", "json", "dev", "--manifest"])
+            .arg(&manifest_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        "dev type sync",
+    );
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
+    wait_log(&log, "\"generation\":0", Duration::from_secs(5));
+    let path = dir.join("tysel-env.d.ts");
+    let original = fs::read_to_string(&path).unwrap();
+    assert!(!original.contains("TOKEN"));
+    fs::write(&manifest_path, format!("{valid}\n[permissions]\nsecrets = ['TOKEN']\n")).unwrap();
+    wait_log(&log, "\"generation\":1", Duration::from_secs(5));
+    let generated = fs::read_to_string(&path).unwrap();
+    assert!(generated.contains("TOKEN"));
+    let invalid = valid.replace("listen =", "workers = 0\nlisten =");
+    fs::write(&manifest_path, &invalid).unwrap();
+    wait_log(&log, "TYSEL_MANIFEST_INVALID", Duration::from_secs(5));
+    assert_eq!(fs::read_to_string(&path).unwrap(), generated);
+    assert!(http_get(&addr).contains("ok"));
+    let cli = Command::new(cli_exe())
+        .args(["--error-format", "json", "check", "--manifest"])
+        .arg(&manifest_path)
+        .output()
+        .unwrap();
+    assert!(!cli.status.success());
+    let cli: serde_json::Value = serde_json::from_slice(&cli.stderr).unwrap();
+    let event: serde_json::Value = log
+        .lock()
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|event| event["diagnostics"][0]["code"] == "TYSEL_MANIFEST_INVALID")
+        .unwrap();
+    assert_eq!(cli["diagnostics"], event["diagnostics"]);
+    assert_eq!(event["diagnostics"][0]["start"]["line"], 5);
+    fs::write(&manifest_path, valid).unwrap();
+    wait_log(&log, "\"generation\":3", Duration::from_secs(5));
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    // Generated output must not cause a second reload or overwrite editor changes.
+    thread::sleep(Duration::from_millis(300));
+    assert!(!log.lock().unwrap().contains("\"generation\":4"));
+    assert!(http_get(&addr).contains("ok"));
 }
 
 #[test]

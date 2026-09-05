@@ -98,6 +98,11 @@ pub fn run(manifest_path: PathBuf, options: Options) -> Result<()> {
     println!("{payload_label:<16} {}", format_bytes(payload_bytes as u64));
     println!("Capabilities     {}", capability_summary(&manifest));
     println!("Runtime          {}", manifest.app.profile);
+    if manifest.app.profile == "isolated" {
+        println!(
+            "Worker           matching tysel-worker required beside executable (or TYSEL_WORKER)"
+        );
+    }
     println!("Executable       {}", format_bytes(executable));
     println!("Target           {}", target.canonical());
     println!("Output           {}", output.display());

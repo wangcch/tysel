@@ -653,8 +653,22 @@ fn run(cli: Cli) -> Result<ExitCode> {
 
 pub(crate) fn structured_diagnostics(
     error: &anyhow::Error,
-) -> Option<&tysel_build::BuildDiagnostics> {
-    error.chain().find_map(|cause| cause.downcast_ref())
+) -> Option<tysel_build::BuildDiagnostics> {
+    error.chain().find_map(|cause| {
+        if let Some(build) = cause.downcast_ref::<tysel_build::BuildDiagnostics>() {
+            return Some(build.clone());
+        }
+        let manifest = cause.downcast_ref::<tysel_manifest::ManifestError>()?;
+        let tysel_manifest::ManifestError::Located(source) = manifest else { return None };
+        Some(tysel_build::BuildDiagnostics::new(vec![tysel_build::BuildDiagnostic::at_source(
+            source.code,
+            "manifest",
+            source.error.to_string(),
+            &source.file,
+            &source.source_text,
+            source.range.clone(),
+        )]))
+    })
 }
 
 fn switch_to_selected_dir(path: Option<&Path>) -> Result<()> {

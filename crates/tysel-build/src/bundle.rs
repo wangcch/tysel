@@ -116,7 +116,7 @@ pub fn bundle(entry: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
 
         let mut resolved = HashMap::new();
         for specifier in &analysis.specifiers {
-            let resolved_path = resolve_specifier(&resolver, &path, specifier)?;
+            let resolved_path = resolve_specifier(&resolver, &path, specifier, &source)?;
             resolved.insert(specifier.clone(), module_id(&resolved_path));
             pending.push_back(resolved_path);
         }
@@ -158,6 +158,7 @@ struct OrigPos {
 struct Analysis {
     has_module_syntax: bool,
     specifiers: Vec<String>,
+    specifier_spans: HashMap<String, Span>,
     dynamic_imports: Vec<Span>,
 }
 
@@ -174,13 +175,37 @@ fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
         )));
     }
     let mut specifiers = Vec::new();
+    let mut specifier_spans = HashMap::new();
     let mut seen = HashSet::new();
+    let mut type_only_statements = HashMap::new();
+    for (start, is_type) in parsed
+        .module_record
+        .import_entries
+        .iter()
+        .map(|entry| (entry.statement_span.start, entry.is_type))
+        .chain(
+            parsed
+                .module_record
+                .indirect_export_entries
+                .iter()
+                .map(|entry| (entry.statement_span.start, entry.is_type)),
+        )
+    {
+        type_only_statements
+            .entry(start)
+            .and_modify(|all: &mut bool| *all &= is_type)
+            .or_insert(is_type);
+    }
     for (specifier, requests) in parsed.module_record.requested_modules.iter() {
-        if requests.iter().all(|request| request.is_type) {
+        let Some(request) = requests.iter().find(|request| {
+            !request.is_type
+                && type_only_statements.get(&request.statement_span.start) != Some(&true)
+        }) else {
             continue;
-        }
+        };
         let specifier = specifier.as_str().to_string();
         if seen.insert(specifier.clone()) {
+            specifier_spans.insert(specifier.clone(), request.span);
             specifiers.push(specifier);
         }
     }
@@ -198,12 +223,14 @@ fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
         let Some(literal) = call.common_js_require() else { continue };
         let specifier = literal.value.as_str().to_owned();
         if seen.insert(specifier.clone()) {
+            specifier_spans.insert(specifier.clone(), literal.span);
             specifiers.push(specifier);
         }
     }
     Ok(Analysis {
         has_module_syntax: parsed.module_record.has_module_syntax,
         specifiers,
+        specifier_spans,
         dynamic_imports: parsed
             .module_record
             .dynamic_imports
@@ -441,15 +468,45 @@ fn collect_binding(pattern: &BindingPattern<'_>, names: &mut Vec<String>) {
     }
 }
 
-fn resolve_specifier(resolver: &Resolver, importer: &Path, specifier: &str) -> Result<PathBuf> {
+fn resolve_specifier(
+    resolver: &Resolver,
+    importer: &Path,
+    specifier: &str,
+    source: &str,
+) -> Result<PathBuf> {
     let directory = importer.parent().unwrap_or(importer);
     match resolver.resolve(directory, specifier) {
-        Ok(resolution) => canonicalize_existing(&resolution.full_path()),
-        Err(ResolveError::Builtin { resolved, .. }) => {
-            Err(anyhow!("Node builtin '{resolved}' is not available in Tysel"))
+        Ok(resolution) if !specifier.starts_with("node:") => {
+            canonicalize_existing(&resolution.full_path())
         }
-        Err(err) => {
-            Err(anyhow!("cannot resolve '{}' from {}: {err}", specifier, importer.display()))
+        result => {
+            let (code, message) = match result {
+                Err(ResolveError::Builtin { resolved, .. }) => (
+                    "TYSEL_NODE_BUILTIN_UNSUPPORTED",
+                    format!("Node builtin '{resolved}' is not available in Tysel"),
+                ),
+                _ if specifier.starts_with("node:") => (
+                    "TYSEL_NODE_BUILTIN_UNSUPPORTED",
+                    format!("Node builtin '{specifier}' is not available in Tysel"),
+                ),
+                Err(error) => (
+                    "TYSEL_IMPORT_UNRESOLVED",
+                    format!("cannot resolve '{specifier}' from {}: {error}", importer.display()),
+                ),
+                Ok(_) => unreachable!(),
+            };
+            // Analyze the original source only on failure: successful builds do
+            // not pay for a second parse just to retain diagnostic positions.
+            let original = analyze_source(importer, source)?;
+            let span = original.specifier_spans.get(specifier).copied();
+            Err(anyhow!(crate::BuildDiagnostics::new(vec![crate::BuildDiagnostic::at_source(
+                code,
+                "resolve",
+                message,
+                importer,
+                source,
+                span.map(|span| span.start as usize..span.end as usize),
+            )])))
         }
     }
 }

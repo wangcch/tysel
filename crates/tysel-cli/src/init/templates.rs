@@ -40,7 +40,8 @@ pub(super) const PACKAGE_JSON: &str = r#"{
 }
 "#;
 
-pub(super) const GITIGNORE: &str = "node_modules/\ndist/\ndata/\n.tysel/\n";
+pub(super) const GITIGNORE: &str =
+    "node_modules/\ndist/\ndata/\n!.tysel/\n.tysel/*\n!.tysel/manifest.schema.json\n";
 
 const HTTP_TYPED: &str = r#"import type { TyselApp } from "@tysel/types";
 import type { TyselEnv } from "__TYSEL_ENV_IMPORT__";
@@ -401,7 +402,9 @@ steps = [["build", "--release"]]
         })
         .collect::<Vec<_>>()
         .join("\n");
-    Ok(format!("{rendered}\n"))
+    let schema =
+        if format == ManifestFormat::Toml { "#:schema .tysel/manifest.schema.json\n" } else { "" };
+    Ok(format!("{schema}{rendered}\n"))
 }
 
 #[cfg(test)]

@@ -694,6 +694,48 @@ export default {
     }
 
     #[test]
+    fn nested_import_errors_use_original_typescript_ranges() {
+        let dir = std::env::temp_dir()
+            .join(format!("tysel-nested-import-diagnostic-{}", std::process::id()));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        let entry = dir.join("src/index.ts");
+        fs::write(&entry, "export { default } from './nested.js';\n").unwrap();
+        let nested = dir.join("src/nested.ts");
+        for specifier in ["node:fs", "node:future_builtin", "./missing.js"] {
+            // Type erasure changes the generated line/column before this import.
+            let source = format!(
+                "type Name = string;\nconst name: Name = '王😀'; import '{specifier}';\nexport default name;\n"
+            );
+            fs::write(&nested, &source).unwrap();
+            let error = read_bundle(&entry).unwrap_err();
+            let diagnostics = error.downcast_ref::<BuildDiagnostics>().unwrap();
+            let diagnostic = &diagnostics.diagnostics()[0];
+            assert_eq!(
+                diagnostic.code,
+                if specifier.starts_with("node:") {
+                    "TYSEL_NODE_BUILTIN_UNSUPPORTED"
+                } else {
+                    "TYSEL_IMPORT_UNRESOLVED"
+                }
+            );
+            assert_eq!(Path::new(&diagnostic.file), fs::canonicalize(&nested).unwrap());
+            let start = diagnostic.start.unwrap();
+            let end = diagnostic.end.unwrap();
+            assert_eq!(start.line, 2);
+            let selected = &source[start.byte_offset as usize..end.byte_offset as usize];
+            assert!(selected.contains(specifier), "{selected:?}");
+            let line_start = source.find('\n').unwrap() + 1;
+            assert_eq!(
+                start.column as usize,
+                source[line_start..start.byte_offset as usize].chars().count() + 1
+            );
+        }
+        fs::write(&nested, "import type { Stats } from 'node:fs';\nimport { type Missing } from './not-installed.js';\nexport default {};\n").unwrap();
+        assert!(read_bundle(&entry).is_ok(), "erased imports must not be resolved");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn node_builtins_are_rejected() {
         let dir = std::env::temp_dir().join(format!("tysel-build-fs-{}", std::process::id()));
         fs::create_dir_all(dir.join("src")).unwrap();

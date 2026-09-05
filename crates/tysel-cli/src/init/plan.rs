@@ -198,6 +198,12 @@ pub(super) fn build(options: Options) -> Result<InitPlan> {
         files.push((test_path, options.template.test_source(&entry)));
     }
     files.push((PathBuf::from(manifest_name), manifest_contents));
+    if options.manifest_format == ManifestFormat::Toml {
+        files.push((
+            PathBuf::from(".tysel/manifest.schema.json"),
+            tysel_manifest::JSON_SCHEMA.to_owned(),
+        ));
+    }
     let gitignore_path = root.join(".gitignore");
     let gitignore_update = if gitignore_path.is_file() {
         if fs::symlink_metadata(&gitignore_path)?.file_type().is_symlink() {

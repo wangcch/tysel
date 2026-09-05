@@ -233,14 +233,21 @@ pub(super) fn gitignore_with_entries(
         std::str::from_utf8(&bytes).with_context(|| format!("{} must be UTF-8", path.display()))?;
     let normalized =
         original.lines().map(|line| normalize_ignore_pattern(line.trim())).collect::<Vec<_>>();
-    let missing = desired
+    // Negation rules are order-sensitive. Keep the schema exception block at
+    // the end so an existing `.tysel/` rule cannot hide the shared schema.
+    let (unordered, ordered) = desired
+        .split_once("!.tysel/\n")
+        .map(|(head, tail)| (head, format!("!.tysel/\n{tail}")))
+        .unwrap_or((desired, String::new()));
+    let append_ordered = !ordered.is_empty() && !original.trim_end().ends_with(ordered.trim_end());
+    let missing = unordered
         .lines()
         .filter(|entry| {
             let entry = normalize_ignore_pattern(entry);
             !normalized.iter().any(|existing| existing == &entry)
         })
         .collect::<Vec<_>>();
-    if missing.is_empty() {
+    if missing.is_empty() && !append_ordered {
         return Ok(None);
     }
 
@@ -255,6 +262,9 @@ pub(super) fn gitignore_with_entries(
     for entry in missing {
         contents.push_str(entry);
         contents.push('\n');
+    }
+    if append_ordered {
+        contents.push_str(&ordered);
     }
     Ok(Some((bytes, contents)))
 }

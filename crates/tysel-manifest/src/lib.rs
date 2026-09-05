@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod diagnostic;
+pub use diagnostic::ManifestSourceError;
+
 pub const MAX_FILESYSTEM_ROOTS_PER_OPERATION: usize = 64;
 pub const JSON_SCHEMA: &str = include_str!("../schema/tysel-manifest-v1.schema.json");
 
@@ -27,6 +30,16 @@ pub enum ManifestError {
     UnsupportedFormat(PathBuf),
     #[error("{0}")]
     Invalid(String),
+    #[error("{message}")]
+    Field { field: Vec<String>, message: String },
+    #[error(transparent)]
+    Located(Box<ManifestSourceError>),
+}
+
+impl ManifestError {
+    fn invalid_field(field: &[&str], message: String) -> Self {
+        Self::Field { field: field.iter().map(|part| (*part).to_owned()).collect(), message }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,7 +266,9 @@ impl Manifest {
         let path = path.as_ref();
         let format = ManifestFormat::from_path(path)?;
         let raw = fs::read_to_string(path)?;
-        Self::parse_with_format(&raw, format)
+        Self::parse_with_format(&raw, format).map_err(|error| {
+            ManifestError::Located(Box::new(ManifestSourceError::new(path, raw, format, error)))
+        })
     }
 
     /// Parse a TOML manifest. Kept for callers embedding existing TOML fixtures.
@@ -353,10 +368,12 @@ impl Manifest {
         let is_component =
             entry.extension().and_then(|extension| extension.to_str()) == Some("wasm");
         match (self.app.profile.as_str(), is_component) {
-            ("component", false) => Err(ManifestError::Invalid(
+            ("component", false) => Err(ManifestError::invalid_field(
+                &["app", "entry"],
                 "app.profile = \"component\" requires a .wasm entry".into(),
             )),
-            (profile, true) if profile != "component" => Err(ManifestError::Invalid(
+            (profile, true) if profile != "component" => Err(ManifestError::invalid_field(
+                &["app", "entry"],
                 ".wasm entry requires app.profile = \"component\"".into(),
             )),
             _ => Ok(()),
@@ -365,48 +382,63 @@ impl Manifest {
 
     fn validate(&self) -> Result<(), ManifestError> {
         if self.schema_version != 1 {
-            return Err(ManifestError::Invalid(format!(
-                "unsupported schema_version {}; expected 1",
-                self.schema_version
-            )));
+            return Err(ManifestError::invalid_field(
+                &["schema_version"],
+                format!("unsupported schema_version {}; expected 1", self.schema_version),
+            ));
         }
         if self.app.name.trim().is_empty() {
-            return Err(ManifestError::Invalid("app.name must be non-empty".into()));
+            return Err(ManifestError::invalid_field(
+                &["app", "name"],
+                "app.name must be non-empty".into(),
+            ));
         }
         if !is_app_name(&self.app.name) {
-            return Err(ManifestError::Invalid(
+            return Err(ManifestError::invalid_field(&["app", "name"],
                 "app.name must start with a letter or digit and contain only letters, digits, '-', '_' or '.'"
                     .into(),
             ));
         }
         if self.app.entry.trim().is_empty() {
-            return Err(ManifestError::Invalid("app.entry must be non-empty".into()));
+            return Err(ManifestError::invalid_field(
+                &["app", "entry"],
+                "app.entry must be non-empty".into(),
+            ));
         }
         validate_entry(&self.app.entry)?;
         if !self.server.http1 && !self.server.http2 {
-            return Err(ManifestError::Invalid(
+            return Err(ManifestError::invalid_field(
+                &["server", "http1"],
                 "server must enable at least one of http1 or http2".into(),
             ));
         }
         if self.server.websocket && !self.server.http1 {
-            return Err(ManifestError::Invalid(
+            return Err(ManifestError::invalid_field(
+                &["server", "websocket"],
                 "server.websocket requires server.http1 because WebSocket upgrades use HTTP/1.1"
                     .into(),
             ));
         }
         if !(1..=64).contains(&self.server.workers) {
-            return Err(ManifestError::Invalid("server.workers must be between 1 and 64".into()));
+            return Err(ManifestError::invalid_field(
+                &["server", "workers"],
+                "server.workers must be between 1 and 64".into(),
+            ));
         }
         if self.server.workers > 1 && self.app.profile != "service" {
-            return Err(ManifestError::Invalid(
+            return Err(ManifestError::invalid_field(
+                &["server", "workers"],
                 "server.workers greater than 1 requires app.profile = \"service\"".into(),
             ));
         }
         if !matches!(self.app.profile.as_str(), "service" | "isolated" | "component") {
-            return Err(ManifestError::Invalid(format!(
-                "unsupported app profile {:?}; expected service, isolated, or component",
-                self.app.profile
-            )));
+            return Err(ManifestError::invalid_field(
+                &["app", "profile"],
+                format!(
+                    "unsupported app profile {:?}; expected service, isolated, or component",
+                    self.app.profile
+                ),
+            ));
         }
         self.validate_entry_profile(Path::new(&self.app.entry))?;
         validate_string_set("permissions.fetch", &self.permissions.fetch)?;
@@ -420,33 +452,43 @@ impl Manifest {
                 .filter(|root| !root.is_empty())
                 .collect::<std::collections::BTreeSet<_>>();
             if unique.len() != roots.len() {
-                return Err(ManifestError::Invalid(format!(
-                    "{operation} roots must be non-empty and unique"
-                )));
+                return Err(ManifestError::invalid_field(
+                    &["permissions", operation],
+                    format!("{operation} roots must be non-empty and unique"),
+                ));
             }
             if unique.len() > MAX_FILESYSTEM_ROOTS_PER_OPERATION {
-                return Err(ManifestError::Invalid(format!(
-                    "{operation} declares more than {MAX_FILESYSTEM_ROOTS_PER_OPERATION} roots"
-                )));
+                return Err(ManifestError::invalid_field(
+                    &["permissions", operation],
+                    format!(
+                        "{operation} declares more than {MAX_FILESYSTEM_ROOTS_PER_OPERATION} roots"
+                    ),
+                ));
             }
         }
         if self.permissions.postgres.len() > 1 {
-            return Err(ManifestError::Invalid(
+            return Err(ManifestError::invalid_field(
+                &["permissions", "postgres"],
                 "this runtime supports exactly one Postgres connection; declare at most one grant"
                     .into(),
             ));
         }
         for item in &self.permissions.postgres {
-            parse_postgres_grant(item).map_err(ManifestError::Invalid)?;
+            parse_postgres_grant(item).map_err(|message| {
+                ManifestError::invalid_field(&["permissions", "postgres"], message)
+            })?;
         }
         if self.permissions.redis.len() > 1 {
-            return Err(ManifestError::Invalid(
+            return Err(ManifestError::invalid_field(
+                &["permissions", "redis"],
                 "this runtime supports exactly one Redis connection; declare at most one grant"
                     .into(),
             ));
         }
         for item in &self.permissions.redis {
-            parse_redis_grant(item).map_err(ManifestError::Invalid)?;
+            parse_redis_grant(item).map_err(|message| {
+                ManifestError::invalid_field(&["permissions", "redis"], message)
+            })?;
         }
         self.validate_tasks()?;
         Ok(())
@@ -455,41 +497,53 @@ impl Manifest {
     fn validate_tasks(&self) -> Result<(), ManifestError> {
         for (name, task) in &self.tasks {
             if !is_task_name(name) {
-                return Err(ManifestError::Invalid(format!(
-                    "invalid task name {name:?}; start with a letter or digit, then use letters, digits, '-', '_' or ':'"
-                )));
+                return Err(ManifestError::invalid_field(
+                    &["tasks", name],
+                    format!(
+                        "invalid task name {name:?}; start with a letter or digit, then use letters, digits, '-', '_' or ':'"
+                    ),
+                ));
             }
             if task.depends.is_empty() && task.steps.is_empty() {
-                return Err(ManifestError::Invalid(format!(
-                    "task {name:?} must declare depends or steps"
-                )));
+                return Err(ManifestError::invalid_field(
+                    &["tasks", name],
+                    format!("task {name:?} must declare depends or steps"),
+                ));
             }
             let mut dependencies = BTreeSet::new();
             for dependency in &task.depends {
                 if !self.tasks.contains_key(dependency) {
-                    return Err(ManifestError::Invalid(format!(
-                        "task {name:?} depends on unknown task {dependency:?}"
-                    )));
+                    return Err(ManifestError::invalid_field(
+                        &["tasks", name],
+                        format!("task {name:?} depends on unknown task {dependency:?}"),
+                    ));
                 }
                 if !dependencies.insert(dependency) {
-                    return Err(ManifestError::Invalid(format!(
-                        "task {name:?} contains duplicate dependency {dependency:?}"
-                    )));
+                    return Err(ManifestError::invalid_field(
+                        &["tasks", name],
+                        format!("task {name:?} contains duplicate dependency {dependency:?}"),
+                    ));
                 }
             }
             for (index, step) in task.steps.iter().enumerate() {
                 if step.is_empty() || step.iter().any(|argument| argument.is_empty()) {
-                    return Err(ManifestError::Invalid(format!(
-                        "task {name:?} step {} must contain non-empty arguments",
-                        index + 1
-                    )));
+                    return Err(ManifestError::invalid_field(
+                        &["tasks", name],
+                        format!(
+                            "task {name:?} step {} must contain non-empty arguments",
+                            index + 1
+                        ),
+                    ));
                 }
                 if !is_task_command(&step[0]) {
-                    return Err(ManifestError::Invalid(format!(
-                        "task {name:?} step {} uses unsupported Tysel command {:?}",
-                        index + 1,
-                        step[0]
-                    )));
+                    return Err(ManifestError::invalid_field(
+                        &["tasks", name],
+                        format!(
+                            "task {name:?} step {} uses unsupported Tysel command {:?}",
+                            index + 1,
+                            step[0]
+                        ),
+                    ));
                 }
                 if step[1..].iter().any(|argument| {
                     matches!(
@@ -500,10 +554,13 @@ impl Manifest {
                         || argument.starts_with("--project=")
                         || argument.starts_with("--project-dir=")
                 }) {
-                    return Err(ManifestError::Invalid(format!(
-                        "task {name:?} step {} cannot override its project selection",
-                        index + 1
-                    )));
+                    return Err(ManifestError::invalid_field(
+                        &["tasks", name],
+                        format!(
+                            "task {name:?} step {} cannot override its project selection",
+                            index + 1
+                        ),
+                    ));
                 }
             }
         }
@@ -524,7 +581,10 @@ fn validate_string_set(name: &str, values: &[String]) -> Result<(), ManifestErro
         .filter(|value| !value.is_empty())
         .collect::<BTreeSet<_>>();
     if unique.len() != values.len() {
-        return Err(ManifestError::Invalid(format!("{name} values must be non-empty and unique")));
+        return Err(ManifestError::invalid_field(
+            &name.split('.').collect::<Vec<_>>(),
+            format!("{name} values must be non-empty and unique"),
+        ));
     }
     Ok(())
 }
@@ -537,7 +597,8 @@ fn is_app_name(name: &str) -> bool {
 
 fn validate_entry(entry: &str) -> Result<(), ManifestError> {
     if entry.chars().any(char::is_control) || entry.contains('\\') {
-        return Err(ManifestError::Invalid(
+        return Err(ManifestError::invalid_field(
+            &["app", "entry"],
             "app.entry must use '/' separators and contain no control characters".into(),
         ));
     }
@@ -559,7 +620,8 @@ fn validate_entry(entry: &str) -> Result<(), ManifestError> {
         })
         || !has_normal_component
     {
-        return Err(ManifestError::Invalid(
+        return Err(ManifestError::invalid_field(
+            &["app", "entry"],
             "app.entry must be a project-relative path without '..'".into(),
         ));
     }
@@ -598,7 +660,10 @@ fn visit_task<'a>(
         return Ok(());
     }
     if !visiting.insert(name) {
-        return Err(ManifestError::Invalid(format!("task dependency cycle includes {name:?}")));
+        return Err(ManifestError::invalid_field(
+            &["tasks", name, "depends"],
+            format!("task dependency cycle includes {name:?}"),
+        ));
     }
     for dependency in &tasks[name].depends {
         visit_task(dependency, tasks, visiting, visited)?;
