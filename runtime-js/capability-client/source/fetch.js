@@ -49,10 +49,10 @@
     const headers = new Headers(init.headers || (input && input.headers));
     const pairs = [];
     headers.forEach((value, key) => pairs.push([key, value]));
-    let body = "";
-    if (init.body != null) body = String(init.body);
-    else if (input instanceof Request && (input._stream || input.body != null)) body = await input.text();
-    else if (input && typeof input !== "string" && input.body != null) body = String(input.body);
+    let body;
+    if (init.body != null) body = globalThis.__tysel_bodyBytes(init.body);
+    else if (input instanceof Request) body = await globalThis.__tysel_consumeBytes(input);
+    else body = globalThis.__tysel_bodyBytes(input && typeof input !== "string" ? input.body : null);
     const operation = tysel._httpStart(String(url), method, JSON.stringify(pairs), body);
     const started = await awaitOperation(operation, signal);
     let headerPairs = [];

@@ -31,7 +31,7 @@
         throw new TypeError("expected BufferSource");
       }
       let text = tysel._utf8Decode(view, this.fatal);
-      if (this.ignoreBOM && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      if (!this.ignoreBOM && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       return text;
     }
   }

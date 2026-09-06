@@ -90,7 +90,11 @@ fn install_inner(
         "_httpStart",
         Function::new(
             ctx.clone(),
-            move |ctx, url: String, method: String, headers_json: String, body: String| {
+            move |ctx, url: String, method: String, headers_json: String, body: TypedArray<u8>| {
+                let body = bytes::Bytes::copy_from_slice(
+                    body.as_bytes()
+                        .ok_or_else(|| Exception::throw_type(&ctx, "request body is detached"))?,
+                );
                 submit_cancellable(ctx, &io_http_start, |id| IoRequest::HttpGet {
                     id,
                     url,
@@ -130,14 +134,16 @@ fn install_inner(
     tysel.set(
         "_utf8Decode",
         Function::new(ctx.clone(), |ctx, bytes: TypedArray<u8>, fatal: bool| {
-            let Some(raw) = bytes.as_bytes() else {
-                return Ok(String::new());
-            };
+            let raw = bytes.as_bytes().unwrap_or_default();
+            // QuickJS copies the UTF-8 input into its own string storage. Borrow
+            // valid input here instead of allocating an intermediate Rust String.
             if fatal {
-                String::from_utf8(raw.to_vec())
-                    .map_err(|_| Exception::throw_type(&ctx, "UTF-8 decode failed"))
+                let text = std::str::from_utf8(raw)
+                    .map_err(|_| Exception::throw_type(&ctx, "UTF-8 decode failed"))?;
+                rquickjs::String::from_str(ctx, text)
             } else {
-                Ok(String::from_utf8_lossy(raw).into_owned())
+                let text = String::from_utf8_lossy(raw);
+                rquickjs::String::from_str(ctx, &text)
             }
         })?,
     )?;
@@ -464,7 +470,16 @@ pub fn settle(ctx: &Ctx<'_>, id: OpId, result: Result<Value, String>) -> rquickj
     match result {
         Ok(value) => {
             let resolve: Function = entry.get("resolve")?;
-            resolve.call::<(rquickjs::Value<'_>,), ()>((value_to_js(ctx, value)?,))?;
+            // HTTP bytes must use the QuickJS allocator so retained chunks count
+            // against the isolate heap limit. External Vec-backed buffers bypass
+            // that limit. Nested capability values keep their array representation.
+            let value = match value {
+                Value::Bytes(bytes) => {
+                    TypedArray::<u8>::new_copy(ctx.clone(), &bytes)?.into_js(ctx)?
+                }
+                value => value_to_js(ctx, value)?,
+            };
+            resolve.call::<(rquickjs::Value<'_>,), ()>((value,))?;
         }
         Err(error) => {
             if let Ok(reject) = entry.get::<_, Function>("reject") {

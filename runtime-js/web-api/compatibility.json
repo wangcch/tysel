@@ -23,7 +23,7 @@
     {
       "name": "Request and Response",
       "status": "partial",
-      "supported": ["string, Uint8Array, and ArrayBuffer response bodies", "single-use json/text/arrayBuffer consumption", "bodyUsed", "buffered request and response clone", "streamed host request and response bodies"],
+      "supported": ["string, ArrayBuffer, and ArrayBufferView request/response bodies with byte-preserving consumption", "single-use json/text/arrayBuffer consumption", "bodyUsed", "buffered request and response clone", "streamed host request and response bodies", "UTF-8 decoding after byte collection, including split code points and BOM handling", "Tysel response chunk arrays with snapshotted string/ArrayBuffer/ArrayBufferView elements"],
       "unsupported": ["public ReadableStream bodies", "formData/blob helpers", "stream teeing and streamed response clone", "browser cache/credentials/mode semantics"]
     },
     {
@@ -59,7 +59,7 @@
     {
       "name": "fetch",
       "status": "partial",
-      "supported": ["HTTP methods allowed by host policy", "headers and buffered request bodies", "redirect policy", "streamed response consumption", "AbortSignal cancellation"],
+      "supported": ["HTTP methods allowed by host policy", "headers and byte-preserving buffered request bodies", "redirect policy", "streamed response consumption", "AbortSignal cancellation"],
       "unsupported": ["streaming request bodies", "multipart/form data", "browser cache/credentials/mode semantics"]
     },
     {

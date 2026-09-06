@@ -105,10 +105,12 @@ export type TyselHeadersInit =
   | Iterable<readonly [string, string]>
   | Record<string, string>;
 
+export type TyselBodyInit = string | ArrayBuffer | ArrayBufferView;
+
 export interface TyselRequestInit {
   method?: string;
   headers?: TyselHeadersInit;
-  body?: unknown;
+  body?: TyselBodyInit | null;
   signal?: TyselAbortSignal | null;
 }
 
@@ -226,7 +228,7 @@ export interface TyselWebApiGlobals {
   Headers: new (init?: TyselHeadersInit) => TyselHeaders;
   Request: new (input: string | TyselRequest, init?: TyselRequestInit) => TyselRequest;
   Response: {
-    new (body?: unknown, init?: TyselResponseInit): TyselResponse;
+    new (body?: TyselBodyInit | readonly TyselBodyInit[] | null, init?: TyselResponseInit): TyselResponse;
     json(data: unknown, init?: TyselResponseInit): TyselResponse;
   };
   AbortController: new () => TyselAbortController;

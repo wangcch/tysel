@@ -489,6 +489,96 @@
     }
   }
 
+  function bodyBytes(body) {
+    if (body == null) return new Uint8Array(0);
+    if (Array.isArray(body)) {
+      const chunks = body.map(bodyBytes);
+      return joinBytes(chunks, chunks.reduce((size, chunk) => size + chunk.byteLength, 0));
+    }
+    if (body instanceof ArrayBuffer) return new Uint8Array(body);
+    if (ArrayBuffer.isView(body)) {
+      return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    }
+    return new TextEncoder().encode(String(body));
+  }
+
+  function copyBody(body) {
+    return body instanceof ArrayBuffer || ArrayBuffer.isView(body)
+      ? bodyBytes(body).slice()
+      : body;
+  }
+
+  function copyResponseBody(body) {
+    if (!Array.isArray(body)) return copyBody(body);
+    // Snapshot both the chunk list and each view's selected bytes. Native
+    // emission can then handle every public ArrayBufferView as Uint8Array.
+    return Array.from(body, (chunk) => {
+      if (typeof chunk !== "string" && !(chunk instanceof ArrayBuffer) && !ArrayBuffer.isView(chunk)) {
+        throw new TypeError("response chunk must be a string or BufferSource");
+      }
+      return copyBody(chunk);
+    });
+  }
+
+  function joinBytes(chunks, length) {
+    if (chunks.length === 1) return chunks[0];
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
+  }
+
+  async function consumeBytes(owner) {
+    if (owner._bodyUsed) throw new TypeError("body has already been consumed");
+    owner._bodyUsed = true;
+    if (!owner._stream) return bodyBytes(owner.body);
+    const chunks = [];
+    let length = 0;
+    try {
+      for (;;) {
+        const chunk = owner instanceof Request
+          ? await tysel._readBody()
+          : await globalThis.__tysel_awaitOperation(
+              tysel._httpRead(owner._bodyId), owner._signal,
+            );
+        if (chunk == null) break;
+        if (chunk.byteLength === 0) continue;
+        chunks.push(chunk);
+        length += chunk.byteLength;
+      }
+      return joinBytes(chunks, length);
+    } finally {
+      owner._stream = false;
+      if (owner._abortCleanup) owner._abortCleanup();
+    }
+  }
+
+  async function consumeText(owner) {
+    // Buffered strings need no encode/decode round trip.
+    if (!owner._stream && typeof owner.body === "string") {
+      if (owner._bodyUsed) throw new TypeError("body has already been consumed");
+      owner._bodyUsed = true;
+      return owner.body.charCodeAt(0) === 0xfeff ? owner.body.slice(1) : owner.body;
+    }
+    return new TextDecoder().decode(await consumeBytes(owner));
+  }
+
+  async function consumeArrayBuffer(owner) {
+    const ownsBytes = owner._stream || (Array.isArray(owner.body) && owner.body.length !== 1);
+    const bytes = await consumeBytes(owner);
+    // Stream chunks and freshly joined arrays belong to this consumption;
+    // a single buffered chunk must not expose its mutable backing storage.
+    return ownsBytes && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer
+      : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  }
+
+  globalThis.__tysel_bodyBytes = bodyBytes;
+  globalThis.__tysel_consumeBytes = consumeBytes;
+
   class Request {
     constructor(input, init) {
       init = init || {};
@@ -496,9 +586,8 @@
         this.url = input;
         this.method = String(init.method || "GET").toUpperCase();
         this.headers = new Headers(init.headers);
-        this.body = init.body == null ? null : init.body;
+        this.body = init.body == null ? null : copyBody(init.body);
         this._stream = init.bodyStream === true;
-        this._text = null;
         this.signal = init.signal || null;
       } else {
         if (input.bodyUsed && init.body == null) {
@@ -507,9 +596,8 @@
         this.url = input.url;
         this.method = String(init.method || input.method || "GET").toUpperCase();
         this.headers = new Headers(init.headers || input.headers);
-        this.body = init.body == null ? input.body : init.body;
+        this.body = copyBody(init.body == null ? input.body : init.body);
         this._stream = init.bodyStream === true || (init.body == null && input._stream === true);
-        this._text = input._text || null;
         this.signal = init.signal || input.signal || null;
       }
       this._bodyUsed = false;
@@ -517,31 +605,9 @@
     get bodyUsed() {
       return this._bodyUsed;
     }
-    async text() {
-      if (this._bodyUsed) throw new TypeError("body has already been consumed");
-      this._bodyUsed = true;
-      if (this._text != null) return this._text;
-      if (this._stream) {
-        const chunks = [];
-        for (;;) {
-          const chunk = await tysel._readBody();
-          if (chunk == null) break;
-          chunks.push(chunk);
-        }
-        this._text = chunks.join("");
-        this._stream = false;
-        return this._text;
-      }
-      this._text = this.body == null ? "" : String(this.body);
-      return this._text;
-    }
-    async json() {
-      const text = await this.text();
-      return text ? JSON.parse(text) : null;
-    }
-    async arrayBuffer() {
-      return new TextEncoder().encode(await this.text()).buffer;
-    }
+    async text() { return consumeText(this); }
+    async json() { return JSON.parse(await this.text()); }
+    async arrayBuffer() { return consumeArrayBuffer(this); }
     clone() {
       if (this._stream || this._bodyUsed) {
         throw new TypeError("cannot clone a streaming or consumed request");
@@ -558,15 +624,7 @@
   class Response {
     constructor(body, init) {
       init = init || {};
-      if (body instanceof ArrayBuffer) {
-        this.body = body.slice(0);
-      } else if (body instanceof Uint8Array) {
-        this.body = new Uint8Array(
-          body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
-        );
-      } else {
-        this.body = body == null ? null : body;
-      }
+      this.body = body == null ? null : copyResponseBody(body);
       this.status = init.status || 200;
       this.headers = new Headers(init.headers);
       this._stream = false;
@@ -589,54 +647,9 @@
     get bodyUsed() {
       return this._bodyUsed;
     }
-    async text() {
-      if (this._bodyUsed) throw new TypeError("body has already been consumed");
-      this._bodyUsed = true;
-      if (this._stream) {
-        const chunks = [];
-        try {
-          for (;;) {
-            const operation = tysel._httpRead(this._bodyId);
-            const chunk = await globalThis.__tysel_awaitOperation(
-              operation,
-              this._signal,
-            );
-            if (chunk == null) break;
-            chunks.push(chunk);
-          }
-          this.body = chunks.join("");
-          return this.body;
-        } finally {
-          this._stream = false;
-          if (this._abortCleanup) this._abortCleanup();
-        }
-      }
-      if (this.body == null) return "";
-      if (this.body instanceof ArrayBuffer || ArrayBuffer.isView(this.body)) {
-        return new TextDecoder().decode(this.body);
-      }
-      return String(this.body);
-    }
-    async json() {
-      const text = await this.text();
-      return text ? JSON.parse(text) : null;
-    }
-    async arrayBuffer() {
-      if (!this._stream && !this._bodyUsed) {
-        if (this.body instanceof ArrayBuffer) {
-          this._bodyUsed = true;
-          return this.body.slice(0);
-        }
-        if (ArrayBuffer.isView(this.body)) {
-          this._bodyUsed = true;
-          return this.body.buffer.slice(
-            this.body.byteOffset,
-            this.body.byteOffset + this.body.byteLength,
-          );
-        }
-      }
-      return new TextEncoder().encode(await this.text()).buffer;
-    }
+    async text() { return consumeText(this); }
+    async json() { return JSON.parse(await this.text()); }
+    async arrayBuffer() { return consumeArrayBuffer(this); }
     clone() {
       if (this._stream || this._bodyUsed) {
         throw new TypeError("cannot clone a streaming or consumed response");
@@ -684,7 +697,7 @@
         throw new TypeError("expected BufferSource");
       }
       let text = tysel._utf8Decode(view, this.fatal);
-      if (this.ignoreBOM && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      if (!this.ignoreBOM && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       return text;
     }
   }

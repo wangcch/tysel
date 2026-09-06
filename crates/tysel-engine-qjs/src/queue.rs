@@ -52,7 +52,7 @@ pub enum IoRequest {
     Echo { id: OpId, value: String },
     SecretRef { id: OpId, name: String },
     ReadBody { id: OpId },
-    HttpGet { id: OpId, url: String, method: String, headers_json: String, body: String },
+    HttpGet { id: OpId, url: String, method: String, headers_json: String, body: Bytes },
     HttpRead { id: OpId, body_id: u64 },
     WsRead { id: OpId },
     WsSend { id: OpId, data: String },
@@ -851,9 +851,14 @@ async fn execute(
         IoRequest::SecretRef { id, name } => {
             IoCompletion { id, result: crate::secrets::refer(&name) }
         }
-        IoRequest::ReadBody { id } => {
-            IoCompletion { id, result: read_chunk(&slots.inbound, &cancel, deadline).await }
-        }
+        IoRequest::ReadBody { id } => IoCompletion {
+            id,
+            result: slots
+                .inbound
+                .read(&cancel, deadline)
+                .await
+                .map(|chunk| chunk.map_or(Value::Null, Value::Bytes)),
+        },
         IoRequest::HttpRead { id, body_id } => IoCompletion {
             id,
             result: read_http_chunk_interruptible(&slots.outbound, body_id, &cancel, deadline)
@@ -865,7 +870,7 @@ async fn execute(
                 &method,
                 &url,
                 &headers_json,
-                &body,
+                body,
                 cancel,
                 deadline,
                 slots.outbound,
@@ -1122,11 +1127,10 @@ async fn read_http_chunk_interruptible(
     cancel: &AtomicBool,
     deadline: Instant,
 ) -> Result<Value, String> {
-    streams.read(body_id, cancel, deadline).await.map(|chunk| {
-        chunk.map_or(Value::Null, |bytes| {
-            Value::String(String::from_utf8_lossy(&bytes).into_owned())
-        })
-    })
+    streams
+        .read(body_id, cancel, deadline)
+        .await
+        .map(|chunk| chunk.map_or(Value::Null, Value::Bytes))
 }
 
 const MAX_REDIRECTS: u8 = 20;
@@ -1141,7 +1145,7 @@ async fn outbound_fetch(
     method: &str,
     url: &str,
     headers_json: &str,
-    body: &str,
+    body: Bytes,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
     outbound: StreamRegistry,
@@ -1218,14 +1222,14 @@ fn normalize_method(method: &str) -> Result<String, String> {
     }
 }
 
-fn request_body(method: &str, body: &str) -> Result<Bytes, String> {
+fn request_body(method: &str, body: Bytes) -> Result<Bytes, String> {
     if method == "GET" || method == "HEAD" {
         return Ok(Bytes::new());
     }
     if body.len() > MAX_OUTBOUND_BODY {
         return Err(format!("request body exceeds {MAX_OUTBOUND_BODY} bytes"));
     }
-    Ok(Bytes::from(body.to_owned()))
+    Ok(body)
 }
 
 async fn fetch_hop(

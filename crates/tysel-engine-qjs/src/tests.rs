@@ -2823,3 +2823,295 @@ impl hyper::body::Body for CountedBody {
         Poll::Ready(Some(Ok(Frame::data(Bytes::from(vec![b'x'; COUNTED_CHUNK_LEN])))))
     }
 }
+
+#[test]
+fn byte_bodies_preserve_views_clones_and_consumption() {
+    let value = eval(r#"(async () => {
+      for (const Ctor of [Request, Response]) {
+        const raw = new Uint8Array([99, 0, 255, 128, 65, 99]);
+        const view = new DataView(raw.buffer, 1, 4);
+        const body = Ctor === Request ? new Request('http://local/', {body: view}) : new Response(view);
+        raw.fill(42);
+        const clone = body.clone();
+        const bytes = new Uint8Array(await body.arrayBuffer());
+        if (String(bytes) !== '0,255,128,65' || !body.bodyUsed) return false;
+        bytes.fill(7);
+        if (String(new Uint8Array(await clone.arrayBuffer())) !== '0,255,128,65') return false;
+        try { await body.text(); return false; } catch (e) { if (!(e instanceof TypeError)) return false; }
+      }
+      try { await new Response('').json(); return false; } catch (e) { if (!(e instanceof SyntaxError)) return false; }
+      const bom = new Uint8Array([239,187,191,65]);
+      return await new Response(bom).text() === 'A'
+        && new TextDecoder('utf-8', {ignoreBOM: true}).decode(bom) === '\ufeffA';
+    })()"#, config()).expect("byte body contract");
+    assert_eq!(value, Value::Bool(true));
+}
+
+#[tokio::test]
+async fn inbound_body_preserves_binary_and_split_utf8() {
+    for (source, payload, expected) in [
+        (
+            "export default { async fetch(r) { return new Response(await r.arrayBuffer()); } };",
+            vec![0, 255, 128, 65],
+            vec![0, 255, 128, 65],
+        ),
+        (ECHO_BODY, "中😀".as_bytes().to_vec(), "中😀".as_bytes().to_vec()),
+    ] {
+        let pool = IsolatePool::spawn(1, source, config()).expect("pool");
+        let (tx, rx) = tokio::sync::mpsc::channel(STREAM_WINDOW);
+        for byte in payload {
+            tx.send(Ok(vec![byte])).await.unwrap();
+        }
+        drop(tx);
+        let (_, mut body) = pool
+            .dispatch_incoming(IncomingHttp {
+                method: "POST".into(),
+                url: "http://tysel.local/".into(),
+                headers: vec![],
+                body: rx,
+                ws_in: None,
+                ws_out: None,
+                request_id: 0,
+            })
+            .await
+            .expect("dispatch");
+        let mut actual = Vec::new();
+        while let Some(chunk) = body.recv().await {
+            actual.extend(chunk);
+        }
+        assert_eq!(actual, expected);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_binary_roundtrip_preserves_all_bytes_and_upload_snapshot() {
+    let addr = spawn_origin(|request: HyperRequest<hyper::body::Incoming>| async move {
+        let bytes = request.into_body().collect().await.unwrap().to_bytes();
+        Ok::<_, Infallible>(Response::new(http_body_util::Full::new(bytes)))
+    });
+    let source = format!(
+        r#"(async () => {{
+      for (const size of [0, 256, 262144]) {{
+        for (const asRequest of [false, true]) {{
+          const backing = new Uint8Array(size + 2);
+          const bytes = new Uint8Array(backing.buffer, 1, size);
+          for (let i = 0; i < size; i++) bytes[i] = i & 255;
+          const request = asRequest ? new Request('http://{addr}/', {{method: 'POST', body: bytes}}) : null;
+          const pending = request ? fetch(request) : fetch('http://{addr}/', {{method: 'POST', body: bytes}});
+          bytes.fill(42);
+          const response = await pending;
+          const actual = new Uint8Array(await response.arrayBuffer());
+          if (actual.length !== size || !response.bodyUsed || (request && !request.bodyUsed)) return false;
+          for (let i = 0; i < size; i++) if (actual[i] !== (i & 255)) return false;
+        }}
+      }}
+      return true;
+    }})()"#
+    );
+    let value = tokio::task::spawn_blocking(move || {
+        eval(&source, IsolateConfig { cpu_ms_per_turn: 500, ..config() })
+    })
+    .await
+    .unwrap()
+    .expect("binary roundtrip");
+    assert_eq!(value, Value::Bool(true));
+}
+
+/// Opt-in local I/O measurement; timing is reported, never used as a flaky CI gate.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "local HTTP body throughput measurement"]
+async fn http_body_throughput() {
+    let size = 1024 * 1024;
+    let addr = serve_bytes(Bytes::from(vec![b'x'; size]));
+    for method in ["text", "arrayBuffer"] {
+        let source = format!(
+            r#"(async () => {{
+          let total = 0;
+          for (let i = 0; i < 21; i++) {{
+            const response = await fetch('http://{addr}/');
+            const body = await response.{method}();
+            const size = body.byteLength === undefined ? body.length : body.byteLength;
+            if (size !== {size}) throw new Error('incorrect body size');
+            if (i === 0) globalThis.started = Date.now();
+            else total += size;
+          }}
+          return JSON.stringify({{bytes: total, milliseconds: Date.now() - started}});
+        }})()"#
+        );
+        let value = tokio::task::spawn_blocking(move || {
+            eval(
+                &source,
+                IsolateConfig {
+                    request_timeout_ms: 30_000,
+                    cpu_ms_per_turn: 5_000,
+                    memory_limit_bytes: 16 * 1024 * 1024,
+                },
+            )
+        })
+        .await
+        .unwrap()
+        .expect("throughput");
+        eprintln!("HTTP 1 MiB {method}, 20 warm iterations, 16 MiB configured heap: {value:?}");
+    }
+}
+
+#[test]
+fn text_decoder_preserves_borrowed_and_lossy_input_semantics() {
+    let value = eval(
+        r#"(() => {
+      for (const fatal of [false, true]) {
+        const decoder = new TextDecoder('utf-8', {fatal});
+        const bytes = new TextEncoder().encode('x中😀\u0000y');
+        const view = new DataView(bytes.buffer, 1, bytes.byteLength - 2);
+        const result = decoder.decode(view);
+        bytes.fill(0);
+        if (result !== '中😀\u0000' || decoder.decode() !== '') return false;
+      }
+      for (const input of [[255], [226,130], [237,160,128]]) {
+        const bytes = new Uint8Array(input);
+        if (!new TextDecoder().decode(bytes).includes('\ufffd')) return false;
+        try { new TextDecoder('utf-8', {fatal:true}).decode(bytes); return false; }
+        catch (error) { if (!(error instanceof TypeError)) return false; }
+      }
+      const bytes = new Uint8Array([239,187,191,65]);
+      return new TextDecoder().decode(bytes) === 'A'
+        && new TextDecoder('utf-8', {ignoreBOM:true}).decode(bytes) === '\ufeffA';
+    })()"#,
+        config(),
+    )
+    .expect("UTF-8 decode ownership and error semantics");
+    assert_eq!(value, Value::Bool(true));
+}
+
+#[tokio::test]
+async fn inbound_byte_bodies_obey_heap_limit_for_single_and_accumulated_chunks() {
+    const SOURCE: &str = "export default { async fetch(r) { return new Response(String((await r.arrayBuffer()).byteLength)); } };";
+    for (chunks, chunk_size) in [(1, 8 * 1024 * 1024), (32, 128 * 1024)] {
+        let pool = IsolatePool::spawn(
+            1,
+            SOURCE,
+            IsolateConfig { memory_limit_bytes: 2 * 1024 * 1024, ..config() },
+        )
+        .unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(STREAM_WINDOW);
+        let producer = tokio::spawn(async move {
+            for _ in 0..chunks {
+                if tx.send(Ok(vec![65; chunk_size])).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let result = pool
+            .dispatch_response(IncomingHttp {
+                method: "POST".into(),
+                url: "http://local/".into(),
+                headers: vec![],
+                body: rx,
+                ws_in: None,
+                ws_out: None,
+                request_id: 0,
+            })
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(EngineError::Interrupted(InterruptReason::MemoryLimit)
+                    | EngineError::Isolate(_))
+            ),
+            "oversized body must fail allocation, not succeed or time out"
+        );
+        tokio::time::timeout(Duration::from_secs(2), producer).await.unwrap().unwrap();
+        // Allocation failure must release pending reads and leave the pool usable.
+        let (_, body) = pool
+            .dispatch_response(IncomingHttp::from(HttpRequest {
+                method: "POST".into(),
+                url: "http://local/".into(),
+                headers: vec![],
+                body: vec![65; 3],
+                request_id: 1,
+            }))
+            .await
+            .expect("reuse after memory limit");
+        let OutgoingHttpBody::Buffered(bytes) = body else {
+            panic!("expected buffered response");
+        };
+        assert_eq!(bytes, b"3");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn outbound_byte_body_obeys_heap_limit() {
+    let addr = serve_bytes(Bytes::from(vec![65; 8 * 1024 * 1024]));
+    // Retain native chunks without a final aggregate allocation: this verifies
+    // that each chunk itself is charged, rather than failing only at concat.
+    let source = format!(
+        r#"(async () => {{
+      const response = await fetch('http://{addr}/');
+      const chunks = [];
+      for (;;) {{
+        const chunk = await tysel._httpRead(response._bodyId).promise;
+        if (chunk === null) break;
+        chunks.push(chunk);
+      }}
+      return chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    }})()"#
+    );
+    let result = tokio::task::spawn_blocking(move || {
+        eval(&source, IsolateConfig { memory_limit_bytes: 2 * 1024 * 1024, ..config() })
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            result,
+            Err(EngineError::Interrupted(InterruptReason::MemoryLimit) | EngineError::Isolate(_))
+        ),
+        "outbound bytes must be charged before aggregate allocation"
+    );
+}
+
+#[tokio::test]
+async fn response_view_chunks_preserve_bytes_offsets_and_snapshots() {
+    let pool = IsolatePool::spawn(1, r#"export default { fetch() {
+      const backing = new Uint8Array([99, 0, 255, 65, 66, 99]);
+      const words = new Uint16Array(2);
+      new Uint8Array(words.buffer).set([67, 0, 68, 0]);
+      const chunks = ['start', new DataView(backing.buffer, 1, 4), words, new Uint8Array([69]).buffer];
+      const response = new Response(chunks);
+      backing.fill(42); words.fill(0); chunks.length = 0;
+      return response;
+    } };"#, config()).unwrap();
+    let (_, body) = pool
+        .dispatch_response(IncomingHttp::from(HttpRequest {
+            method: "GET".into(),
+            url: "http://local/".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 0,
+        }))
+        .await
+        .unwrap();
+    let OutgoingHttpBody::Stream(mut rx) = body else {
+        panic!("chunk output must stay streaming");
+    };
+    let mut chunks = Vec::new();
+    while let Some(chunk) = rx.recv().await {
+        chunks.push(chunk);
+    }
+    assert_eq!(chunks, vec![b"start".to_vec(), vec![0, 255, 65, 66], vec![67, 0, 68, 0], vec![69]]);
+}
+
+#[test]
+fn response_chunk_consumption_and_clone_match_emitted_bytes() {
+    let result = eval(r#"(async () => {
+      const response = new Response([new Uint8Array([228]), new DataView(new Uint8Array([184,173]).buffer), '😀']);
+      const clone = response.clone();
+      response.body[0][0] = 65;
+      if (await clone.text() !== '中😀') return false;
+      if (String(new Uint8Array(await response.arrayBuffer())) !== '65,184,173,240,159,152,128') return false;
+      try { await response.text(); return false; } catch (e) { if (!(e instanceof TypeError)) return false; }
+      const json = new Response(['{"a":', new TextEncoder().encode('1}')]);
+      return (await json.json()).a === 1 && (await new Response([]).arrayBuffer()).byteLength === 0;
+    })()"#, config()).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
