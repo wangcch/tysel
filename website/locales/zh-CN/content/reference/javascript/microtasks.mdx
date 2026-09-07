@@ -1,0 +1,22 @@
+---
+title: "Microtasks and base64"
+description: "Tysel JavaScript 运行时支持的 Microtasks and base64 契约。"
+---
+
+状态： `supported`. 本页描述受支持的服务端子集，不涵盖完整浏览器规范。
+下列清单以外的行为不属于支持契约。
+
+权威来源： `runtime-js/web-api/compatibility.json`
+(`tysel-server-web-subset`, stable).
+
+## 支持
+
+- queueMicrotask 回调校验、原生任务顺序与请求代次清理
+- atob 和 btoa 的 Latin-1 二进制字符串与 InvalidCharacterError
+
+## 不支持
+
+- 兼容性清单中未列出。
+
+参阅 [JavaScript API 索引](/reference/javascript)和
+[npm 兼容性指南](/docs/compatibility)。

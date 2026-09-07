@@ -14,13 +14,14 @@ Source of truth: `runtime-js/web-api/compatibility.json`
 
 - record, Headers, and pair initialization
 - get/set/append/delete/has
-- stable iteration
+- live sorted iteration across header mutations
+- iterable pair initialization
+- HTTP token and CR/LF validation
+- independent Set-Cookie values and getSetCookie snapshots
 
 ## Not supported
 
 - browser header guards
-- Set-Cookie splitting
-- full HTTP token validation
 
 See the [JavaScript API index](/reference/javascript) and the
 [npm compatibility guide](/docs/compatibility).

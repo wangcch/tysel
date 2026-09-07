@@ -1,0 +1,23 @@
+---
+title: "Microtasks and base64"
+description: "Supported Microtasks and base64 contract in the Tysel JavaScript runtime."
+---
+
+Status: `supported`. This page is the supported server-side subset, not
+the full browser specification. Behavior outside the lists below is not a
+contract.
+
+Source of truth: `runtime-js/web-api/compatibility.json`
+(`tysel-server-web-subset`, stable).
+
+## Supported
+
+- queueMicrotask with callback validation, native job ordering and request-generation cleanup
+- atob and btoa with Latin-1 binary strings and InvalidCharacterError
+
+## Not supported
+
+- None listed in the compatibility inventory.
+
+See the [JavaScript API index](/reference/javascript) and the
+[npm compatibility guide](/docs/compatibility).

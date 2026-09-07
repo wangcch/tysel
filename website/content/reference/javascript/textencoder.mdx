@@ -13,11 +13,13 @@ Source of truth: `runtime-js/web-api/compatibility.json`
 ## Supported
 
 - UTF-8 encode and decode
+- stateful UTF-8 decode with stream option and final flush
+- TextDecoderStream over TransformStream
 
 ## Not supported
 
 - legacy encodings
-- streaming decode options
+- TextEncoder.encodeInto
 
 See the [JavaScript API index](/reference/javascript) and the
 [npm compatibility guide](/docs/compatibility).

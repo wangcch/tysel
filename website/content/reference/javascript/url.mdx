@@ -13,7 +13,9 @@ Source of truth: `runtime-js/web-api/compatibility.json`
 ## Supported
 
 - absolute and relative authority-based URLs
-- dot-segment path normalization
+- dot-segment path normalization while preserving repeated slashes
+- default-port normalization across parsing and property updates
+- query decoding with replacement for malformed UTF-8; Unicode scalar string normalization
 - live search and searchParams mutation
 - iterable and record URLSearchParams initialization
 

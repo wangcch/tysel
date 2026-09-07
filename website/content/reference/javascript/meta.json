@@ -11,6 +11,8 @@
     "abortcontroller",
     "crypto",
     "fetch",
-    "websocket"
+    "websocket",
+    "streams",
+    "microtasks"
   ]
 }

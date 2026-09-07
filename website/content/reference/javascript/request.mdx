@@ -12,17 +12,20 @@ Source of truth: `runtime-js/web-api/compatibility.json`
 
 ## Supported
 
-- string, Uint8Array, and ArrayBuffer response bodies
+- string, ArrayBuffer, and ArrayBufferView request/response bodies with byte-preserving consumption
 - single-use json/text/arrayBuffer consumption
 - bodyUsed
 - buffered request and response clone
 - streamed host request and response bodies
+- UTF-8 decoding after byte collection, including split code points and BOM handling
+- Tysel response chunk arrays with snapshotted string/ArrayBuffer/ArrayBufferView elements
+- lazy ReadableStream body access with locking and disturbance
+- Response with a ReadableStream of Uint8Array chunks, native backpressure and cancellation
 
 ## Not supported
 
-- public ReadableStream bodies
 - formData/blob helpers
-- stream teeing and streamed response clone
+- streamed request and response clone
 - browser cache/credentials/mode semantics
 
 See the [JavaScript API index](/reference/javascript) and the
