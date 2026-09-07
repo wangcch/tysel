@@ -16,7 +16,7 @@ in the [JavaScript reference](../reference/javascript/index.md).
 | URL / URLSearchParams | Partial | Authority URLs, relative resolution, dot segments, live query mutation, iterable parameters | Full WHATWG parsing, IDNA, credentials, file/blob URLs |
 | Headers | Partial | Iterable/record initializers, token validation, independent Set-Cookie values, getSetCookie | Browser header guards |
 | Request / Response | Partial | Byte-preserving string/ArrayBuffer/ArrayBufferView bodies, single-use text/JSON/arrayBuffer, bodyUsed, ReadableStream bodies and response output, buffered clone | Form/blob helpers, streamed Body.clone, browser policy fields |
-| TextEncoder / TextDecoder | Partial | UTF-8 conversion, stateful decode/flush, TextDecoderStream | Legacy encodings, encodeInto |
+| TextEncoder / TextDecoder | Partial | UTF-8 conversion, stateful decode/flush, TextDecoderStream, encodeInto | Legacy encodings |
 | Timers | Supported | Timeout/interval creation, clearing, isolate-reset cleanup | Browser scheduling guarantees |
 | Event / EventTarget | Partial | Function/object listeners, deduplication, removal, once/signal options, cancellation | DOM trees, capture/bubble phases, browser exception reporting |
 | AbortController / AbortSignal | Partial | EventTarget inheritance, reasons, static abort/timeout/any, fetch and body cancellation | Browser task scheduling guarantees |
@@ -169,3 +169,27 @@ are not repeatedly sorted. Deletion, updates, insertion before/after the cursor,
 and append after a done result are covered for entries/keys/values. This follows
 the live cursor behavior in the [Web IDL iterator algorithm](https://webidl.spec.whatwg.org/#default-iterator-objects),
 without changing the native header serialization path.
+
+### Encoding into caller buffers and Response factories
+
+`TextEncoder.encodeInto` writes into the selected Uint8Array view and reports
+UTF-16 code units read and UTF-8 bytes written. It replaces unmatched surrogates
+and never writes a partial code point. Conversion uses at most 16 Ki UTF-16 units
+per native call, producing at most 48 KiB of UTF-8 payload. This payload limit
+excludes the terminator, string metadata, allocator rounding and JS temporary
+objects; it is not an upper bound on allocated memory or request peak memory.
+It does not allocate an encoded result proportional to the full source when the
+destination is short. Chunking bounds conversion scratch, rather than promising
+zero allocation or faster execution for every size.
+
+`Response.redirect` accepts absolute URLs within the supported URL subset and
+301/302/303/307/308 statuses. It creates an immutable Location header.
+`Response.error` creates a status-0, type-error response with immutable headers;
+returning it from a handler fails native response preparation rather than sending
+an invalid HTTP status. Clones preserve these immutable headers. Other response
+header guards remain outside the supported subset.
+
+Ordinary Response construction accepts statuses 200–599 and rejects non-null
+bodies for 204, 205 and 304. Tysel's existing status-101 WebSocket upgrade remains
+available only after `tysel.acceptWebSocket()`, also with a null body. Null-body
+helpers remain repeatable and leave bodyUsed false.

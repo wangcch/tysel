@@ -37,8 +37,7 @@ an independent LSP is outside this iteration.
 
 - Relevant unit suites: 147 passed (manifest 24, build 39, supply-chain tool 6,
   CLI 78). CLI development integration suite: 66 passed.
-- `cargo clippy --offline -p tysel-manifest -p tysel-build -p tysel-cli --lib
-  --bins -- -D warnings`, formatting, and diff whitespace checks passed.
+- `cargo clippy --offline -p tysel-manifest -p tysel-build -p tysel-cli --lib --bins -- -D warnings`, formatting, and diff whitespace checks passed.
 - Strict MkDocs build passed with output outside the repository.
 - Taplo CLI 0.9.0 accepted a valid manifest through the local schema directive
   and rejected invalid workers, an unknown profile, and a Component/entry

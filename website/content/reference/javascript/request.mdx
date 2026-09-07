@@ -21,6 +21,9 @@ Source of truth: `runtime-js/web-api/compatibility.json`
 - Tysel response chunk arrays with snapshotted string/ArrayBuffer/ArrayBufferView elements
 - lazy ReadableStream body access with locking and disturbance
 - Response with a ReadableStream of Uint8Array chunks, native backpressure and cancellation
+- Response.redirect and Response.error with immutable headers and clone preservation
+- response status range and null-body status validation; status 101 only after tysel.acceptWebSocket
+- null-body helpers are repeatable and do not set bodyUsed
 
 ## Not supported
 
