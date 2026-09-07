@@ -71,6 +71,10 @@ pub(crate) type ResponseSender = oneshot::Sender<Result<PreparedHttpResponse, En
 pub enum OutgoingHttpBody {
     Buffered(Vec<u8>),
     Stream(mpsc::Receiver<Vec<u8>>),
+    CheckedStream {
+        chunks: mpsc::Receiver<Vec<u8>>,
+        completion: oneshot::Receiver<Result<(), EngineError>>,
+    },
 }
 
 struct Budgets {
@@ -145,6 +149,8 @@ impl IsolatePool {
         let body = match body {
             OutgoingHttpBody::Buffered(bytes) => sealed_response_body(bytes),
             OutgoingHttpBody::Stream(body) => body,
+            // Legacy chunk-only API cannot surface errors after the head.
+            OutgoingHttpBody::CheckedStream { chunks, .. } => chunks,
         };
         Ok((head, body))
     }
@@ -206,10 +212,22 @@ impl IsolatePool {
     /// workers use this from a blocking IPC thread.
     pub fn dispatch_sync(&self, request: HttpRequest) -> Result<(HttpHead, Vec<u8>), EngineError> {
         crate::queue::io_handle().block_on(async {
-            let (head, mut chunks) = self.dispatch(request).await?;
+            let (head, response) = self.dispatch_response(IncomingHttp::from(request)).await?;
             let mut body = Vec::new();
+            let (mut chunks, completion) = match response {
+                OutgoingHttpBody::Buffered(bytes) => return Ok((head, bytes)),
+                OutgoingHttpBody::Stream(chunks) => (chunks, None),
+                OutgoingHttpBody::CheckedStream { chunks, completion } => {
+                    (chunks, Some(completion))
+                }
+            };
             while let Some(chunk) = chunks.recv().await {
                 body.extend(chunk);
+            }
+            if let Some(completion) = completion {
+                completion
+                    .await
+                    .map_err(|_| EngineError::Isolate("response stream interrupted".into()))??;
             }
             Ok((head, body))
         })
@@ -438,6 +456,12 @@ fn handle_job(
             return Err(err);
         }
     };
+    // Synchronous handlers also create microtasks (including weak-reference
+    // finalizers). Drain them within this request's budgets before returning.
+    if !pending && let Err(err) = isolate::drain_jobs(runtime, cancel, request_deadline, cpu) {
+        let _ = response_tx.send(Err(err.clone()));
+        return Err(err);
+    }
     if pending {
         if let Err(err) = isolate::wait_until_settled(
             runtime,
@@ -456,7 +480,21 @@ fn handle_job(
             return Err(err);
         }
     }
-    context.with(|ctx| fetch::emit_response(ctx, response_tx))?;
+    if let Some(completion) =
+        context.with(|ctx| fetch::emit_response(ctx, response_tx, &reactor.io))?
+    {
+        let result = isolate::wait_until_settled(
+            runtime,
+            context,
+            reactor,
+            cancel,
+            request_deadline,
+            cpu,
+            None,
+        );
+        completion.finish(result.clone());
+        result?;
+    }
     if context.with(fetch::arm_websocket)? {
         isolate::wait_until_settled(
             runtime,

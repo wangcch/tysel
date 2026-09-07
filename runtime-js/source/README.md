@@ -7,3 +7,6 @@ repository check uses `--check` and fails when a generated artifact is stale.
 Web API and capability-client sources are independently scoped scripts. Durable
 sources are ordered `.part.js` fragments because they deliberately share one
 replay-state closure; they are syntax-checked after deterministic assembly.
+
+The Streams vendor snapshot is a pinned, separately licensed build input under
+`web-api/vendor/`; see its README for provenance and update instructions.

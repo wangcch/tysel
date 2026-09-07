@@ -15,8 +15,9 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use std::future::Future;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
@@ -848,6 +849,11 @@ async fn dispatch_inner(
             HttpBody::once(bytes)
         }
         OutgoingHttpBody::Stream(chunks) => HttpBody::stream(chunks, limits.max_response_bytes),
+        OutgoingHttpBody::CheckedStream { chunks, completion } => {
+            let mut body = HttpBody::stream(chunks, limits.max_response_bytes);
+            body.completion = Some(completion);
+            body
+        }
     };
     builder.body(body).map_err(|err| HttpError::Hyper(err.to_string()))
 }
@@ -946,21 +952,22 @@ enum HttpBodyKind {
 }
 
 pub struct HttpBody {
+    completion: Option<oneshot::Receiver<Result<(), EngineError>>>,
     kind: HttpBodyKind,
     permit: Option<AdmissionPermit>,
 }
 
 impl HttpBody {
     fn once(bytes: Vec<u8>) -> Self {
-        Self { kind: HttpBodyKind::Once(Some(Bytes::from(bytes))), permit: None }
+        Self { completion: None, kind: HttpBodyKind::Once(Some(Bytes::from(bytes))), permit: None }
     }
 
     fn empty() -> Self {
-        Self { kind: HttpBodyKind::Once(None), permit: None }
+        Self { completion: None, kind: HttpBodyKind::Once(None), permit: None }
     }
 
     fn stream(rx: mpsc::Receiver<Vec<u8>>, limit: usize) -> Self {
-        Self { kind: HttpBodyKind::Stream { rx, remaining: limit }, permit: None }
+        Self { completion: None, kind: HttpBodyKind::Stream { rx, remaining: limit }, permit: None }
     }
 
     fn hold_permit(&mut self, permit: AdmissionPermit) {
@@ -996,6 +1003,25 @@ impl Body for HttpBody {
                     Poll::Ready(Some(Err(io::Error::other("response body limit exceeded"))))
                 }
                 Poll::Ready(None) => {
+                    if let Some(completion) = &mut this.completion {
+                        let result = match Pin::new(completion).poll(cx) {
+                            Poll::Pending => return Poll::Pending,
+                            Poll::Ready(result) => result,
+                        };
+                        this.completion = None;
+                        this.permit.take();
+                        match result {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                return Poll::Ready(Some(Err(io::Error::other(error.to_string()))));
+                            }
+                            Err(_) => {
+                                return Poll::Ready(Some(Err(io::Error::other(
+                                    "response stream interrupted",
+                                ))));
+                            }
+                        }
+                    }
                     this.permit.take();
                     Poll::Ready(None)
                 }
@@ -1062,5 +1088,28 @@ mod body_tests {
         assert!(admission.try_acquire().is_none());
         drop(second);
         assert_eq!(admission.available(), 1);
+    }
+}
+
+#[cfg(test)]
+mod stream_completion_tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    #[tokio::test]
+    async fn stream_error_is_not_reported_as_clean_eof() {
+        let (tx, rx) = mpsc::channel(1);
+        let (done, completion) = oneshot::channel();
+        let mut body = HttpBody::stream(rx, 1024);
+        body.completion = Some(completion);
+        tx.send(vec![65]).await.unwrap();
+        drop(tx);
+        done.send(Err(EngineError::Isolate("broken stream".into()))).unwrap();
+        assert_eq!(
+            body.frame().await.unwrap().unwrap().into_data().unwrap(),
+            Bytes::from_static(b"A")
+        );
+        assert!(body.frame().await.unwrap().unwrap_err().to_string().contains("broken stream"));
+        assert!(body.frame().await.is_none());
     }
 }

@@ -163,3 +163,14 @@ test("@tysel/types is a standalone public contract for the runtime surface", () 
   assert.match(capabilities, /export interface TyselRuntime/);
   assert.match(webApi, /export interface TyselWebApiGlobals/);
 });
+
+test("vendored Streams snapshot matches its recorded checksum", async () => {
+  const { createHash } = await import('node:crypto');
+  const root = new URL('../web-api/vendor/web-streams-polyfill/', import.meta.url);
+  const bytes = readFileSync(new URL('polyfill.js', root));
+  const readme = readFileSync(new URL('README.md', root), 'utf8');
+  assert.ok(readme.includes(createHash('sha256').update(bytes).digest('hex')));
+  assert.match(readFileSync(new URL('LICENSE', root), 'utf8'), /Permission is hereby granted/);
+  assert.match(bytes.toString(), /web-streams-polyfill v4\.3\.0/);
+  assert.ok(readFileSync(new URL('../web-api/runtime.js', import.meta.url), 'utf8').includes(readFileSync(new URL('LICENSE', root), 'utf8').trimEnd()));
+});

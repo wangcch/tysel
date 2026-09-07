@@ -3106,7 +3106,7 @@ fn response_chunk_consumption_and_clone_match_emitted_bytes() {
     let result = eval(r#"(async () => {
       const response = new Response([new Uint8Array([228]), new DataView(new Uint8Array([184,173]).buffer), '😀']);
       const clone = response.clone();
-      response.body[0][0] = 65;
+      response._body[0][0] = 65; // Internal snapshot check; public body is now a stream.
       if (await clone.text() !== '中😀') return false;
       if (String(new Uint8Array(await response.arrayBuffer())) !== '65,184,173,240,159,152,128') return false;
       try { await response.text(); return false; } catch (e) { if (!(e instanceof TypeError)) return false; }
@@ -3115,3 +3115,6 @@ fn response_chunk_consumption_and_clone_match_emitted_bytes() {
     })()"#, config()).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
+
+#[path = "p1_tests.rs"]
+mod p1;

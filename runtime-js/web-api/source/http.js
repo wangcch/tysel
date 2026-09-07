@@ -1,58 +1,84 @@
 (() => {
+  function headerName(name) {
+    const key = String(name).toLowerCase();
+    if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(key)) throw new TypeError("invalid header name");
+    return key;
+  }
+  function headerValue(value) {
+    const text = String(value).replace(/^[ \t]+|[ \t]+$/g, "");
+    if (/[\r\n\0]/.test(text)) throw new TypeError("invalid header value");
+    return text;
+  }
+  function headerIterator(headers, kind) {
+    let version = -1, entries, index = 0;
+    return {
+      [Symbol.iterator]() { return this; },
+      next() {
+        // Web IDL indexes the current sorted list, including separate cookies.
+        // Rebuild only after mutation. Reaching the end does not freeze the list.
+        if (version !== headers._version) {
+          entries = [];
+          for (const key of Object.keys(headers._map).sort()) {
+            if (key === "set-cookie") {
+              for (const cookie of headers._cookies) entries.push([key, cookie]);
+            } else entries.push([key, headers._map[key]]);
+          }
+          version = headers._version;
+        }
+        if (index >= entries.length) return {value: undefined, done: true};
+        const pair = entries[index++];
+        return {value: kind === "keys" ? pair[0] : kind === "values" ? pair[1] : pair, done: false};
+      },
+    };
+  }
+
   class Headers {
     constructor(init) {
-      this._map = {};
-      if (!init) return;
-      // Arrays have forEach, so the sequence form must be checked first.
-      if (Array.isArray(init)) {
-        for (const pair of init) this.append(pair[0], pair[1]);
-      } else if (typeof init.forEach === "function") {
-        init.forEach((value, key) => this.append(key, value));
+      this._map = Object.create(null);
+      this._cookies = [];
+      this._version = 0;
+      if (init == null) return;
+      if (typeof init[Symbol.iterator] === "function") {
+        for (const item of init) {
+          const pair = Array.from(item);
+          if (pair.length !== 2) throw new TypeError("header pair must have two items");
+          this.append(pair[0], pair[1]);
+        }
       } else {
         for (const key of Object.keys(init)) this.append(key, init[key]);
       }
     }
-    get(name) {
-      const value = this._map[String(name).toLowerCase()];
-      return value === undefined ? null : value;
-    }
+    get(name) { return this._map[headerName(name)] ?? null; }
+    getSetCookie() { return this._cookies.slice(); }
     set(name, value) {
-      this._map[String(name).toLowerCase()] = String(value);
+      const key = headerName(name), text = headerValue(value);
+      this._map[key] = text;
+      this._version++;
+      if (key === "set-cookie") this._cookies = [text];
     }
     append(name, value) {
-      const key = String(name).toLowerCase();
+      const key = headerName(name), text = headerValue(value);
       const prev = this._map[key];
-      this._map[key] = prev == null ? String(value) : prev + ", " + String(value);
+      this._map[key] = prev == null ? text : prev + ", " + text;
+      this._version++;
+      if (key === "set-cookie") this._cookies.push(text);
     }
-    has(name) {
-      return Object.prototype.hasOwnProperty.call(this._map, String(name).toLowerCase());
-    }
+    has(name) { return Object.hasOwn(this._map, headerName(name)); }
     delete(name) {
-      delete this._map[String(name).toLowerCase()];
+      const key = headerName(name);
+      delete this._map[key];
+      this._version++;
+      if (key === "set-cookie") this._cookies = [];
     }
-    _names() {
-      return Object.keys(this._map).sort();
-    }
-    forEach(callback, thisArg) {
-      for (const key of this._names()) {
-        callback.call(thisArg, this._map[key], key, this);
-      }
-    }
-    entries() {
-      return this._names().map((key) => [key, this._map[key]])[Symbol.iterator]();
-    }
-    keys() {
-      return this._names()[Symbol.iterator]();
-    }
-    values() {
-      return this._names().map((key) => this._map[key])[Symbol.iterator]();
-    }
-    [Symbol.iterator]() {
-      return this.entries();
-    }
+    entries() { return headerIterator(this, "entries"); }
+    keys() { return headerIterator(this, "keys"); }
+    values() { return headerIterator(this, "values"); }
+    forEach(callback, thisArg) { for (const [key, value] of this) callback.call(thisArg, value, key, this); }
+    [Symbol.iterator]() { return this.entries(); }
   }
 
   function bodyBytes(body) {
+    if (globalThis.__tysel_isReadableStream(body)) throw new TypeError("streaming uploads are not supported");
     if (body == null) return new Uint8Array(0);
     if (Array.isArray(body)) {
       const chunks = body.map(bodyBytes);
@@ -94,49 +120,96 @@
     return bytes;
   }
 
+  function used(owner) {
+    // Adapter to the pinned web-streams-polyfill's disturbed flag. Covered by
+    // reader/pipe/async-iteration lifecycle tests when updating the vendor.
+    return owner._bodyUsed || Boolean(owner._bodyStream && owner._bodyStream._disturbed);
+  }
+  function getBody(owner) {
+    if (owner._bodyStream) return owner._bodyStream;
+    if (!owner._stream && owner._body == null) return null;
+    if (owner._bodyUsed) {
+      // The buffered fast path consumed the body without initializing Streams.
+      // Materialize the same closed, disturbed, unlocked state as consumeBytes.
+      // A public read marks disturbance synchronously without vendor field writes.
+      const stream = new ReadableStream({ start(controller) { controller.close(); } });
+      const reader = stream.getReader();
+      reader.read();
+      reader.releaseLock();
+      owner._bodyStream = stream;
+      return stream;
+    }
+    const host = owner._stream;
+    const generation = owner._generation;
+    let operation = null;
+    let index = 0;
+    const chunks = Array.isArray(owner._body) ? owner._body : [owner._body];
+    owner._bodyStream = new ReadableStream({
+      async pull(controller) {
+        if (used(owner) && owner._bodyUsed) throw new TypeError("body has already been consumed");
+        if (host) {
+          if (generation !== globalThis.__tysel_request_generation) throw new TypeError("body belongs to a completed request");
+          operation = owner instanceof Request ? tysel._readBodyOp() : tysel._httpRead(owner._bodyId);
+          try {
+            const chunk = await globalThis.__tysel_awaitOperation(operation, owner._signal || owner.signal);
+            if (chunk == null) {
+              controller.close();
+              if (owner._abortCleanup) owner._abortCleanup();
+            } else controller.enqueue(chunk);
+          } finally { operation = null; }
+        } else {
+          if (index < chunks.length) controller.enqueue(bodyBytes(chunks[index++]));
+          if (index === chunks.length) controller.close();
+        }
+      },
+      cancel() {
+        if (host && generation === globalThis.__tysel_request_generation) {
+          if (operation) tysel._cancelOp(operation.id);
+          if (owner instanceof Request) tysel._cancelRequestBody();
+          else tysel._httpCancelBody(owner._bodyId);
+        }
+        if (owner._abortCleanup) owner._abortCleanup();
+      },
+    }, { highWaterMark: 0 });
+    return owner._bodyStream;
+  }
   async function consumeBytes(owner) {
-    if (owner._bodyUsed) throw new TypeError("body has already been consumed");
-    owner._bodyUsed = true;
-    if (!owner._stream) return bodyBytes(owner.body);
+    if (used(owner)) throw new TypeError("body has already been consumed");
+    if (!owner._stream && !owner._bodyStream) {
+      owner._bodyUsed = true;
+      return bodyBytes(owner._body);
+    }
+    const reader = getBody(owner).getReader();
     const chunks = [];
     let length = 0;
     try {
       for (;;) {
-        const chunk = owner instanceof Request
-          ? await tysel._readBody()
-          : await globalThis.__tysel_awaitOperation(
-              tysel._httpRead(owner._bodyId), owner._signal,
-            );
-        if (chunk == null) break;
-        if (chunk.byteLength === 0) continue;
-        chunks.push(chunk);
-        length += chunk.byteLength;
+        const {value: chunk, done} = await reader.read();
+        if (done) break;
+        if (!(chunk instanceof Uint8Array)) throw new TypeError("HTTP stream chunks must be Uint8Array");
+        if (chunk.byteLength) { chunks.push(chunk); length += chunk.byteLength; }
       }
       return joinBytes(chunks, length);
-    } finally {
-      owner._stream = false;
-      if (owner._abortCleanup) owner._abortCleanup();
-    }
+    } catch (error) {
+      // Cleanup must not delay the original failure if user cancellation hangs.
+      try { reader.cancel(error).catch(() => {}); } catch (_) {}
+      throw error;
+    } finally { owner._bodyUsed = true; reader.releaseLock(); }
   }
-
   async function consumeText(owner) {
-    // Buffered strings need no encode/decode round trip.
-    if (!owner._stream && typeof owner.body === "string") {
-      if (owner._bodyUsed) throw new TypeError("body has already been consumed");
+    if (!owner._stream && !owner._bodyStream && typeof owner._body === "string") {
+      if (used(owner)) throw new TypeError("body has already been consumed");
       owner._bodyUsed = true;
-      return owner.body.charCodeAt(0) === 0xfeff ? owner.body.slice(1) : owner.body;
+      return owner._body.charCodeAt(0) === 0xfeff ? owner._body.slice(1) : owner._body;
     }
     return new TextDecoder().decode(await consumeBytes(owner));
   }
-
   async function consumeArrayBuffer(owner) {
-    const ownsBytes = owner._stream || (Array.isArray(owner.body) && owner.body.length !== 1);
+    const ownsBytes = owner._stream || owner._bodyStream || (Array.isArray(owner._body) && owner._body.length !== 1);
     const bytes = await consumeBytes(owner);
-    // Stream chunks and freshly joined arrays belong to this consumption;
-    // a single buffered chunk must not expose its mutable backing storage.
-    return ownsBytes && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
-      ? bytes.buffer
-      : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    // A user-supplied stream can retain its chunks: return independent bytes.
+    return ownsBytes && !owner._customStream && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
 
   globalThis.__tysel_bodyBytes = bodyBytes;
@@ -145,40 +218,46 @@
   class Request {
     constructor(input, init) {
       init = init || {};
+      if (globalThis.__tysel_isReadableStream(init.body)) throw new TypeError("streaming uploads are not supported");
       if (typeof input === "string") {
         this.url = input;
         this.method = String(init.method || "GET").toUpperCase();
         this.headers = new Headers(init.headers);
-        this.body = init.body == null ? null : copyBody(init.body);
+        this._body = init.body == null ? null : copyBody(init.body);
         this._stream = init.bodyStream === true;
         this.signal = init.signal || null;
       } else {
-        if (input.bodyUsed && init.body == null) {
+        if ((input.bodyUsed || (input._bodyStream && input._bodyStream.locked)) && init.body == null) {
           throw new TypeError("cannot construct from a consumed Request");
         }
         this.url = input.url;
         this.method = String(init.method || input.method || "GET").toUpperCase();
         this.headers = new Headers(init.headers || input.headers);
-        this.body = copyBody(init.body == null ? input.body : init.body);
+        this._body = copyBody(init.body == null ? input._body : init.body);
         this._stream = init.bodyStream === true || (init.body == null && input._stream === true);
         this.signal = init.signal || input.signal || null;
       }
+      this._generation = typeof input !== "string" && init.body == null && input._stream
+        ? input._generation : globalThis.__tysel_request_generation;
       this._bodyUsed = false;
+      this._bodyStream = null;
+      this._customStream = false;
     }
     get bodyUsed() {
-      return this._bodyUsed;
+      return used(this);
     }
+    get body() { return getBody(this); }
     async text() { return consumeText(this); }
     async json() { return JSON.parse(await this.text()); }
     async arrayBuffer() { return consumeArrayBuffer(this); }
     clone() {
-      if (this._stream || this._bodyUsed) {
+      if (this._stream || this._customStream || used(this) || (this._bodyStream && this._bodyStream.locked)) {
         throw new TypeError("cannot clone a streaming or consumed request");
       }
       return new Request(this.url, {
         method: this.method,
         headers: this.headers,
-        body: this.body,
+        body: this._body,
         signal: this.signal,
       });
     }
@@ -187,40 +266,83 @@
   class Response {
     constructor(body, init) {
       init = init || {};
-      this.body = body == null ? null : copyResponseBody(body);
+      const stream = globalThis.__tysel_isReadableStream(body);
+      if (stream && (body.locked || body._disturbed)) throw new TypeError("body stream is locked or consumed");
+      this._body = stream ? null : body == null ? null : copyResponseBody(body);
       this.status = init.status || 200;
       this.headers = new Headers(init.headers);
       this._stream = false;
       this._signal = null;
+      this._generation = globalThis.__tysel_request_generation;
       this._bodyUsed = false;
+      this._bodyStream = null;
+      this._customStream = stream;
+      if (this._customStream) this._bodyStream = body;
     }
     get ok() {
       return this.status >= 200 && this.status < 300;
     }
     static json(data, init) {
       init = init || {};
-      const headers = new Headers(init.headers);
-      if (!headers.get("content-type")) {
-        headers.set("content-type", "application/json");
-      }
       const body = JSON.stringify(data);
       if (body === undefined) throw new TypeError("data is not JSON serializable");
-      return new Response(body, { status: init.status || 200, headers });
+      // The constructor snapshots headers once. Building another Headers here
+      // would iterate, sort and revalidate the same list a second time.
+      const response = new Response(body, init);
+      if (!response.headers.get("content-type")) {
+        response.headers.set("content-type", "application/json");
+      }
+      return response;
     }
     get bodyUsed() {
-      return this._bodyUsed;
+      return used(this);
     }
+    get body() { return getBody(this); }
     async text() { return consumeText(this); }
     async json() { return JSON.parse(await this.text()); }
     async arrayBuffer() { return consumeArrayBuffer(this); }
     clone() {
-      if (this._stream || this._bodyUsed) {
+      if (this._stream || this._customStream || used(this) || (this._bodyStream && this._bodyStream.locked)) {
         throw new TypeError("cannot clone a streaming or consumed response");
       }
-      return new Response(this.body, { status: this.status, headers: this.headers });
+      return new Response(this._body, { status: this.status, headers: this.headers });
     }
   }
 
+  globalThis.__tysel_responseBody = response => {
+    if (used(response)) throw new TypeError("response body has already been consumed");
+    if (response._bodyStream && response._bodyStream.locked) throw new TypeError("response body is locked");
+    return response._stream || response._bodyStream ? response.body : response._body;
+  };
+  globalThis.__tysel_headerPairs = headers => Array.from(headers);
+  globalThis.__tysel_pumpResponse = async function(body, write, closed) {
+    const reader = body.getReader();
+    let stopped = false;
+    const pump = async () => {
+      for (;;) {
+        const {value, done} = await reader.read();
+        if (done || stopped) break;
+        if (!(value instanceof Uint8Array)) throw new TypeError("HTTP stream chunks must be Uint8Array");
+        await write(value);
+      }
+    };
+    try {
+      // One race per response, not per chunk: pending reactions stay bounded.
+      await Promise.race([pump(), closed.promise.then(() => {
+        throw new TypeError("response consumer closed");
+      })]);
+    } catch (error) {
+      stopped = true;
+      // Invoke cleanup, but an application's pending cancel promise must not
+      // keep the worker assigned after the consumer has disconnected.
+      try { reader.cancel(error).catch(() => {}); } catch (_) {}
+      throw error;
+    } finally {
+      stopped = true;
+      tysel._cancelOp(closed.id);
+      reader.releaseLock();
+    }
+  };
   globalThis.Headers = Headers;
   globalThis.Request = Request;
   globalThis.Response = Response;

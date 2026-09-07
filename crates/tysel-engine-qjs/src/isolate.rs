@@ -425,7 +425,7 @@ fn take_settled(
     }
 }
 
-fn drain_jobs(
+pub(crate) fn drain_jobs(
     runtime: &Runtime,
     cancel: &IsolateCancel,
     request_deadline: Instant,

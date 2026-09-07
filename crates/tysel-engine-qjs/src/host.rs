@@ -39,6 +39,8 @@ fn install_inner(
     let io_echo = io.clone();
     let io_secret = io.clone();
     let io_body = io.clone();
+    let io_body_op = io.clone();
+    let io_cancel_request_body = io.clone();
     let io_http_start = io.clone();
     let io_http_read = io.clone();
     let io_http_cancel_body = io.clone();
@@ -62,6 +64,12 @@ fn install_inner(
     let io_fs_read = io.clone();
     let io_fs_write = io.clone();
     let io_llm = io.clone();
+    // Keep the fixed vendor source in native storage until an API is used.
+    tysel.set("_loadStreams", Function::new(ctx.clone(), load_streams)?)?;
+    tysel.set(
+        "_queueMicrotask",
+        Function::new(ctx.clone(), |callback: Function| callback.defer(()))?,
+    )?;
     tysel.set(
         "sleep",
         Function::new(ctx.clone(), move |ctx, millis: f64| {
@@ -84,6 +92,18 @@ fn install_inner(
         "_readBody",
         Function::new(ctx.clone(), move |ctx| {
             submit(ctx, &io_body, |id| IoRequest::ReadBody { id })
+        })?,
+    )?;
+    tysel.set(
+        "_readBodyOp",
+        Function::new(ctx.clone(), move |ctx| {
+            submit_cancellable(ctx, &io_body_op, |id| IoRequest::ReadBody { id })
+        })?,
+    )?;
+    tysel.set(
+        "_cancelRequestBody",
+        Function::new(ctx.clone(), move || {
+            io_cancel_request_body.inbound.clear();
         })?,
     )?;
     tysel.set(
@@ -426,7 +446,7 @@ fn durable_millis(ctx: &Ctx<'_>, value: f64, label: &str) -> rquickjs::Result<u6
     Ok(value as u64)
 }
 
-fn submit<'js>(
+pub(crate) fn submit<'js>(
     ctx: Ctx<'js>,
     io: &IoHandle,
     request: impl FnOnce(OpId) -> IoRequest,
@@ -434,7 +454,7 @@ fn submit<'js>(
     submit_operation(ctx, io, request).map(|(promise, _)| promise)
 }
 
-fn submit_cancellable<'js>(
+pub(crate) fn submit_cancellable<'js>(
     ctx: Ctx<'js>,
     io: &IoHandle,
     request: impl FnOnce(OpId) -> IoRequest,
@@ -620,4 +640,14 @@ fn value_to_js<'js>(ctx: &Ctx<'js>, value: Value) -> rquickjs::Result<rquickjs::
             object.into_js(ctx)
         }
     }
+}
+
+// The facade inherits platform globals (notably DOMException) while vendor
+// constructors are installed as its own properties, never on the real global.
+fn load_streams(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
+    ctx.eval(concat!(
+        "(function(globalThis) {\n",
+        include_str!("../../../runtime-js/web-api/vendor/web-streams-polyfill/polyfill.js"),
+        "\nreturn globalThis; })(Object.create(globalThis))"
+    ))
 }

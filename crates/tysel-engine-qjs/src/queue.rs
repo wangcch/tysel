@@ -54,6 +54,8 @@ pub enum IoRequest {
     ReadBody { id: OpId },
     HttpGet { id: OpId, url: String, method: String, headers_json: String, body: Bytes },
     HttpRead { id: OpId, body_id: u64 },
+    ResponseClosed { id: OpId, tx: mpsc::Sender<Vec<u8>>, stop: tokio::sync::oneshot::Receiver<()> },
+    ResponseWrite { id: OpId, tx: mpsc::Sender<Vec<u8>>, bytes: Vec<u8> },
     WsRead { id: OpId },
     WsSend { id: OpId, data: String },
     WsClose { id: OpId },
@@ -84,6 +86,8 @@ impl IoRequest {
             | Self::ReadBody { id }
             | Self::HttpGet { id, .. }
             | Self::HttpRead { id, .. }
+            | Self::ResponseClosed { id, .. }
+            | Self::ResponseWrite { id, .. }
             | Self::WsRead { id }
             | Self::WsSend { id, .. }
             | Self::WsClose { id }
@@ -111,7 +115,9 @@ impl IoRequest {
             Self::Sleep { .. } => Cap::Sleep,
             Self::Echo { .. } => Cap::Echo,
             Self::SecretRef { .. } => Cap::SecretRef,
-            Self::ReadBody { .. } => Cap::ReadBody,
+            Self::ReadBody { .. } | Self::ResponseWrite { .. } | Self::ResponseClosed { .. } => {
+                Cap::ReadBody
+            }
             Self::HttpGet { .. } | Self::HttpRead { .. } => Cap::Fetch,
             Self::WsRead { .. }
             | Self::WsSend { .. }
@@ -158,6 +164,8 @@ impl IoRequest {
             | Self::Echo { .. }
             | Self::ReadBody { .. }
             | Self::HttpRead { .. }
+            | Self::ResponseClosed { .. }
+            | Self::ResponseWrite { .. }
             | Self::WsRead { .. } => None,
             Self::WsClientRead { .. } => None,
         }
@@ -835,7 +843,9 @@ async fn execute(
 ) -> IoCompletion {
     let audit = request.audit_target();
     let started = Instant::now();
-    if let Err(error) = crate::trust::require(request.capability()) {
+    if !matches!(request, IoRequest::ResponseWrite { .. } | IoRequest::ResponseClosed { .. })
+        && let Err(error) = crate::trust::require(request.capability())
+    {
         audit_log(audit, "denied", started, request_id);
         return IoCompletion { id: request.id(), result: Err(error) };
     }
@@ -851,6 +861,23 @@ async fn execute(
         IoRequest::SecretRef { id, name } => {
             IoCompletion { id, result: crate::secrets::refer(&name) }
         }
+        IoRequest::ResponseClosed { id, tx, stop } => IoCompletion {
+            id,
+            result: tokio::select! {
+                biased;
+                () = cancelled(&cancel, deadline) => Err(interrupt_err(&cancel, deadline)),
+                _ = stop => Err("response stream finished".into()),
+                () = tx.closed() => Ok(Value::Null),
+            },
+        },
+        IoRequest::ResponseWrite { id, tx, bytes } => IoCompletion {
+            id,
+            result: tokio::select! {
+                biased;
+                () = cancelled(&cancel, deadline) => Err(interrupt_err(&cancel, deadline)),
+                result = tx.send(bytes) => result.map(|()| Value::Null).map_err(|_| "response consumer closed".into()),
+            },
+        },
         IoRequest::ReadBody { id } => IoCompletion {
             id,
             result: slots
