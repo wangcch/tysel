@@ -16,6 +16,40 @@ fn percentile(values: &mut [f64], p: usize) -> f64 {
 }
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_else(|| "cold".into());
+    if mode == "encode" {
+        let result = eval(r#"(()=>{
+          const encoder=new TextEncoder(), rows=[];
+          for(const unicode of [false,true])for(const small of [false,true]) {
+            const source=(unicode?'中😀':'a').repeat(unicode?150000:1048576);
+            const expected=encoder.encode(source);
+            const capacity=small?64:expected.length;
+            let expectedWritten=Math.min(expected.length,capacity);
+            while(expectedWritten<expected.length && expectedWritten>0 && (expected[expectedWritten]&0xc0)===0x80)expectedWritten--;
+            const target=new Uint8Array(capacity), rounds=small?1000:100;
+            for(const mode of ['encode-copy','encodeInto']) {
+              target.fill(99);
+              const start=Date.now();let written=0;
+              for(let i=0;i<rounds;i++) {
+                if(mode==='encodeInto')written+=encoder.encodeInto(source,target).written;
+                else {
+                  const bytes=encoder.encode(source);let end=Math.min(bytes.length,capacity);
+                  while(end<bytes.length && end>0 && (bytes[end]&0xc0)===0x80)end--;
+                  target.set(bytes.subarray(0,end));written+=end;
+                }
+              }
+              const milliseconds=Date.now()-start;
+              if(written!==expectedWritten*rounds)throw new Error('encoding byte count mismatch');
+              for(let i=0;i<capacity;i++)if(target[i] !== (i<expectedWritten?expected[i]:99))throw new Error('encoding output mismatch');
+              rows.push({unicode,small,mode,milliseconds,rounds,written});
+            }
+          }
+          return JSON.stringify(rows);
+        })()"#, config()).unwrap();
+        if let tysel_engine::Value::String(json) = result {
+            println!("{json}");
+        }
+        return;
+    }
     if mode == "cold" {
         let mut times = Vec::new();
         for i in 0..52 {
