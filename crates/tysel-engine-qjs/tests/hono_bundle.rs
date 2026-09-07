@@ -163,3 +163,46 @@ async fn real_hono_example_handles_json_routes() {
     let text = body_text(body).await;
     assert!(text.contains("\"hello\":\"tysel\""), "GET /hello/:name body was {text}");
 }
+
+#[tokio::test]
+async fn real_hono_preserves_url_path_and_query_boundaries() {
+    let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/hono-api");
+    assert!(app.join("node_modules/hono").is_dir(), "run pnpm install for real Hono acceptance");
+    let dir = std::env::temp_dir().join(format!("tysel-hono-url-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let modules = dir.join("node_modules");
+    if !modules.exists() {
+        std::os::unix::fs::symlink(app.join("node_modules"), &modules).unwrap();
+    }
+    let entry = dir.join("index.ts");
+    fs::write(
+        &entry,
+        r#"
+      import { Hono } from 'hono';
+      const app=new Hono();
+      app.get('/a//b',c=>{
+        const url=new URL(c.req.url);
+        return c.json({path:url.pathname,port:url.port,q:url.searchParams.get('q')});
+      });
+      app.get('/a/b',c=>c.text('distinct route'));
+      export default app;
+    "#,
+    )
+    .unwrap();
+    let (bundle, _) = tysel_build::read_bundle(&entry).unwrap();
+    let pool = IsolatePool::spawn(1, &String::from_utf8(bundle).unwrap(), config()).unwrap();
+    let (head, body) = pool
+        .dispatch(HttpRequest {
+            method: "GET".into(),
+            url: "https://tysel.local:443/a//b?q=%E4%B8%AD+%FF".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(head.status, 200);
+    let data: serde_json::Value = serde_json::from_str(&body_text(body).await).unwrap();
+    assert_eq!(data, serde_json::json!({"path":"/a//b","port":"","q":"中 �"}));
+    fs::remove_dir_all(dir).unwrap();
+}

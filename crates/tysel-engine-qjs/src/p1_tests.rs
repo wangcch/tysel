@@ -602,6 +602,23 @@ fn p1_body_read_errors_do_not_wait_for_cancel() {
 }
 
 #[test]
+fn p1_url_preserves_paths_ports_and_query_bytes() {
+    let result=eval(r#"(()=>{
+      const u=new URL('https://example.com:00443/a//b?q=%E4%B8%AD+%FF');
+      if(u.pathname!=='/a//b'||u.port!==''||u.host!=='example.com'||u.searchParams.get('q')!=='中 �')return false;
+      if(new URL('../c//',u).pathname!=='/a/c//')return false;
+      u.pathname='/a//%2e/b/..';if(u.pathname!=='/a//')return false;
+      u.port='0080';u.protocol='http';if(u.port!==''||u.origin!=='http://example.com')return false;
+      u.host='[::1]:00080';if(u.host!=='[::1]')return false;
+      const params=u.searchParams;u.search='?q=%EF%BB%BF%FF+%41';
+      if(params!==u.searchParams||params.get('q')!=='\ufeff� A')return false;
+      params.set('q','\ud800😀');
+      return params.get('q')==='�😀' && u.search==='?q=%EF%BF%BD%F0%9F%98%80';
+    })()"#,config()).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
 fn p1_consumed_buffered_body_preserves_lazy_stream_state() {
     let result=eval(r#"(async()=>{
       const first=new Response('A');await first.text();

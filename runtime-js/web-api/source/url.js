@@ -1,9 +1,29 @@
 (() => {
+  function scalarString(value) {
+    return String(value).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g,
+      unit => unit.length === 2 ? unit : "\ufffd");
+  }
+
   function decodeURIComponentSafe(value) {
+    const text = scalarString(value).replace(/\+/g, " ");
     try {
-      return decodeURIComponent(String(value).replace(/\+/g, " "));
+      return decodeURIComponent(text);
     } catch {
-      return String(value);
+      // Decode valid percent bytes even when an adjacent escape or UTF-8
+      // sequence is malformed. Compact in place; URL queries preserve BOM.
+      const bytes = new TextEncoder().encode(text);
+      let written = 0;
+      const hex = byte => byte >= 48 && byte <= 57 ? byte - 48
+        : byte >= 65 && byte <= 70 ? byte - 55
+        : byte >= 97 && byte <= 102 ? byte - 87 : -1;
+      for (let i = 0; i < bytes.length; i++) {
+        if (bytes[i] === 37 && i + 2 < bytes.length) {
+          const high = hex(bytes[i + 1]), low = hex(bytes[i + 2]);
+          if (high !== -1 && low !== -1) { bytes[written++] = high * 16 + low; i += 2; continue; }
+        }
+        bytes[written++] = bytes[i];
+      }
+      return new TextDecoder("utf-8", {ignoreBOM: true}).decode(bytes.subarray(0, written));
     }
   }
 
@@ -28,18 +48,25 @@
   }
 
   function normalizePath(pathname) {
-    const absolute = pathname.charAt(0) === "/";
-    const trailing = /\/(?:\.{0,2})?$/.test(pathname);
+    const input = pathname.split("/");
     const segments = [];
-    for (const segment of pathname.split("/")) {
-      if (!segment || segment === ".") continue;
-      if (segment === "..") segments.pop();
-      else segments.push(segment);
+    for (let i = 1; i < input.length; i++) {
+      const segment = input[i];
+      const dots = segment.replace(/%2e/gi, ".");
+      if (dots === "." || dots === "..") {
+        if (dots === "..") segments.pop();
+        if (i === input.length - 1) segments.push("");
+      } else segments.push(segment);
     }
-    let result = (absolute ? "/" : "") + segments.join("/");
-    if (absolute && !result) result = "/";
-    if (trailing && result !== "/") result += "/";
-    return result;
+    return "/" + segments.join("/");
+  }
+
+  const defaultPorts = {"http:": 80, "https:": 443, "ws:": 80, "wss:": 443, "ftp:": 21};
+  function normalizePort(protocol, port) {
+    if (!port) return "";
+    if (!/^\d+$/.test(port) || Number(port) > 65535) throw new TypeError("Invalid URL port");
+    const number = Number(port);
+    return number === defaultPorts[protocol] ? "" : String(number);
   }
 
   function parseAbsolute(value) {
@@ -47,7 +74,7 @@
     if (!match) throw new TypeError("Invalid URL");
     const protocol = match[1].toLowerCase();
     const authority = match[2];
-    const host = authority.slice(authority.lastIndexOf("@") + 1);
+    let host = authority.slice(authority.lastIndexOf("@") + 1);
     let hostname = host;
     let port = "";
     if (host.charAt(0) === "[") {
@@ -63,8 +90,10 @@
       }
     }
     if (!hostname) throw new TypeError("Invalid URL");
+    port = normalizePort(protocol, port);
+    host = hostname + (port ? ":" + port : "");
     const pathname = normalizePath(match[3] || "/");
-    const origin = protocol + "//" + authority;
+    const origin = protocol + "//" + host;
     return {
       protocol,
       origin,
@@ -135,7 +164,7 @@
         }
       } else {
         for (const key of Object.keys(init)) {
-          this._pairs.push([String(key), String(init[key])]);
+          this._pairs.push([scalarString(key), scalarString(init[key])]);
         }
       }
     }
@@ -146,12 +175,12 @@
       return this._pairs.length;
     }
     append(name, value) {
-      this._pairs.push([String(name), String(value)]);
+      this._pairs.push([scalarString(name), scalarString(value)]);
       this._changed();
     }
     set(name, value) {
-      name = String(name);
-      value = String(value);
+      name = scalarString(name);
+      value = scalarString(value);
       const first = this._pairs.findIndex((pair) => pair[0] === name);
       if (first === -1) this._pairs.push([name, value]);
       else {
@@ -161,22 +190,22 @@
       this._changed();
     }
     get(name) {
-      name = String(name);
+      name = scalarString(name);
       for (const pair of this._pairs) {
         if (pair[0] === name) return pair[1];
       }
       return null;
     }
     getAll(name) {
-      name = String(name);
+      name = scalarString(name);
       return this._pairs.filter((pair) => pair[0] === name).map((pair) => pair[1]);
     }
     has(name) {
-      name = String(name);
+      name = scalarString(name);
       return this._pairs.some((pair) => pair[0] === name);
     }
     delete(name) {
-      name = String(name);
+      name = scalarString(name);
       this._pairs = this._pairs.filter((pair) => pair[0] !== name);
       this._changed();
     }
@@ -242,6 +271,8 @@
       if (!protocol.endsWith(":")) protocol += ":";
       if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:$/.test(protocol)) throw new TypeError("Invalid URL protocol");
       this._protocol = protocol.toLowerCase();
+      this._port = normalizePort(this._protocol, this._port);
+      this._host = this._hostname + (this._port ? ":" + this._port : "");
       this._commit();
     }
     get origin() { return this._origin; }
@@ -265,8 +296,7 @@
     }
     get port() { return this._port; }
     set port(value) {
-      const port = String(value);
-      if (port && (!/^\d+$/.test(port) || Number(port) > 65535)) throw new TypeError("Invalid URL port");
+      const port = normalizePort(this._protocol, String(value));
       this._port = port;
       this._host = this._hostname + (port ? ":" + port : "");
       this._commit();
