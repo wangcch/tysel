@@ -12,11 +12,12 @@ description: "Tysel JavaScript 运行时支持的 URL 与 URLSearchParams 约定
 ## 支持
 
 - 基于 authority 的绝对和相对 URL
-- 规范化路径中的点号段，同时保留重复斜杠
-- 在解析和属性修改时规范化默认端口
-- 查询参数中的非法 UTF-8 使用替换字符解码，并规范化 Unicode 标量字符串
+- 规范化路径中的点号段
 - 实时同步 search 与 searchParams 的修改
 - 使用可迭代对象和 record 初始化 URLSearchParams
+- 在点号段规范化和 URL 修改过程中保留空路径段
+- 规范化 HTTP、HTTPS、WS、WSS 和 FTP 的默认端口
+- 表单查询中的非法 UTF-8 使用替换字符解码，并规范化 Unicode 标量字符串
 
 ## 不支持
 

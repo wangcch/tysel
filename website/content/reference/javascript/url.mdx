@@ -13,11 +13,12 @@ Source of truth: `runtime-js/web-api/compatibility.json`
 ## Supported
 
 - absolute and relative authority-based URLs
-- dot-segment path normalization while preserving repeated slashes
-- default-port normalization across parsing and property updates
-- query decoding with replacement for malformed UTF-8; Unicode scalar string normalization
+- dot-segment path normalization
 - live search and searchParams mutation
 - iterable and record URLSearchParams initialization
+- empty path segments preserved through dot-segment normalization and URL mutations
+- default ports normalized for HTTP, HTTPS, WS, WSS and FTP
+- form-query replacement decoding for malformed UTF-8 and scalar string normalization
 
 ## Not supported
 

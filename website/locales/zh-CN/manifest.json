@@ -2049,8 +2049,8 @@
       "status": "reviewed"
     },
     "reference/javascript/url.mdx": {
-      "sourceHash": "21b767831970673fdaf4836f6dba88c008202557005eae485a6288741cedbc28",
-      "translationHash": "68948fe018965ae1a7fa9c6589c7d426a6232c66a24a5549c85495d1309446f7",
+      "sourceHash": "dee8912d96f220d393ec92c7e9b2a18ca0d9a76572192d22972eed44bf101fe7",
+      "translationHash": "42918b6eb9b1c61ea02e7f8832692c18b7814ddc6bf07c02f86eabde8716bba0",
       "status": "reviewed"
     },
     "reference/javascript/websocket.mdx": {
