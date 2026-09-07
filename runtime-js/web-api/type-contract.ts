@@ -5,6 +5,10 @@ export function checkStreamTypes(api: TyselWebApiGlobals) {
   const stream = new api.ReadableStream<Uint8Array>({
     start(controller) { controller.enqueue(new Uint8Array([65])); controller.close(); },
   });
+  const encoder = new api.TextEncoderStream();
+  const encodedStream: import("./index.js").ReadableStream<Uint8Array> = encoder.readable;
+  const bytes: Promise<Uint8Array> = new api.Response("hello").bytes();
+  void [encodedStream, bytes];
   const decoder = new api.TextDecoderStream();
   const text = stream.pipeThrough(decoder);
   const done = text.pipeTo(new api.WritableStream<string>({ write(value) { void value; } }), { signal });

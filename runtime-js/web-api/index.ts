@@ -128,6 +128,7 @@ export interface TyselBody {
   text(): Promise<string>;
   json(): Promise<unknown>;
   arrayBuffer(): Promise<ArrayBuffer>;
+  bytes(): Promise<Uint8Array>;
 }
 
 export interface TyselRequest extends TyselBody {
@@ -256,6 +257,11 @@ export interface TyselWebApiGlobals {
   TransformStream: typeof Streams.TransformStream;
   ByteLengthQueuingStrategy: typeof Streams.ByteLengthQueuingStrategy;
   CountQueuingStrategy: typeof Streams.CountQueuingStrategy;
+  TextEncoderStream: new () => {
+    readonly encoding: "utf-8";
+    readonly readable: Streams.ReadableStream<Uint8Array>;
+    readonly writable: Streams.WritableStream<any>; // Chunks undergo string conversion.
+  };
   TextDecoderStream: new (label?: "utf-8" | "utf8", options?: {fatal?: boolean; ignoreBOM?: boolean}) => {
     readonly encoding: "utf-8";
     readonly fatal: boolean;

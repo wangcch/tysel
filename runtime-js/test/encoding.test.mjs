@@ -38,3 +38,34 @@ test('incremental UTF-8 agrees with native decoding across malformed and split i
     assert.equal(custom(input,widths,fatal),expected,JSON.stringify({input,widths,fatal}));
   }
 });
+
+test('TextEncoderStream matches native chunk boundaries, conversion and surrogate flushing', async () => {
+  const context = vm.createContext({TransformStream, tysel: {
+    _utf8Encode(text) { return new TextEncoder().encode(text); },
+  }});
+  vm.runInContext(readFileSync(new URL('../web-api/source/encoding.js', import.meta.url), 'utf8'), context);
+  const Custom = vm.runInContext('TextEncoderStream', context);
+  const collect = async (C, chunks) => {
+    const stream = new C(), output = [];
+    const reading = (async () => { for await (const chunk of stream.readable) output.push(Array.from(chunk)); })();
+    const writer = stream.writable.getWriter();
+    for (const chunk of chunks) await writer.write(chunk);
+    await writer.close(); await reading;
+    return output;
+  };
+  const cases = [[], [''], ['\ud83d', '', '\ude00'], ['\ud800'], ['\udc00', '中'], ['\ud800', '\ud800', '\udc00'], [undefined, null, 42, {toString(){return '😀';}}]];
+  let seed = 451;
+  for (let i=0;i<80;i++) {
+    const chunks=[];
+    for(let j=0;j<8;j++) { seed=(Math.imul(seed,1664525)+1013904223)>>>0; chunks.push(String.fromCharCode(seed&0xffff)); }
+    cases.push(chunks);
+  }
+  for (const chunks of cases) assert.deepEqual(await collect(Custom,chunks), await collect(TextEncoderStream,chunks));
+  // DOMString conversion rejects Symbols; Node's encoder stream currently stringifies them.
+  for (const C of [Custom]) {
+    const stream = new C(), reader=stream.readable.getReader(), writer=stream.writable.getWriter();
+    const read=assert.rejects(reader.read(), {name:'TypeError'});
+    await assert.rejects(writer.write(Symbol('invalid')), {name:'TypeError'});
+    await read;
+  }
+});

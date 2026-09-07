@@ -740,3 +740,94 @@ fn next_review_status_getter_and_typed_array_length() {
     })()"#,config()).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
+
+#[test]
+fn bytes_helpers_preserve_ownership_and_consumption() {
+    let result=eval(r#"(async()=>{
+      const lazy=()=>typeof Object.getOwnPropertyDescriptor(globalThis,'ReadableStream').get==='function';
+      for(const C of [Response,Request]) {
+        const make=body=>C===Response?new C(body):new C('https://local/',{method:'POST',body});
+        const input=new Uint8Array([99,0,128,255,99]);
+        const response=make(input.subarray(1,4)),clone=response.clone();
+        const bytes=await response.bytes();
+        if(String(bytes)!=='0,128,255'||!response.bodyUsed||!lazy())return false;
+        bytes[0]=42;
+        if(input[1]!==0||String(await clone.bytes())!=='0,128,255')return false;
+        try{await response.bytes();return false;}catch(e){if(!(e instanceof TypeError))return false;}
+        const empty=make(null);
+        if((await empty.bytes()).length||(await empty.bytes()).length||empty.bodyUsed)return false;
+      }
+      const chunk=new Uint8Array([99,1,2,99]);
+      const response=new Response(new ReadableStream({start(c){c.enqueue(chunk.subarray(1,3));c.close();}}));
+      const bytes=await response.bytes();bytes[0]=7;
+      if(chunk[1]!==1||String(bytes)!=='7,2')return false;
+      const locked=new Response('a'),reader=locked.body.getReader();
+      try{await locked.bytes();return false;}catch(e){if(!(e instanceof TypeError))return false;}
+      reader.releaseLock();
+      return String(await locked.bytes())==='97';
+    })()"#,config()).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn encoder_stream_surrogates_backpressure_and_cancellation() {
+    let result=eval(r#"(async()=>{
+      const lazy=()=>typeof Object.getOwnPropertyDescriptor(globalThis,'ReadableStream').get==='function';
+      if(!lazy()||typeof TextEncoderStream!=='function'||!lazy())return false;
+      const stream=new TextEncoderStream();
+      if(lazy()||stream.encoding!=='utf-8')return false;
+      const writer=stream.writable.getWriter();let converted=0;
+      const write=writer.write({toString(){converted++;return 'a';}});
+      await Promise.resolve();await Promise.resolve();
+      if(converted!==0)return false;
+      const reader=stream.readable.getReader();
+      if(String((await reader.read()).value)!=='97')return false;
+      await write;
+      const cancel=reader.cancel('stop');
+      try{await writer.write('b');return false;}catch(e){if(e!=='stop')return false;}
+      await cancel;
+      for(const chunks of [['\ud83d','','\ude00'],['中','\ud800'],['\ud800','\ud800','\udc00']]) {
+        const source=new ReadableStream({start(c){for(const chunk of chunks)c.enqueue(chunk);c.close();}});
+        const actual=await new Response(source.pipeThrough(new TextEncoderStream())).bytes();
+        if(String(actual)!==String(new TextEncoder().encode(chunks.join(''))))return false;
+      }
+      const bad=new TextEncoderStream(),r=bad.readable.getReader(),w=bad.writable.getWriter();
+      const read=r.read().then(()=>false,e=>e instanceof TypeError);
+      try{await w.write(Symbol());return false;}catch(e){if(!(e instanceof TypeError))return false;}
+      return await read;
+    })()"#,config()).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn bytes_and_encoder_stream_work_through_native_dispatch() {
+    let pool=IsolatePool::spawn(1,r#"export default {async fetch(request){
+      const bytes=await request.bytes();
+      const chunks=[String(bytes),'\ud83d','\ude00'];
+      return new Response(new ReadableStream({pull(c){if(chunks.length)c.enqueue(chunks.shift());else c.close();}}).pipeThrough(new TextEncoderStream()));
+    }}"#,config()).unwrap();
+    let response = pool
+        .dispatch_sync(HttpRequest {
+            method: "POST".into(),
+            url: "http://local/".into(),
+            headers: vec![],
+            body: vec![0, 128, 255],
+            request_id: 1,
+        })
+        .unwrap();
+    assert_eq!(response.1, "0,128,255😀".as_bytes());
+}
+
+#[test]
+fn encoder_stream_processes_more_than_the_heap_without_accumulation() {
+    let result=eval(r#"(async()=>{
+      let remaining=512,total=0;
+      const source=new ReadableStream({pull(c){if(remaining-- > 0)c.enqueue('a'.repeat(32768));else c.close();}});
+      for await(const bytes of source.pipeThrough(new TextEncoderStream())) {
+        if(bytes.length!==32768||bytes[0]!==97||bytes[32767]!==97)return false;
+        total+=bytes.length;
+      }
+      return total===16*1024*1024;
+    })()"#,IsolateConfig{memory_limit_bytes:4*1024*1024,request_timeout_ms:10000,cpu_ms_per_turn:10000}).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}

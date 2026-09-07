@@ -92,6 +92,36 @@
     }
   }
 
+  class TextEncoderStream {
+    constructor() {
+      const encoder = new TextEncoder();
+      let pending = "";
+      const transform = new TransformStream({
+        transform(chunk, controller) {
+          // Convert before changing pending state; Symbols must reject the write.
+          let text = pending + `${chunk}`;
+          pending = "";
+          const last = text.charCodeAt(text.length - 1);
+          if (last >= 0xd800 && last <= 0xdbff) {
+            pending = text.slice(-1);
+            text = text.slice(0, -1);
+          }
+          if (text) controller.enqueue(encoder.encode(text));
+        },
+        flush(controller) {
+          if (pending) controller.enqueue(encoder.encode(pending));
+          pending = "";
+        },
+      });
+      Object.defineProperties(this, {
+        encoding: {value: "utf-8", enumerable: true},
+        readable: {value: transform.readable},
+        writable: {value: transform.writable},
+      });
+    }
+  }
+  globalThis.TextEncoderStream = TextEncoderStream;
+
   class TextDecoderStream {
     constructor(label, options) {
       const decoder = new TextDecoder(label, options);

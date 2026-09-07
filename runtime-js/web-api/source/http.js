@@ -253,6 +253,7 @@
     async text() { return consumeText(this); }
     async json() { return JSON.parse(await this.text()); }
     async arrayBuffer() { return consumeArrayBuffer(this); }
+    async bytes() { return new Uint8Array(await consumeArrayBuffer(this)); }
     clone() {
       if (this._stream || this._customStream || used(this) || (this._bodyStream && this._bodyStream.locked)) {
         throw new TypeError("cannot clone a streaming or consumed request");
@@ -328,6 +329,7 @@
     async text() { return consumeText(this); }
     async json() { return JSON.parse(await this.text()); }
     async arrayBuffer() { return consumeArrayBuffer(this); }
+    async bytes() { return new Uint8Array(await consumeArrayBuffer(this)); }
     clone() {
       if (this._stream || this._customStream || used(this) || (this._bodyStream && this._bodyStream.locked)) {
         throw new TypeError("cannot clone a streaming or consumed response");
