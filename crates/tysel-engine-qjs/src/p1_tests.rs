@@ -831,3 +831,33 @@ fn encoder_stream_processes_more_than_the_heap_without_accumulation() {
     })()"#,IsolateConfig{memory_limit_bytes:4*1024*1024,request_timeout_ms:10000,cpu_ms_per_turn:10000}).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
+
+#[test]
+fn long_small_chunk_pipes_do_not_retain_ready_promise_chains() {
+    for transform in [
+        "new TextEncoderStream()",
+        "new TransformStream({transform(chunk,c){c.enqueue(new TextEncoder().encode(chunk));}})",
+    ] {
+        let source = format!(
+            r#"(async()=>{{
+          let remaining=32768,total=0;
+          const source=new ReadableStream({{pull(c){{if(remaining-- > 0)c.enqueue('a'.repeat(64));else c.close();}}}});
+          for await(const bytes of source.pipeThrough({transform})) {{
+            if(bytes.length!==64||bytes[0]!==97||bytes[63]!==97)return false;
+            total+=bytes.length;
+          }}
+          return total===2*1024*1024;
+        }})()"#
+        );
+        let result = eval(
+            &source,
+            IsolateConfig {
+                memory_limit_bytes: 4 * 1024 * 1024,
+                request_timeout_ms: 10000,
+                cpu_ms_per_turn: 10000,
+            },
+        )
+        .unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+}
