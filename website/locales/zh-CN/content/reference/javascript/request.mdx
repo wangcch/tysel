@@ -20,10 +20,10 @@ description: "Tysel JavaScript 运行时支持的 Request and Response 契约。
 - Tysel 响应分块数组，对字符串、ArrayBuffer 和 ArrayBufferView 元素创建快照
 - 按需创建 ReadableStream body，并跟踪锁定与读取状态
 - Response 支持 Uint8Array 分块的 ReadableStream，以及原生背压和取消
-
 - Response.redirect 和 Response.error：响应头不可变，clone 保留该属性
 - 校验响应状态码范围及无响应体状态；仅在 tysel.acceptWebSocket 后允许状态码 101
 - 空响应体的辅助读取方法可重复调用，不设置 bodyUsed
+- bytes() 返回独立的 Uint8Array，遵循与 arrayBuffer() 相同的 Body 消费规则
 
 ## 不支持
 

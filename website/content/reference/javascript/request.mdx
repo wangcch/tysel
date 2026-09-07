@@ -24,6 +24,7 @@ Source of truth: `runtime-js/web-api/compatibility.json`
 - Response.redirect and Response.error with immutable headers and clone preservation
 - response status range and null-body status validation; status 101 only after tysel.acceptWebSocket
 - null-body helpers are repeatable and do not set bodyUsed
+- bytes() returns independent Uint8Array bytes with the same body consumption rules as arrayBuffer()
 
 ## Not supported
 

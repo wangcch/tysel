@@ -193,3 +193,20 @@ Ordinary Response construction accepts statuses 200–599 and rejects non-null
 bodies for 204, 205 and 304. Tysel's existing status-101 WebSocket upgrade remains
 available only after `tysel.acceptWebSocket()`, also with a null body. Null-body
 helpers remain repeatable and leave bodyUsed false.
+
+### Byte consumption and text encoding streams
+
+`Request.bytes()` and `Response.bytes()` return an independent `Uint8Array`
+with the same consumption rules as `arrayBuffer()`. They collect the entire
+body, requiring O(body size) memory.
+
+`TextEncoderStream` converts text chunks to UTF-8 for `pipeThrough()` and
+streaming responses. It retains at most one trailing high surrogate to join
+split pairs and replaces unmatched surrogates, including on close. Chunks use
+DOMString conversion, which rejects Symbols. The underlying TransformStream
+loads on construction and supplies backpressure, cancellation and error propagation.
+Output allocation scales with each input chunk, so applications should bound
+chunk sizes.
+
+These contracts follow the [Body bytes helper](https://fetch.spec.whatwg.org/#dom-body-bytes)
+and [TextEncoderStream algorithms](https://encoding.spec.whatwg.org/#interface-textencoderstream).

@@ -2034,13 +2034,13 @@
       "status": "reviewed"
     },
     "reference/javascript/request.mdx": {
-      "sourceHash": "9c08f2bbac6b0529768554e520f66dc822071b2a00a8acfa8ae8cd1a9b8fa192",
-      "translationHash": "a11e0ded9a50af27d16a4d1b1b0bfd99c3281581b703fae83706369613c9360d",
+      "sourceHash": "ecb93693ae403a9035400c536e64cb00c8bba06fa11ec535e5d742ebbef84288",
+      "translationHash": "ef9de12b695c0313702962c18b79c386abc8a3a73823b1d05ad74cb6b792d629",
       "status": "reviewed"
     },
     "reference/javascript/textencoder.mdx": {
-      "sourceHash": "8118953d1bd5d17f12f780401959b49c7c08bd7ad2709d6a9d36b58a6c2ccaee",
-      "translationHash": "dd00f343f3416bc4c8f9d8338996e66ed052d8471b8069dd0af6e9cae8b82a2a",
+      "sourceHash": "0a0bf4bca3720fd06b52bba335448f5e373b52ca468fa2238c14da53453fae37",
+      "translationHash": "87dc88c9c70c778508a9cb13b25514732281770123b7ff7c38711db995638c2f",
       "status": "reviewed"
     },
     "reference/javascript/timers.mdx": {

@@ -14,8 +14,8 @@ description: "Tysel JavaScript 运行时支持的 TextEncoder and TextDecoder �
 - UTF-8 编码和解码
 - 带 stream 选项和最终刷新功能的有状态 UTF-8 解码
 - 基于 TransformStream 的 TextDecoderStream
-
 - TextEncoder.encodeInto：按 UTF-16 码元计数、替换非法代理项，并限制临时存储大小
+- TextEncoderStream：跨块组合代理对、结束时替换孤立代理项，并支持背压与取消
 
 ## 不支持
 
