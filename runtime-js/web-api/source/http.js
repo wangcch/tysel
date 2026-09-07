@@ -51,12 +51,14 @@
     get(name) { return this._map[headerName(name)] ?? null; }
     getSetCookie() { return this._cookies.slice(); }
     set(name, value) {
+      if (this._immutable) throw new TypeError("headers are immutable");
       const key = headerName(name), text = headerValue(value);
       this._map[key] = text;
       this._version++;
       if (key === "set-cookie") this._cookies = [text];
     }
     append(name, value) {
+      if (this._immutable) throw new TypeError("headers are immutable");
       const key = headerName(name), text = headerValue(value);
       const prev = this._map[key];
       this._map[key] = prev == null ? text : prev + ", " + text;
@@ -65,6 +67,7 @@
     }
     has(name) { return Object.hasOwn(this._map, headerName(name)); }
     delete(name) {
+      if (this._immutable) throw new TypeError("headers are immutable");
       const key = headerName(name);
       delete this._map[key];
       this._version++;
@@ -176,7 +179,7 @@
   async function consumeBytes(owner) {
     if (used(owner)) throw new TypeError("body has already been consumed");
     if (!owner._stream && !owner._bodyStream) {
-      owner._bodyUsed = true;
+      if (owner._body != null) owner._bodyUsed = true;
       return bodyBytes(owner._body);
     }
     const reader = getBody(owner).getReader();
@@ -269,7 +272,15 @@
       const stream = globalThis.__tysel_isReadableStream(body);
       if (stream && (body.locked || body._disturbed)) throw new TypeError("body stream is locked or consumed");
       this._body = stream ? null : body == null ? null : copyResponseBody(body);
-      this.status = init.status || 200;
+      let status = 200;
+      const initialStatus = init.status;
+      if (initialStatus !== undefined) {
+        const number = +initialStatus;
+        status = Number.isFinite(number) ? ((Math.trunc(number) % 65536) + 65536) % 65536 : 0;
+        if ((status < 200 || status > 599) && !(status === 101 && globalThis.__tysel_ws_accepted)) throw new RangeError("invalid response status");
+        if (body != null && (status === 101 || status === 204 || status === 205 || status === 304)) throw new TypeError("status cannot have a body");
+      }
+      this.status = status;
       this.headers = new Headers(init.headers);
       this._stream = false;
       this._signal = null;
@@ -279,8 +290,24 @@
       this._customStream = stream;
       if (this._customStream) this._bodyStream = body;
     }
+    get type() { return this.status === 0 ? "error" : "default"; }
     get ok() {
       return this.status >= 200 && this.status < 300;
+    }
+    static error() {
+      const response = new Response();
+      response.status = 0;
+      response.headers._immutable = true;
+      return response;
+    }
+    static redirect(url, status = 302) {
+      const location = new URL(String(url)).href;
+      const number = +status;
+      status = Number.isFinite(number) ? ((Math.trunc(number) % 65536) + 65536) % 65536 : 0;
+      if (![301, 302, 303, 307, 308].includes(status)) throw new RangeError("invalid redirect status");
+      const response = new Response(null, {status, headers: {location}});
+      response.headers._immutable = true;
+      return response;
     }
     static json(data, init) {
       init = init || {};
@@ -305,11 +332,15 @@
       if (this._stream || this._customStream || used(this) || (this._bodyStream && this._bodyStream.locked)) {
         throw new TypeError("cannot clone a streaming or consumed response");
       }
-      return new Response(this._body, { status: this.status, headers: this.headers });
+      if (this.status === 0) return Response.error();
+      const response = new Response(this._body, { status: this.status, headers: this.headers });
+      response.headers._immutable = this.headers._immutable;
+      return response;
     }
   }
 
   globalThis.__tysel_responseBody = response => {
+    if (response.status === 0) throw new TypeError("cannot send a network-error Response");
     if (used(response)) throw new TypeError("response body has already been consumed");
     if (response._bodyStream && response._bodyStream.locked) throw new TypeError("response body is locked");
     return response._stream || response._bodyStream ? response.body : response._body;

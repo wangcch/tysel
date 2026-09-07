@@ -1,10 +1,37 @@
 (() => {
+  // Read the internal view length even when an instance or subclass shadows it.
+  const byteLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "byteLength").get;
   class TextEncoder {
     constructor() {
       this.encoding = "utf-8";
     }
+    encodeInto(source, destination) {
+      if (arguments.length < 2) throw new TypeError("encodeInto requires source and destination");
+      source = `${source}`;
+      if (!(destination instanceof Uint8Array)) throw new TypeError("expected Uint8Array");
+      const capacity = byteLength.call(destination);
+      let read = 0, written = 0;
+      // Bound each native conversion, including a surrogate lookahead.
+      do {
+        let end = Math.min(source.length, read + Math.min(16384, capacity - written + 1));
+        if (end < source.length && end > read + 1 && source.charCodeAt(end - 1) >= 0xd800 && source.charCodeAt(end - 1) <= 0xdbff) end--;
+        const chunk = source.slice(read, end);
+        const result = tysel._utf8EncodeInto(chunk, destination, written);
+        read += result.read; written += result.written;
+        if (!result.read || result.read < chunk.length) break;
+      } while (read < source.length && written < capacity);
+      return { read, written };
+    }
     encode(input) {
-      return tysel._utf8Encode(input == null ? "" : String(input));
+      const text = input === undefined ? "" : `${input}`;
+      try { return tysel._utf8Encode(text); }
+      catch (error) {
+        // The native bridge rejects lone surrogate code points. Keep valid
+        // strings on the existing fast path; normalize only this fallback.
+        const scalar = text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g, unit => unit.length === 2 ? unit : "\ufffd");
+        if (scalar === text) throw error;
+        return tysel._utf8Encode(scalar);
+      }
     }
   }
 

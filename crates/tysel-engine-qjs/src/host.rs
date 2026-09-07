@@ -151,6 +151,7 @@ fn install_inner(
             TypedArray::<u8>::new(ctx, text.into_bytes())
         })?,
     )?;
+    tysel.set("_utf8EncodeInto", Function::new(ctx.clone(), encode_into)?)?;
     tysel.set(
         "_utf8Decode",
         Function::new(ctx.clone(), |ctx, bytes: TypedArray<u8>, fatal: bool| {
@@ -650,4 +651,89 @@ fn load_streams(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
         include_str!("../../../runtime-js/web-api/vendor/web-streams-polyfill/polyfill.js"),
         "\nreturn globalThis; })(Object.create(globalThis))"
     ))
+}
+
+// Keep conversion scratch bounded to one JS chunk, not the full source.
+// Use the UTF-8 API: the pinned engine's UTF-16 API cannot safely release
+// wide string slices. UTF-8 conversion always returns releasable storage.
+#[allow(unsafe_code)]
+fn encode_into<'js>(
+    ctx: Ctx<'js>,
+    text: rquickjs::String<'js>,
+    destination: TypedArray<'js, u8>,
+    offset: usize,
+) -> rquickjs::Result<Object<'js>> {
+    let raw =
+        destination.as_raw().ok_or_else(|| Exception::throw_type(&ctx, "detached destination"))?;
+    if offset > raw.len {
+        return Err(Exception::throw_range(&ctx, "invalid destination offset"));
+    }
+    let mut length = 0;
+    // SAFETY: the string and destination stay rooted; no JS callback can run
+    // while these pointers are used. The matching release occurs before allocation.
+    let ptr = unsafe {
+        rquickjs::qjs::JS_ToCStringLen2(ctx.as_raw().as_ptr(), &mut length, text.as_raw(), false)
+    };
+    if ptr.is_null() {
+        return Err(rquickjs::Error::Exception);
+    }
+    let (mut read, mut written, mut index) = (0, 0, 0);
+    unsafe {
+        let bytes = std::slice::from_raw_parts(ptr.cast::<u8>(), length as usize);
+        if bytes.is_ascii() {
+            written = bytes.len().min(raw.len - offset);
+            read = written;
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw.ptr.as_ptr().add(offset), written);
+            index = bytes.len();
+        }
+        // Scan complete code points, then copy each unchanged run once. WTF-8
+        // surrogate sequences and their U+FFFD replacements are both three bytes,
+        // so input and output byte offsets stay aligned within the accepted prefix.
+        let mut run_start = index;
+        while index < bytes.len() {
+            let first = bytes[index];
+            let size = if first < 128 {
+                1
+            } else if first < 224 {
+                2
+            } else if first < 240 {
+                3
+            } else {
+                4
+            };
+            if size > raw.len - offset - written {
+                break;
+            }
+            // QuickJS preserves lone surrogate code points in its UTF-8 API.
+            if first == 0xed && bytes[index + 1] >= 0xa0 {
+                let run = index - run_start;
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr().add(run_start),
+                    raw.ptr.as_ptr().add(offset + written - run),
+                    run,
+                );
+                let replacement = [0xef, 0xbf, 0xbd];
+                std::ptr::copy_nonoverlapping(
+                    replacement.as_ptr(),
+                    raw.ptr.as_ptr().add(offset + written),
+                    replacement.len(),
+                );
+                run_start = index + size;
+            }
+            index += size;
+            written += size;
+            read += if size == 4 { 2 } else { 1 };
+        }
+        let run = index - run_start;
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr().add(run_start),
+            raw.ptr.as_ptr().add(offset + written - run),
+            run,
+        );
+        rquickjs::qjs::JS_FreeCString(ctx.as_raw().as_ptr(), ptr);
+    }
+    let result = Object::new(ctx)?;
+    result.set("read", read)?;
+    result.set("written", written)?;
+    Ok(result)
 }

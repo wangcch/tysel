@@ -333,7 +333,11 @@ fn run_worker(
             request_id,
             Duration::from_millis(config.request_timeout_ms.max(100)),
         )?;
-        let _ = job_result;
+        // Failed body reads can leave promise/stream cycles holding buffers.
+        // Reclaim them after native operations and request roots are cleared.
+        if job_result.is_err() {
+            runtime.run_gc();
+        }
         drop(pending);
     }
 

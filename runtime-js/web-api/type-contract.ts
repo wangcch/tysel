@@ -11,5 +11,9 @@ export function checkStreamTypes(api: TyselWebApiGlobals) {
   const response = new api.Response(new api.ReadableStream<Uint8Array>());
   const cookie: string[] = response.headers.getSetCookie();
   const id: string = api.crypto.randomUUID();
+  const encoded = new api.TextEncoder().encodeInto("hello", new Uint8Array(8));
+  const redirect = api.Response.redirect("https://example.com/", 307);
+  const errorType: "default" | "error" = api.Response.error().type;
+  void [encoded.read, encoded.written, redirect, errorType];
   return { done, cookie, id };
 }

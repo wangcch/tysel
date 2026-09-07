@@ -31,7 +31,8 @@
         "live sorted iteration across header mutations",
         "iterable pair initialization",
         "HTTP token and CR/LF validation",
-        "independent Set-Cookie values and getSetCookie snapshots"
+        "independent Set-Cookie values and getSetCookie snapshots",
+        "immutable headers on Response.redirect and Response.error results"
       ],
       "unsupported": [
         "browser header guards"
@@ -49,7 +50,10 @@
         "UTF-8 decoding after byte collection, including split code points and BOM handling",
         "Tysel response chunk arrays with snapshotted string/ArrayBuffer/ArrayBufferView elements",
         "lazy ReadableStream body access with locking and disturbance",
-        "Response with a ReadableStream of Uint8Array chunks, native backpressure and cancellation"
+        "Response with a ReadableStream of Uint8Array chunks, native backpressure and cancellation",
+        "Response.redirect and Response.error with immutable headers and clone preservation",
+        "response status range and null-body status validation; status 101 only after tysel.acceptWebSocket",
+        "null-body helpers are repeatable and do not set bodyUsed"
       ],
       "unsupported": [
         "formData/blob helpers",
@@ -63,11 +67,11 @@
       "supported": [
         "UTF-8 encode and decode",
         "stateful UTF-8 decode with stream option and final flush",
-        "TextDecoderStream over TransformStream"
+        "TextDecoderStream over TransformStream",
+        "TextEncoder.encodeInto with UTF-16 read counts, scalar replacement and bounded scratch storage"
       ],
       "unsupported": [
-        "legacy encodings",
-        "TextEncoder.encodeInto"
+        "legacy encodings"
       ]
     },
     {

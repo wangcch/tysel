@@ -142,6 +142,7 @@ export interface TyselRequest extends TyselBody {
 export interface TyselResponse extends TyselBody {
   readonly body: Streams.ReadableStream<Uint8Array> | null;
   readonly status: number;
+  readonly type: "default" | "error";
   readonly ok: boolean;
   readonly headers: TyselHeaders;
   clone(): TyselResponse;
@@ -205,6 +206,7 @@ export interface TyselCrypto {
 export interface TyselTextEncoder {
   readonly encoding: "utf-8";
   encode(input?: string): Uint8Array;
+  encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
 }
 
 export interface TyselTextDecoder {
@@ -235,6 +237,8 @@ export interface TyselWebApiGlobals {
   Response: {
     new (body?: TyselBodyInit | readonly TyselBodyInit[] | Streams.ReadableStream<Uint8Array> | null, init?: TyselResponseInit): TyselResponse;
     json(data: unknown, init?: TyselResponseInit): TyselResponse;
+    error(): TyselResponse;
+    redirect(url: string, status?: number): TyselResponse;
   };
   AbortController: new () => TyselAbortController;
   AbortSignal: {

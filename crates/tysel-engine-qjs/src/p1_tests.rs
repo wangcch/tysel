@@ -664,3 +664,79 @@ fn p1_headers_live_iteration_tracks_mutation() {
     })()"#,config()).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
+
+#[test]
+fn next_encode_into_matches_utf8_and_view_boundaries() {
+    let result=eval(r#"(()=>{
+      const encoder=new TextEncoder();
+      if(String(encoder.encode('\ud800'))!=='239,191,189'||new TextDecoder().decode(encoder.encode(null))!=='null')return false;
+      const inputs=['','ASCII','é中😀','\ud800','\udc00','A\ud800B','é中\ud800\ud800😀\udc00Z','\udc00é中\ud800','中'.repeat(16383)+'\ud800😀\udc00Z','a'.repeat(16383)+'😀Z','é'.repeat(20000),'中😀'.repeat(10000)];
+      for(const input of inputs)for(const capacity of [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,16384,49149,49150,49151,49152,49153,65536]) {
+        const storage=new Uint8Array(capacity+4).fill(99), target=storage.subarray(2,2+capacity);
+        const {read,written}=encoder.encodeInto(input,target);
+        const expected=encoder.encode(input.slice(0,read));
+        if(expected.length!==written||read>input.length||written>capacity)return false;
+        for(let i=0;i<written;i++)if(target[i]!==expected[i])return false;
+        for(let i=written;i<capacity;i++)if(target[i]!==99)return false;
+        if(storage[0]!==99||storage[1]!==99||storage[capacity+2]!==99)return false;
+        if(read<input.length && encoder.encode(String.fromCodePoint(input.codePointAt(read))).length<=capacity-written)return false;
+      }
+      for(const bad of [null,{},new Uint16Array(4),new DataView(new ArrayBuffer(4))]) {
+        try{encoder.encodeInto('a',bad);return false;}catch(e){if(!(e instanceof TypeError))return false;}
+      }
+      try{encoder.encodeInto(Symbol('x'),new Uint8Array(4));return false;}catch(e){if(!(e instanceof TypeError))return false;}
+      return true;
+    })()"#,IsolateConfig{request_timeout_ms:5000,cpu_ms_per_turn:5000,..config()}).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn next_response_helpers_and_status_contract() {
+    let result=eval(r#"(async()=>{
+      for(const status of [0,101,199,600]){try{new Response(null,{status});return false;}catch(e){if(!(e instanceof RangeError))return false;}}
+      for(const status of [204,205,304]){try{new Response('',{status});return false;}catch(e){if(!(e instanceof TypeError))return false;}}
+      const redirect=Response.redirect('https://local:443/a',307);
+      if(redirect.status!==307||redirect.headers.get('location')!=='https://local/a')return false;
+      for(const response of [redirect,redirect.clone(),Response.error(),Response.error().clone()]) {
+        try{response.headers.set('a','b');return false;}catch(e){if(!(e instanceof TypeError))return false;}
+        if(await response.text()!==''||response.bodyUsed||await response.text()!=='')return false;
+      }
+      return !Response.error().ok && Response.error().type==='error';
+    })()"#,config()).unwrap();
+    assert_eq!(result, Value::Bool(true));
+    let pool =
+        IsolatePool::spawn(1, "export default {fetch(){return Response.error();}}", config())
+            .unwrap();
+    assert!(
+        pool.dispatch_sync(HttpRequest {
+            method: "GET".into(),
+            url: "http://local/".into(),
+            headers: vec![],
+            body: vec![],
+            request_id: 0
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn next_review_status_getter_and_typed_array_length() {
+    let result=eval(r#"(()=>{
+      for(const status of [undefined,200]) {
+        let reads=0;
+        const response=new Response('body',{get status(){if(++reads>1)throw new Error('read twice');return status;}});
+        if(response.status!==200||reads!==1)return false;
+      }
+      const encoder=new TextEncoder();
+      class Shadowed extends Uint8Array {get byteLength(){throw new Error('shadowed getter');}}
+      for(const mode of ['zero','throw','subclass']) {
+        const target=mode==='subclass'?new Shadowed(8):new Uint8Array(8);
+        if(mode==='zero')Object.defineProperty(target,'byteLength',{value:0});
+        if(mode==='throw')Object.defineProperty(target,'byteLength',{get(){throw new Error('own getter');}});
+        const result=encoder.encodeInto('abc😀',target);
+        if(result.read!==5||result.written!==7||String(target)!=='97,98,99,240,159,152,128,0')return false;
+      }
+      return true;
+    })()"#,config()).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
