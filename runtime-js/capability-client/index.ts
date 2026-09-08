@@ -87,8 +87,8 @@ export interface DurableStartResult {
 }
 
 export interface DurableControlClient {
-  start(name: string, input?: unknown): DurableStartResult;
-  sendSignal(taskId: string, name: string, payload?: unknown): void;
+  start(name: string, input?: unknown, options?: { idempotencyKey: string }): DurableStartResult;
+  sendSignal(taskId: string, name: string, payload?: unknown, options?: { idempotencyKey: string }): void;
 }
 
 /** Public JavaScript surface installed by the capability-client layer. */

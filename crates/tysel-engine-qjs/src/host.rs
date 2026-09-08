@@ -216,17 +216,23 @@ fn install_inner(
     )?;
     tysel.set(
         "_durableStart",
-        Function::new(ctx.clone(), |ctx, name: String, input_json: String| {
-            crate::control::start_named(&name, &input_json)
-                .map_err(|err| Exception::throw_type(&ctx, &err))
-        })?,
+        Function::new(
+            ctx.clone(),
+            |ctx, name: String, input_json: String, key: Option<String>| {
+                crate::control::start_named(&name, &input_json, key.as_deref())
+                    .map_err(|err| Exception::throw_type(&ctx, &err))
+            },
+        )?,
     )?;
     tysel.set(
         "_durableSendSignal",
-        Function::new(ctx.clone(), |ctx, task_id: String, name: String, payload_json: String| {
-            crate::control::send_signal(&task_id, &name, &payload_json)
-                .map_err(|err| Exception::throw_type(&ctx, &err))
-        })?,
+        Function::new(
+            ctx.clone(),
+            |ctx, task_id: String, name: String, payload_json: String, key: Option<String>| {
+                crate::control::send_signal(&task_id, &name, &payload_json, key.as_deref())
+                    .map_err(|err| Exception::throw_type(&ctx, &err))
+            },
+        )?,
     )?;
     tysel.set(
         "_wsRead",

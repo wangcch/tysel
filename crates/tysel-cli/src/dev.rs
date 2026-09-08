@@ -655,23 +655,27 @@ async fn shutdown_task_service(_service: Option<()>) -> Result<()> {
 }
 
 async fn start_dev_durable(spec: Option<DurableSpec>) -> Result<Option<Arc<DurablePlane>>> {
-    let Some(spec) = spec else {
-        return Ok(None);
-    };
-    if spec.execution_profile.eq_ignore_ascii_case("isolated") {
-        return Ok(None);
-    }
-    if !DurablePlane::requested(&spec.sqlite_path, Some(&spec.root), &spec.source, spec.config)? {
-        return Ok(None);
-    }
-    let Some(store) = DurablePlane::open_store(&spec.sqlite_path, Some(&spec.root))? else {
-        return Ok(None);
-    };
-    if !DurablePlane::should_start(store.as_ref(), &spec.source, spec.config)? {
-        return Ok(None);
-    }
-    let owner = format!("tysel-dev-{}", std::process::id());
-    Ok(Some(DurablePlane::start(store, spec.source, spec.config, owner)?))
+    tokio::task::spawn_blocking(move || {
+        let Some(spec) = spec else {
+            return Ok(None);
+        };
+        if spec.execution_profile.eq_ignore_ascii_case("isolated") {
+            return Ok(None);
+        }
+        if !DurablePlane::requested(&spec.sqlite_path, Some(&spec.root), &spec.source, spec.config)?
+        {
+            return Ok(None);
+        }
+        let Some(store) = DurablePlane::open_store(&spec.sqlite_path, Some(&spec.root))? else {
+            return Ok(None);
+        };
+        if !DurablePlane::should_start(store.as_ref(), &spec.source, spec.config)? {
+            return Ok(None);
+        }
+        let owner = format!("tysel-dev-{}", std::process::id());
+        Ok(Some(DurablePlane::start(store, spec.source, spec.config, owner)?))
+    })
+    .await?
 }
 
 async fn durable_service_failure(plane: Option<&Arc<DurablePlane>>) -> anyhow::Error {
@@ -683,7 +687,10 @@ async fn durable_service_failure(plane: Option<&Arc<DurablePlane>>) -> anyhow::E
 
 async fn shutdown_durable(plane: Option<Arc<DurablePlane>>) -> Result<()> {
     if let Some(plane) = plane {
-        plane.shutdown().await?;
+        let result = plane.shutdown().await;
+        // The synchronous PostgreSQL client also drives its runtime on drop.
+        tokio::task::spawn_blocking(move || drop(plane)).await?;
+        result?;
     }
     Ok(())
 }

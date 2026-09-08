@@ -22,7 +22,10 @@ mod secrets;
 mod task_module;
 mod trust;
 
-pub use control::{DurableControl, configure as configure_durable_control};
+pub use control::{
+    DurableControl, clear_if_current as clear_durable_control_if_current,
+    configure as configure_durable_control,
+};
 pub use durable::{DurableCompletion, DurableSession};
 pub use fetch_policy::configure as configure_fetch_hosts;
 pub use isolate::{

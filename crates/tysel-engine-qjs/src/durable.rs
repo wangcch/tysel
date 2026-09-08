@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use tysel_durable::{
-    DurableError, DurableStore, EventKind, ReplayCursor, ReplayError, WakeupClaim,
+    DurableError, DurableStore, EventKind, ExecutionClaim, ReplayCursor, ReplayError, WakeupClaim,
 };
 use tysel_task::TaskId;
 
@@ -20,6 +20,25 @@ struct SessionInner {
     suspended: bool,
     lease_until_ms: Option<u64>,
     result_json: Option<serde_json::Value>,
+    replayed_sleep: Option<u64>,
+    storage_error: Option<DurableError>,
+}
+
+impl SessionInner {
+    fn check_storage(&self) -> Result<(), String> {
+        match &self.storage_error {
+            Some(error) => Err(error.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    fn capture_storage(&mut self, error: DurableError) -> String {
+        let message = error.to_string();
+        if self.storage_error.is_none() {
+            self.storage_error = Some(error);
+        }
+        message
+    }
 }
 
 struct WakeupToken {
@@ -38,6 +57,7 @@ impl DurableSession {
     pub(crate) fn record_input_json(&self, input_json: &str) -> Result<String, String> {
         const INPUT_KEY: &str = "$tysel:task-input";
         let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        inner.check_storage()?;
         if let Some(event) =
             inner.replay.consume_event(EventKind::Step, INPUT_KEY).map_err(replay_error)?
         {
@@ -53,7 +73,7 @@ impl DurableSession {
                 input_json,
                 unix_time_ms()?,
             )
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| inner.capture_storage(err))?;
         inner.next_sequence = stored.sequence.saturating_add(1);
         Ok(stored.payload_json().into())
     }
@@ -89,6 +109,21 @@ impl DurableSession {
         }
         let task_id = claim.task_id;
         Self::load(store, task_id, Some(claim))
+    }
+
+    pub fn from_execution(
+        store: Arc<dyn DurableStore>,
+        claim: &ExecutionClaim,
+    ) -> Result<Self, String> {
+        let scoped = store.execution_store(claim);
+        let session = if let Some(wakeup) = &claim.wakeup {
+            Self::from_claim(scoped, wakeup.clone())?
+        } else {
+            Self::load(scoped, claim.task_id, None)?
+        };
+        session.inner.lock().map_err(|_| "durable session lock")?.lease_until_ms =
+            Some(claim.lease_until_ms);
+        Ok(session)
     }
 
     fn load(
@@ -135,6 +170,8 @@ impl DurableSession {
                 suspended: false,
                 lease_until_ms,
                 result_json: None,
+                replayed_sleep: None,
+                storage_error: None,
             })),
         })
     }
@@ -142,7 +179,13 @@ impl DurableSession {
     pub(crate) fn lookup_json(&self, kind: &str, key: &str) -> Result<String, String> {
         let kind = parse_kind(kind)?;
         let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        inner.check_storage()?;
         let event = inner.replay.consume_event(kind, key).map_err(replay_error)?.cloned();
+        inner.replayed_sleep = if kind == EventKind::Sleep {
+            event.as_ref().map(|event| event.sequence)
+        } else {
+            None
+        };
         Ok(match event {
             Some(event) => format!(
                 r#"{{"found":true,"payload":{},"sequence":{},"recordedAtMs":{}}}"#,
@@ -156,6 +199,7 @@ impl DurableSession {
 
     pub(crate) fn find_retry_outcome_json(&self, key: &str) -> Result<String, String> {
         let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        inner.check_storage()?;
         let event = inner.replay.consume_through(EventKind::Retry, key).cloned();
         Ok(match event {
             Some(event) => format!(
@@ -177,6 +221,7 @@ impl DurableSession {
     ) -> Result<(), String> {
         let kind = parse_kind(kind)?;
         let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        inner.check_storage()?;
         let stored = inner
             .store
             .append_event_json_at(
@@ -187,7 +232,7 @@ impl DurableSession {
                 payload_json,
                 recorded_at_ms,
             )
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| inner.capture_storage(err))?;
         inner.next_sequence = stored.sequence.saturating_add(1);
         Ok(())
     }
@@ -200,6 +245,7 @@ impl DurableSession {
         wake_at_ms: u64,
     ) -> Result<(), String> {
         let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        inner.check_storage()?;
         let stored = inner
             .store
             .append_event_json_with_wakeup_at(
@@ -210,7 +256,7 @@ impl DurableSession {
                 recorded_at_ms,
                 wake_at_ms,
             )
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| inner.capture_storage(err))?;
         inner.next_sequence = stored.sequence.saturating_add(1);
         inner.active_wakeup =
             Some(WakeupToken { sequence: stored.sequence, kind: WakeupKind::Sleep, claim: None });
@@ -220,6 +266,16 @@ impl DurableSession {
 
     pub(crate) fn complete_sleep(&self) -> Result<(), String> {
         let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        inner.check_storage()?;
+        if let Some(sequence) = inner.replayed_sleep.take()
+            && !inner
+                .active_wakeup
+                .as_ref()
+                .is_some_and(|token| token.kind == WakeupKind::Sleep && token.sequence == sequence)
+        {
+            return Ok(());
+        }
+
         let token = inner
             .active_wakeup
             .as_ref()
@@ -235,7 +291,7 @@ impl DurableSession {
                 token.claim.as_ref().map(|claim| claim.lease_owner.as_str()),
                 unix_time_ms()?,
             )
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| inner.capture_storage(err))?;
         if !completed {
             return Err("durable wakeup ownership was lost".into());
         }
@@ -246,6 +302,7 @@ impl DurableSession {
 
     pub(crate) fn poll_signal_json(&self, signal_name: &str) -> Result<String, String> {
         let mut inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        inner.check_storage()?;
         let claim = inner
             .active_wakeup
             .as_ref()
@@ -254,7 +311,7 @@ impl DurableSession {
         let event = inner
             .store
             .poll_signal(inner.task_id, inner.next_sequence, signal_name, unix_time_ms()?, claim)
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| inner.capture_storage(err))?;
         let response = if let Some(event) = event {
             inner.next_sequence = event.sequence.saturating_add(1);
             if inner.active_wakeup.as_ref().is_some_and(|token| {
@@ -269,6 +326,15 @@ impl DurableSession {
             json!({ "found": false })
         };
         serde_json::to_string(&response).map_err(|err| err.to_string())
+    }
+
+    /// Preserve host storage failures across the JavaScript exception boundary.
+    /// The dispatcher checks this even when user code catches the exception.
+    pub fn take_storage_error(&self) -> Option<DurableError> {
+        match self.inner.lock() {
+            Ok(mut inner) => inner.storage_error.take(),
+            Err(_) => Some(DurableError::LockPoisoned),
+        }
     }
 
     pub fn task_id(&self) -> TaskId {
@@ -289,7 +355,8 @@ impl DurableSession {
     /// history or engine state is retained by this handle.
     pub fn completion_handle(&self) -> Result<DurableCompletion, DurableError> {
         let inner = self.inner.lock().map_err(|_| DurableError::LockPoisoned)?;
-        if inner.replay.ensure_consumed().is_err()
+        if inner.storage_error.is_some()
+            || inner.replay.ensure_consumed().is_err()
             || inner.active_wakeup.is_some()
             || inner.suspended
         {
@@ -316,6 +383,7 @@ impl DurableSession {
 
     pub(crate) fn ensure_consumed(&self) -> Result<(), String> {
         let inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
+        inner.check_storage()?;
         inner.replay.ensure_consumed().map_err(replay_error)?;
         // Storage checks belong to terminal persistence, where availability
         // errors can be retried with the computed result. Keep this check local.
@@ -341,7 +409,18 @@ impl DurableCompletion {
 
     pub fn complete(&self, value: &serde_json::Value) -> Result<bool, DurableError> {
         if let Some(until) = self.lease_until_ms {
-            return self.store.complete_task_before(self.task_id, self.next_sequence, value, until);
+            let result =
+                self.store.complete_task_before(self.task_id, self.next_sequence, value, until);
+            // A deadline can expire inside the completion transaction after its
+            // initial fencing check. Normalize that case to lost authority too.
+            if matches!(&result, Err(DurableError::TaskSuspended { .. }))
+                && std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .is_ok_and(|now| now.as_millis() >= u128::from(until))
+            {
+                return Err(DurableError::ExecutionLeaseLost);
+            }
+            return result;
         }
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -423,7 +502,7 @@ mod completion_tests {
         store.put_program(task_id, "42", 0).unwrap();
         let session = DurableSession::new(store.clone(), task_id).unwrap();
         session.inner.lock().unwrap().lease_until_ms = Some(0);
-        assert!(matches!(session.complete(&json!(42)), Err(DurableError::TaskSuspended { .. })));
+        assert!(matches!(session.complete(&json!(42)), Err(DurableError::ExecutionLeaseLost)));
         assert!(store.completion(task_id).unwrap().is_none());
         store.complete_task(task_id, 0, &json!(42), 1).unwrap();
         assert!(session.complete(&json!(42)).unwrap());

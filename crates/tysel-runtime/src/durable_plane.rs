@@ -9,13 +9,14 @@ use tokio::task::JoinHandle;
 use tysel_durable::{DurableError, DurableStore, POSTGRES_URL_ENV, PostgresStore, SqliteStore};
 use tysel_engine::{IsolateConfig, Value};
 use tysel_engine_qjs::{
-    DurableControl, configure_durable_control, encode_durable_export, inspect_durable_exports,
+    DurableControl, clear_durable_control_if_current, configure_durable_control,
+    encode_durable_export, inspect_durable_exports,
 };
 use tysel_task::TaskId;
 
 use crate::{
-    DispatchError, DurableDispatcher, DurablePoller, DurableProgramCatalog, DurableRun,
-    DurableRunStatus, PollerError, PollerHealth, PollerShutdown, ProgramRegistryError,
+    DispatchError, DurableDispatcher, DurablePoller, DurableRun, DurableRunStatus, PollerError,
+    PollerHealth, PollerShutdown, ProgramRegistryError,
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -24,12 +25,12 @@ const SQLITE_PATH_ENV: &str = "TYSEL_DURABLE_SQLITE_PATH";
 
 pub struct DurablePlane {
     dispatcher: Arc<DurableDispatcher>,
-    catalog: DurableProgramCatalog,
     source: RwLock<Arc<str>>,
     config: IsolateConfig,
     shutdown: PollerShutdown,
     health: watch::Receiver<PollerHealth>,
     join: Mutex<Option<JoinHandle<Result<(), PollerError>>>>,
+    hooks: Mutex<std::sync::Weak<DurableControl>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -139,7 +140,6 @@ impl DurablePlane {
         let lease_duration_ms = config.request_timeout_ms.saturating_add(5_000).max(1_000);
         let dispatcher =
             Arc::new(DurableDispatcher::new(store.clone(), owner, lease_duration_ms, config)?);
-        let catalog = DurableProgramCatalog::new(store);
         let poller =
             DurablePoller::new_persistent_modules(dispatcher.clone(), POLL_INTERVAL, POLL_BATCH)?;
         let shutdown = PollerShutdown::default();
@@ -173,12 +173,12 @@ impl DurablePlane {
         });
         let plane = Arc::new(Self {
             dispatcher,
-            catalog,
             source: RwLock::new(Arc::from(source)),
             config,
             shutdown,
             health,
             join: Mutex::new(Some(join)),
+            hooks: Mutex::new(std::sync::Weak::new()),
         });
         plane.install_hooks()?;
         Ok(plane)
@@ -213,17 +213,30 @@ impl DurablePlane {
 
     fn install_hooks(self: &Arc<Self>) -> Result<(), DurablePlaneError> {
         let plane = self.clone();
-        configure_durable_control(Some(Arc::new(DurableControl {
-            start: Box::new(move |name, input| plane.start_named(name, input)),
+        let hooks = Arc::new(DurableControl {
+            start: Box::new(move |name, input, key| plane.start_named_with_key(name, input, key)),
             send_signal: {
                 let plane = self.clone();
-                Box::new(move |task_id, name, payload| plane.send_signal(task_id, name, payload))
+                Box::new(move |task_id, name, payload, key| {
+                    plane.send_signal_with_key(task_id, name, payload, key)
+                })
             },
-        })));
+        });
+        *self.hooks.lock().map_err(|_| DurablePlaneError::Poisoned)? = Arc::downgrade(&hooks);
+        configure_durable_control(Some(hooks));
         Ok(())
     }
 
     pub fn start_named(&self, name: &str, input_json: &str) -> Result<String, String> {
+        self.start_named_with_key(name, input_json, None)
+    }
+
+    pub fn start_named_with_key(
+        &self,
+        name: &str,
+        input_json: &str,
+        key: Option<&str>,
+    ) -> Result<String, String> {
         if self.health() != PollerHealth::Healthy {
             return Err(DurablePlaneError::Unavailable.to_string());
         }
@@ -240,21 +253,51 @@ impl DurablePlane {
         }
         let wrapped = encode_durable_export(name, source.as_ref());
         let slot = self.dispatcher.reserve().map_err(|error| error.to_string())?;
-        let task_id = next_task_id();
-        self.catalog.register_module(task_id, wrapped.clone()).map_err(|err| err.to_string())?;
-        encode_run(self.dispatcher.start_module_reserved(task_id, &wrapped, input_json, slot))
+        let generated = next_task_id().to_string();
+        let key = key.unwrap_or(&generated);
+        let task_id = tysel_durable::admission_task_id(key).map_err(|error| error.to_string())?;
+        self.dispatcher
+            .store()
+            .admit_module(
+                task_id,
+                key,
+                &wrapped,
+                input_json,
+                unix_time_ms().map_err(|e| e.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+        match self
+            .dispatcher
+            .start_admitted(task_id, &wrapped, slot)
+            .map_err(|error| error.to_string())?
+        {
+            Some(run) => encode_run(run),
+            None => Ok(json!({"status":"accepted","taskId":task_id.to_string()}).to_string()),
+        }
     }
 
     pub fn send_signal(&self, task_id: &str, name: &str, payload_json: &str) -> Result<(), String> {
+        self.send_signal_with_key(task_id, name, payload_json, None)
+    }
+
+    pub fn send_signal_with_key(
+        &self,
+        task_id: &str,
+        name: &str,
+        payload_json: &str,
+        key: Option<&str>,
+    ) -> Result<(), String> {
         let task_id = parse_task_id(task_id)?;
         let payload: JsonValue = serde_json::from_str(payload_json)
             .map_err(|err| format!("durable signal payload must be JSON: {err}"))?;
         let now_ms = unix_time_ms().map_err(|err| err.to_string())?;
-        self.dispatcher
-            .store()
-            .send_signal(task_id, name, &payload, now_ms)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
+        let store = self.dispatcher.store();
+        match key {
+            Some(key) => store.send_signal_once(task_id, name, &payload, key, now_ms),
+            None => store.send_signal(task_id, name, &payload, now_ms),
+        }
+        .map(|_| ())
+        .map_err(|err| err.to_string())
     }
 
     pub fn health(&self) -> PollerHealth {
@@ -278,7 +321,9 @@ impl DurablePlane {
     }
 
     pub async fn shutdown(&self) -> Result<(), DurablePlaneError> {
-        configure_durable_control(None);
+        clear_durable_control_if_current(
+            &*self.hooks.lock().map_err(|_| DurablePlaneError::Poisoned)?,
+        );
         self.shutdown.cancel();
         let join = self.join.lock().map_err(|_| DurablePlaneError::Poisoned)?.take();
         if let Some(join) = join {
@@ -364,6 +409,71 @@ fn resolve_path(path: &str, root: Option<&Path>) -> PathBuf {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn task_boundary_error_does_not_stop_scheduler_or_accept_failed_retry() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let plane = DurablePlane::start(store.clone(), r#"
+          export default {durable: {
+            async bad(ctx) {await ctx.sleep(1);return await ctx.effect('x'.repeat(257),async()=>42)},
+            async good() {return 42}
+          }};
+        "#.into(), IsolateConfig {request_timeout_ms:1000,..Default::default()}, "boundary-test").unwrap();
+        let first: JsonValue = serde_json::from_str(
+            &plane.start_named_with_key("bad", "null", Some("bad-key")).unwrap(),
+        )
+        .unwrap();
+        let id = parse_task_id(first["taskId"].as_str().unwrap()).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !store.execution_failed(id).unwrap() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(plane.health(), PollerHealth::Healthy);
+        let error = plane.start_named_with_key("bad", "null", Some("bad-key")).unwrap_err();
+        assert!(error.contains("already failed"), "{error}");
+        let good: JsonValue = serde_json::from_str(
+            &plane.start_named_with_key("good", "null", Some("good-key")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(good["value"].as_f64(), Some(42.0));
+        plane.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn retry_sleep_then_rejected_approval_replays_to_completion() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let plane=DurablePlane::start(store.clone(),r#"
+          export default {durable:{async job(ctx) {
+            await ctx.retry({maxAttempts:2,delay:1},async attempt=>{if(attempt===1)throw new Error('retry');return true;});
+            return await ctx.waitForSignal('approval');
+          }}};
+        "#.into(),IsolateConfig{request_timeout_ms:1_000,cpu_ms_per_turn:500,..Default::default()},"retry-approval").unwrap();
+        let result: JsonValue = serde_json::from_str(
+            &plane.start_named_with_key("job", "null", Some("retry-approval")).unwrap(),
+        )
+        .unwrap();
+        let id = parse_task_id(result["taskId"].as_str().unwrap()).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while store.signal_wait(id).unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        plane.send_signal_with_key(&id.to_string(), "approval", "false", Some("reject-1")).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while store.completion(id).unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(store.completion(id).unwrap().unwrap().value, json!(false));
+        plane.shutdown().await.unwrap();
+    }
 
     #[tokio::test]
     async fn scheduler_recovers_after_store_error_without_restart() {

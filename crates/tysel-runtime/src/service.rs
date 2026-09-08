@@ -279,14 +279,25 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
             Some(service)
         }
     };
-    let durable = start_durable_plane(
-        &tap.manifest.execution_profile,
-        &tap.manifest.sqlite_path,
-        None,
-        &bundle,
-        config,
-        metadata.as_ref().map(|metadata| !metadata.durable_exports.is_empty()),
-    )?;
+    let durable = {
+        let execution_profile = tap.manifest.execution_profile.clone();
+        let sqlite_path = tap.manifest.sqlite_path.clone();
+        let source = bundle.clone();
+        let has_durable_exports =
+            metadata.as_ref().map(|metadata| !metadata.durable_exports.is_empty());
+        tokio::task::spawn_blocking(move || {
+            start_durable_plane(
+                &execution_profile,
+                &sqlite_path,
+                None,
+                &source,
+                config,
+                has_durable_exports,
+            )
+        })
+        .await
+        .map_err(|error| io::Error::other(error.to_string()))??
+    };
     if durable.is_some() {
         println!("tysel durable on");
     }
@@ -341,7 +352,7 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
     }
     // Keep capability and durable hooks alive while admitted HTTP handlers finish.
     let http_result = if server_finished { Ok(()) } else { server.await };
-    let durable_result = shutdown_durable(durable.as_ref()).await;
+    let durable_result = shutdown_durable(durable).await;
     #[cfg(unix)]
     let task_result = match task_service {
         Some(service) => service.shutdown().await,
@@ -400,9 +411,14 @@ fn start_durable_plane(
     Ok(Some(DurablePlane::start(store, bundle.to_owned(), config, owner)?))
 }
 
-async fn shutdown_durable(plane: Option<&std::sync::Arc<DurablePlane>>) -> Result<(), StubError> {
+async fn shutdown_durable(plane: Option<std::sync::Arc<DurablePlane>>) -> Result<(), StubError> {
     if let Some(plane) = plane {
-        plane.shutdown().await?;
+        let result = plane.shutdown().await;
+        // PostgreSQL pool destruction must not block an async runtime thread.
+        tokio::task::spawn_blocking(move || drop(plane))
+            .await
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        result?;
     }
     Ok(())
 }

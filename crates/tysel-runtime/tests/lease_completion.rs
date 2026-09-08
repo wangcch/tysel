@@ -43,7 +43,7 @@ fn completion_rejects_lease_expiry_while_waiting_for_sqlite_writer() {
         now() - until,
         persisted.is_some()
     );
-    assert!(matches!(result, Err(tysel_durable::DurableError::TaskSuspended { .. })));
+    assert!(matches!(result, Err(tysel_durable::DurableError::ExecutionLeaseLost)));
     assert!(persisted.is_none());
     assert_eq!(store.program_count().unwrap(), 1);
     drop(blocker);

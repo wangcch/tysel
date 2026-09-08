@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 use tysel_durable::SqliteStore;
-use tysel_durable::{DurableError, DurableStore, WakeupClaim};
+use tysel_durable::{DurableError, DurableStore, ExecutionClaim, WakeupClaim};
 use tysel_engine::{EngineError, IsolateConfig, Value};
 use tysel_engine_qjs::{DurableCompletion, DurableSession, eval_durable, eval_durable_module};
 use tysel_task::TaskId;
@@ -83,9 +83,9 @@ impl DurableDispatcher {
         match completion.complete(&json) {
             Ok(_) => Ok(DurableRunStatus::Completed(value)),
             Err(error) => {
-                // Retain the outcome, never rerun the handler to repair storage.
+                // Retry the retained outcome while this completion authority is valid.
                 if !error.is_retryable() {
-                    return Err(DurableRunError::Store(error));
+                    return Err(DurableRunError::boundary(error));
                 }
                 let json = serde_json::to_string(&json)
                     .map_err(|error| DurableRunError::Session(error.to_string()))?;
@@ -114,8 +114,16 @@ impl DurableDispatcher {
         for task_id in ids {
             let entry = &pending[&task_id];
             let json = serde_json::from_str(&entry.json).expect("validated completion JSON");
-            if let Err(error) = entry.completion.complete(&json) {
-                return (runs, Some(error.into()));
+            match entry.completion.complete(&json) {
+                Ok(_) => {}
+                Err(DurableError::ExecutionLeaseLost) => {
+                    // This result no longer has write authority. Release its slot;
+                    // persisted execution eligibility lets the scheduler reclaim
+                    // the original task and replay its recorded boundaries.
+                    pending.remove(&task_id);
+                    continue;
+                }
+                Err(error) => return (runs, Some(error.into())),
             }
             pending.remove(&task_id);
             runs.push(DurableRun {
@@ -189,22 +197,101 @@ impl DurableDispatcher {
         DurableRun { task_id, result }
     }
 
+    pub(crate) fn start_admitted(
+        &self,
+        task_id: TaskId,
+        source: &str,
+        slot: CompletionSlot,
+    ) -> Result<Option<DurableRun>, DispatchError> {
+        if let Some(completion) = self.store.completion(task_id)? {
+            return Ok(Some(DurableRun {
+                task_id,
+                result: Ok(DurableRunStatus::Completed(value_from_json(completion.value))),
+            }));
+        }
+        let Some(claim) =
+            self.store.claim_execution(task_id, &self.owner, self.lease_duration_ms)?
+        else {
+            if self.store.execution_failed(task_id)? {
+                return Ok(Some(DurableRun { task_id, result: Err(DurableRunError::TaskFailed) }));
+            }
+            return Ok(None);
+        };
+        Ok(Some(self.execute_managed(claim, source, true, slot)))
+    }
+
+    fn execute_managed(
+        &self,
+        claim: ExecutionClaim,
+        source: &str,
+        module: bool,
+        slot: CompletionSlot,
+    ) -> DurableRun {
+        let task_id = claim.task_id;
+        let result = DurableSession::from_execution(self.store.clone(), &claim)
+            .map_err(DurableRunError::Session)
+            .and_then(|session| {
+                if module {
+                    self.evaluate_module(source, "null", session, slot)
+                } else {
+                    let result = eval_durable(source, self.isolate, session.clone());
+                    if let Some(error) = session.take_storage_error() {
+                        return Err(DurableRunError::boundary(error));
+                    }
+                    match result {
+                        Ok(value) => self.finish(session, value, slot),
+                        Err(EngineError::Suspended) => Ok(DurableRunStatus::Suspended),
+                        Err(error) => Err(DurableRunError::Engine(error)),
+                    }
+                }
+            });
+        let transition = match &result {
+            Ok(DurableRunStatus::Suspended) => self.store.finish_execution(&claim, false),
+            Err(
+                DurableRunError::Store(_)
+                | DurableRunError::Session(_)
+                | DurableRunError::LeaseLost,
+            ) => Ok(()), // retained completion retries retain this lease
+            Err(_) => self.store.finish_execution(&claim, true),
+            _ => Ok(()),
+        };
+        DurableRun {
+            task_id,
+            result: match transition {
+                Ok(()) => result,
+                Err(error) => Err(DurableRunError::boundary(error)),
+            },
+        }
+    }
+
     /// Claim and execute one exact registered task if its wakeup is due.
     pub fn dispatch_task(
         &self,
         task_id: TaskId,
         script: &str,
     ) -> Result<Option<DurableRun>, DispatchError> {
-        let Some(claim) = self.store.claim_wakeup(
-            task_id,
-            unix_time_ms()?,
-            &self.owner,
-            self.lease_duration_ms,
-        )?
+        // Caller-owned in-memory registries retain their low-level wakeup contract.
+        if self.store.program(task_id)?.is_none() {
+            let Some(claim) = self.store.claim_wakeup(
+                task_id,
+                unix_time_ms()?,
+                &self.owner,
+                self.lease_duration_ms,
+            )?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(self.execute_claim(claim, script)));
+        }
+        let Ok(slot) = self.reserve() else {
+            return Ok(None);
+        };
+        let Some(claim) =
+            self.store.claim_execution(task_id, &self.owner, self.lease_duration_ms)?
         else {
             return Ok(None);
         };
-        Ok(Some(self.execute_claim(claim, script)))
+        Ok(Some(self.execute_managed(claim, script, false, slot)))
     }
 
     pub fn dispatch_module_task(
@@ -212,16 +299,15 @@ impl DurableDispatcher {
         task_id: TaskId,
         source: &str,
     ) -> Result<Option<DurableRun>, DispatchError> {
-        let Some(claim) = self.store.claim_wakeup(
-            task_id,
-            unix_time_ms()?,
-            &self.owner,
-            self.lease_duration_ms,
-        )?
+        let Ok(slot) = self.reserve() else {
+            return Ok(None);
+        };
+        let Some(claim) =
+            self.store.claim_execution(task_id, &self.owner, self.lease_duration_ms)?
         else {
             return Ok(None);
         };
-        Ok(Some(self.execute_module_claim(claim, source)))
+        Ok(Some(self.execute_managed(claim, source, true, slot)))
     }
 
     /// Claim and execute up to `limit` due tasks. The resolver supplies the
@@ -276,21 +362,17 @@ impl DurableDispatcher {
         DurableRun { task_id, result }
     }
 
-    fn execute_module_claim(&self, claim: WakeupClaim, source: &str) -> DurableRun {
-        let task_id = claim.task_id;
-        let result = DurableSession::from_claim(self.store.clone(), claim)
-            .map_err(DurableRunError::Session)
-            .and_then(|session| self.evaluate_module(source, "null", session, self.reserve()?));
-        DurableRun { task_id, result }
-    }
-
     fn evaluate(
         &self,
         script: &str,
         session: DurableSession,
     ) -> Result<DurableRunStatus, DurableRunError> {
         let slot = self.reserve()?;
-        match eval_durable(script, self.isolate, session.clone()) {
+        let result = eval_durable(script, self.isolate, session.clone());
+        if let Some(error) = session.take_storage_error() {
+            return Err(DurableRunError::boundary(error));
+        }
+        match result {
             Ok(value) => {
                 if matches!(&value, Value::Number(number) if !number.is_finite()) {
                     return Err(DurableRunError::Engine(EngineError::Isolate(
@@ -311,7 +393,11 @@ impl DurableDispatcher {
         session: DurableSession,
         slot: CompletionSlot,
     ) -> Result<DurableRunStatus, DurableRunError> {
-        match eval_durable_module(source, input_json, self.isolate, session.clone()) {
+        let result = eval_durable_module(source, input_json, self.isolate, session.clone());
+        if let Some(error) = session.take_storage_error() {
+            return Err(DurableRunError::boundary(error));
+        }
+        match result {
             Ok(value) => self.finish(session, value, slot),
             Err(EngineError::Suspended) => Ok(DurableRunStatus::Suspended),
             Err(error) => Err(DurableRunError::Engine(error)),
@@ -364,6 +450,10 @@ pub enum DurableRunStatus {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DurableRunError {
+    #[error("durable task has already failed; the same admission will not be executed again")]
+    TaskFailed,
+    #[error("durable task boundary: {0}")]
+    Boundary(#[source] DurableError),
     #[error("durable finalization capacity exhausted")]
     FinalizationCapacity,
     #[error("durable completion is pending persistence")]
@@ -378,6 +468,25 @@ pub enum DurableRunError {
     ProgramNotFound,
     #[error("durable wakeup lease was lost")]
     LeaseLost,
+}
+
+impl DurableRunError {
+    fn boundary(error: DurableError) -> Self {
+        match error {
+            DurableError::ExecutionLeaseLost => Self::LeaseLost,
+            DurableError::EventKeyTooLarge
+            | DurableError::EventPayloadTooLarge
+            | DurableError::HistoryEventLimit
+            | DurableError::HistoryByteLimit
+            | DurableError::InvalidSignalName
+            | DurableError::SignalWaitConflict
+            | DurableError::SignalInboxLimit
+            | DurableError::InvalidEventKind(_)
+            | DurableError::IntegerRange { .. }
+            | DurableError::Json(_) => Self::Boundary(error),
+            _ => Self::Store(error),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -426,6 +535,118 @@ mod tests {
 
     fn dispatcher(store: Arc<SqliteStore>, owner: &str) -> DurableDispatcher {
         DurableDispatcher::new(store, owner, 1_000, config()).unwrap()
+    }
+
+    #[test]
+    fn expired_pending_completion_releases_slot_and_recovers_original_history() {
+        let path =
+            std::env::temp_dir().join(format!("tysel-pending-expiry-{}.db", std::process::id()));
+        let store = Arc::new(SqliteStore::open(&path).unwrap());
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let source = "export default async ctx => await ctx.effect('write',async()=>42)";
+        let id = TaskId(910);
+        store.admit_module(id, "pending-expiry", source, "null", 0).unwrap();
+        db.execute_batch("CREATE TRIGGER fail_completion BEFORE INSERT ON durable_completions BEGIN SELECT * FROM missing_completion_table; END;").unwrap();
+        let dispatcher = dispatcher(store.clone(), "pending-expiry");
+        let run =
+            dispatcher.start_admitted(id, source, dispatcher.reserve().unwrap()).unwrap().unwrap();
+        assert!(matches!(run.result, Err(DurableRunError::Store(_))));
+        assert!(dispatcher.has_pending_completions());
+        assert_eq!(store.load_history(id).unwrap().events.len(), 2);
+        std::thread::sleep(Duration::from_millis(1100));
+        let (runs, error) = dispatcher.retry_completions();
+        assert!(error.is_none(), "{error:?}");
+        assert!(runs.is_empty(), "an expired result must not notify completion");
+        assert!(!dispatcher.has_pending_completions(), "expired handle must release its slot");
+        assert!(store.completion(id).unwrap().is_none());
+        db.execute_batch("DROP TRIGGER fail_completion").unwrap();
+        let run = dispatcher.dispatch_module_task(id, source).unwrap().unwrap();
+        assert!(matches!(run.result, Ok(DurableRunStatus::Completed(Value::Number(42.0)))));
+        assert_eq!(store.load_history(id).unwrap().events.len(), 2);
+        assert_eq!(store.completion(id).unwrap().unwrap().value, serde_json::json!(42));
+        drop(dispatcher);
+        drop(db);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn managed_storage_failure_recovers_even_when_javascript_catches_it() {
+        for caught in [false, true] {
+            let path = std::env::temp_dir()
+                .join(format!("tysel-storage-fault-{}-{caught}.db", std::process::id()));
+            let store = Arc::new(SqliteStore::open(&path).unwrap());
+            let db = rusqlite::Connection::open(&path).unwrap();
+            let source = if caught {
+                "export default async ctx => {try {return await ctx.effect('write',async()=>42)} catch {return 99}}"
+            } else {
+                "export default async ctx => await ctx.effect('write',async()=>42)"
+            };
+            let id = TaskId(900);
+            store.admit_module(id, "fault", source, "null", 0).unwrap();
+            db.execute_batch("CREATE TRIGGER fail_effect BEFORE INSERT ON durable_events WHEN NEW.sequence=1 BEGIN SELECT RAISE(FAIL, 'temporary storage fault'); END;").unwrap();
+            let dispatcher = dispatcher(store.clone(), "fault-test");
+            let run = dispatcher
+                .start_admitted(id, source, dispatcher.reserve().unwrap())
+                .unwrap()
+                .unwrap();
+            assert!(matches!(run.result, Err(DurableRunError::Store(_))), "{run:?}");
+            assert!(
+                store.completion(id).unwrap().is_none(),
+                "caught error must not commit fallback"
+            );
+            assert_eq!(
+                db.query_row("SELECT state FROM durable_executions", [], |r| r.get::<_, String>(0))
+                    .unwrap(),
+                "running"
+            );
+            db.execute_batch("DROP TRIGGER fail_effect").unwrap();
+            std::thread::sleep(Duration::from_millis(1100));
+            let due = store
+                .load_due_programs_batch(
+                    unix_time_ms().unwrap(),
+                    tysel_durable::DurableProgramKind::Module,
+                    32,
+                )
+                .unwrap();
+            assert_eq!(due.len(), 1);
+            let run = dispatcher.dispatch_module_task(id, source).unwrap().unwrap();
+            assert!(
+                matches!(run.result, Ok(DurableRunStatus::Completed(Value::Number(42.0)))),
+                "{run:?}"
+            );
+            assert_eq!(store.completion(id).unwrap().unwrap().value, serde_json::json!(42));
+            drop(dispatcher);
+            drop(db);
+            drop(store);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn managed_business_exception_remains_failed() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let source = "export default async () => {throw new Error('business failure')}";
+        let id = TaskId(901);
+        store.admit_module(id, "business", source, "null", 0).unwrap();
+        let dispatcher = dispatcher(store.clone(), "business-test");
+        let run =
+            dispatcher.start_admitted(id, source, dispatcher.reserve().unwrap()).unwrap().unwrap();
+        assert!(matches!(run.result, Err(DurableRunError::Engine(_))));
+        assert!(store.claim_execution(id, "other", 1000).unwrap().is_none());
+        let retry =
+            dispatcher.start_admitted(id, source, dispatcher.reserve().unwrap()).unwrap().unwrap();
+        assert!(matches!(retry.result, Err(DurableRunError::TaskFailed)));
+        assert!(
+            store
+                .load_due_programs_batch(
+                    unix_time_ms().unwrap() + 2000,
+                    tysel_durable::DurableProgramKind::Module,
+                    32
+                )
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
