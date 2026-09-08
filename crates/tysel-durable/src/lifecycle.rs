@@ -118,6 +118,7 @@ impl SqliteStore {
             }
             return Ok(true);
         }
+        self.guard_execution(&tx, task_id)?;
         let Some(source_bytes) = tx
             .query_row(
                 "SELECT length(CAST(source AS BLOB)) FROM durable_programs WHERE task_id = ?1",
@@ -151,6 +152,8 @@ impl SqliteStore {
             params![id.as_slice(), actual, json, to_sql_integer(completed_at_ms, "completed_at_ms")?])?;
         tx.execute("UPDATE durable_program_stats SET active_count = active_count - 1, active_bytes = active_bytes - ?1 WHERE singleton = 1", params![source_bytes])?;
         completion_time(task_id, completed_at_ms, lease_until_ms)?;
+        self.guard_execution(&tx, task_id)?;
+        tx.execute("UPDATE durable_executions SET state='completed',owner=NULL,lease_until_ms=NULL WHERE task_id=?1", params![id.as_slice()])?;
         tx.commit()?;
         Ok(true)
     }
@@ -165,6 +168,7 @@ impl SqliteStore {
             let mut statement = tx.prepare(
                 "SELECT c.task_id, COALESCE(h.payload_bytes, 0) + COALESCE(length(CAST(p.source AS BLOB)), 0) + length(CAST(c.result_json AS BLOB))
                    + COALESCE((SELECT SUM(length(CAST(s.signal_name AS BLOB)) + length(CAST(s.payload AS BLOB))) FROM durable_signal_inbox s WHERE s.task_id = c.task_id), 0)
+                   + COALESCE((SELECT SUM(length(CAST(r.request_key AS BLOB)) + length(CAST(r.signal_name AS BLOB)) + length(CAST(r.payload AS BLOB))) FROM durable_signal_receipts r WHERE r.task_id = c.task_id), 0)
                  FROM durable_completions c
                  LEFT JOIN durable_programs p ON p.task_id = c.task_id
                  LEFT JOIN durable_history_stats h ON h.task_id = c.task_id
@@ -194,6 +198,8 @@ impl SqliteStore {
                 "durable_history_stats",
                 "durable_signal_inbox",
                 "durable_completions",
+                "durable_executions",
+                "durable_signal_receipts",
             ] {
                 tx.execute(&format!("DELETE FROM {table} WHERE task_id = ?1"), params![&id])?;
             }
@@ -366,7 +372,7 @@ mod tests {
         }
         {
             let store = SqliteStore::open(&path).unwrap();
-            assert_eq!(store.log_version().unwrap(), 2);
+            assert_eq!(store.log_version().unwrap(), DURABLE_LOG_VERSION);
             assert_eq!(store.program_count().unwrap(), 1);
             assert_eq!(store.prune_completed(u64::MAX / 2, 100).unwrap(), 0);
             store.complete_task(TaskId(1), 0, &Value::from(1), 10).unwrap();

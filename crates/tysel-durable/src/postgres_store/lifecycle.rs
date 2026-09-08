@@ -76,6 +76,7 @@ impl PostgresStore {
                 }
                 return Ok(true);
             }
+            self.guard_execution(&mut tx, task_id)?;
             let Some(program) = tx.query_opt("SELECT octet_length(source) FROM durable_programs WHERE task_id = $1", &[&&id[..]])? else { return Ok(false); };
             let source_bytes = i64::from(program.get::<_, i32>(0));
             let actual: i64 = tx.query_one("SELECT COALESCE(MAX(sequence) + 1, 0) FROM durable_events WHERE task_id = $1", &[&&id[..]])?.get(0);
@@ -92,6 +93,8 @@ impl PostgresStore {
             tx.execute("INSERT INTO durable_completions (task_id, next_sequence, result_json, completed_at_ms) VALUES ($1, $2, $3, $4)",
                 &[&&id[..], &actual, &json, &to_sql_integer(completed_at_ms, "completed_at_ms")?])?;
             crate::lifecycle::completion_time(task_id, completed_at_ms, lease_until_ms)?;
+            self.guard_execution(&mut tx, task_id)?;
+            tx.execute("UPDATE durable_executions SET state='completed',owner=NULL,lease_until_ms=NULL WHERE task_id=$1", &[&&id[..]])?;
             tx.commit()?;
             Ok(true)
         })
@@ -109,6 +112,7 @@ impl PostgresStore {
             let candidates = client.query(
                 "SELECT c.task_id, COALESCE(h.payload_bytes, 0) + COALESCE(octet_length(p.source), 0) + octet_length(c.result_json)
                    + COALESCE((SELECT SUM(octet_length(s.signal_name) + octet_length(s.payload)) FROM durable_signal_inbox s WHERE s.task_id = c.task_id), 0)
+                   + COALESCE((SELECT SUM(octet_length(r.request_key) + octet_length(r.signal_name) + octet_length(r.payload)) FROM durable_signal_receipts r WHERE r.task_id = c.task_id), 0)
                  FROM durable_completions c
                  LEFT JOIN durable_programs p ON p.task_id = c.task_id
                  LEFT JOIN durable_history_stats h ON h.task_id = c.task_id
@@ -131,7 +135,7 @@ impl PostgresStore {
                     &[&id, &to_sql_integer(before_ms, "before_ms")?],
                 )?.get(0);
                 if !eligible { continue; }
-                for table in ["durable_programs", "durable_events", "durable_history_stats", "durable_signal_inbox", "durable_completions"] {
+                for table in ["durable_programs", "durable_events", "durable_history_stats", "durable_signal_inbox", "durable_completions", "durable_executions", "durable_signal_receipts"] {
                     tx.execute(&format!("DELETE FROM {table} WHERE task_id = $1"), &[&id])?;
                 }
                 // Retain the small synchronization row: deleting a row that another

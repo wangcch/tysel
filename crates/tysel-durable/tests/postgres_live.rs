@@ -183,7 +183,7 @@ fn postgres_v1_migration_keeps_unclassified_work_and_reopens_completion_counters
     }
     {
         let store = PostgresStore::connect(&scoped).unwrap();
-        assert_eq!(store.log_version().unwrap(), 2);
+        assert_eq!(store.log_version().unwrap(), DURABLE_LOG_VERSION);
         assert_eq!(store.program_count().unwrap(), 1);
         assert_eq!(store.prune_completed(100, 100).unwrap(), 0);
         store.complete_task(TaskId(1), 0, &json!(42), 1).unwrap();
@@ -245,5 +245,41 @@ fn postgres_completion_rechecks_lease_after_task_and_quota_lock_waits() {
             store.complete_task_before(id, 0, &json!(43), 0),
             Err(DurableError::TaskCompleted { .. })
         ));
+    }
+}
+
+#[test]
+fn postgres_concurrent_empty_schema_initialization_is_serialized() {
+    let Ok(url) = std::env::var("TYSEL_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let schema = format!(
+        "init_{}_{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    );
+    let mut admin = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    admin.batch_execute(&format!("CREATE SCHEMA {schema}")).unwrap();
+    let scoped_url = format!(
+        "{url}{}options=-csearch_path%3D{schema}",
+        if url.contains('?') { "&" } else { "?" }
+    );
+    let barrier = Arc::new(Barrier::new(8));
+    let workers: Vec<_> = (0..8)
+        .map(|_| {
+            let url = scoped_url.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let store = PostgresStore::connect_with_pool_size(&url, 1)?;
+                assert_eq!(store.log_version()?, DURABLE_LOG_VERSION);
+                Ok::<_, DurableError>(())
+            })
+        })
+        .collect();
+    let results: Vec<_> = workers.into_iter().map(|w| w.join()).collect();
+    admin.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).unwrap();
+    for result in results {
+        result.unwrap().unwrap();
     }
 }

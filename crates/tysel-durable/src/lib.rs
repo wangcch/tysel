@@ -5,7 +5,7 @@ mod postgres_store;
 pub use postgres_store::{POSTGRES_URL_ENV, PostgresStore};
 
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -21,8 +21,10 @@ const MAX_HISTORY_BYTES: usize = 16 * 1_048_576;
 const MAX_PENDING_SIGNALS: usize = 1_000;
 const MAX_LEASE_OWNER_BYTES: usize = 128;
 /// Durable SQLite schema and replay-log contract supported by this runtime.
-pub const DURABLE_LOG_VERSION: u32 = 2;
+pub const DURABLE_LOG_VERSION: u32 = 3;
+mod execution;
 mod lifecycle;
+pub use execution::{ExecutionClaim, admission_task_id};
 pub const MAX_DURABLE_PROGRAM_BYTES: usize = 1_048_576;
 pub const MAX_DURABLE_PROGRAM_TOTAL_BYTES: usize = 64 * 1_048_576;
 pub const MAX_DURABLE_PROGRAMS: usize = 10_000;
@@ -232,6 +234,32 @@ pub struct TaskCompletion {
 /// event/wakeup and signal operations atomic. The synchronous surface is
 /// intentional: callers run durable storage work on blocking worker threads.
 pub trait DurableStore: Send + Sync {
+    /// Persist immutable admission, input and restart eligibility atomically.
+    fn admit_module(
+        &self,
+        task_id: TaskId,
+        key: &str,
+        source: &str,
+        input: &str,
+        now_ms: u64,
+    ) -> Result<(), DurableError>;
+    fn claim_execution(
+        &self,
+        task_id: TaskId,
+        owner: &str,
+        duration_ms: u64,
+    ) -> Result<Option<ExecutionClaim>, DurableError>;
+    fn execution_failed(&self, task_id: TaskId) -> Result<bool, DurableError>;
+    fn execution_store(&self, claim: &ExecutionClaim) -> Arc<dyn DurableStore>;
+    fn finish_execution(&self, claim: &ExecutionClaim, failed: bool) -> Result<(), DurableError>;
+    fn send_signal_once(
+        &self,
+        task_id: TaskId,
+        name: &str,
+        payload: &Value,
+        key: &str,
+        now_ms: u64,
+    ) -> Result<u64, DurableError>;
     fn completion(&self, task_id: TaskId) -> Result<Option<TaskCompletion>, DurableError>;
     /// Persist completion for a registered program. Returns false for unregistered
     /// low-level sessions, which retain the caller-managed lifecycle contract.
@@ -366,7 +394,8 @@ impl DurableProgramKind {
 }
 
 pub struct SqliteStore {
-    connection: Mutex<Connection>,
+    connection: Arc<Mutex<Connection>>,
+    execution: Option<ExecutionClaim>,
 }
 
 impl SqliteStore {
@@ -388,7 +417,7 @@ impl SqliteStore {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys = ON;")?;
         initialize_schema(&mut connection)?;
-        Ok(Self { connection: Mutex::new(connection) })
+        Ok(Self { connection: Arc::new(Mutex::new(connection)), execution: None })
     }
 
     /// Return the durable log contract version recorded in this store.
@@ -516,14 +545,24 @@ impl SqliteStore {
         let connection = self.lock()?;
         let now_ms = to_sql_integer(now_ms, "now_ms")?;
         let mut statement = connection.prepare(
-            "SELECT p.task_id, p.program_kind, p.source, p.source_sha256, p.registered_at_ms
-             FROM durable_programs AS p
-             INNER JOIN durable_wakeups AS w ON w.task_id = p.task_id
-             WHERE w.wake_at_ms <= ?1
-               AND (w.lease_until_ms IS NULL OR w.lease_until_ms <= ?1)
-               AND p.program_kind = ?2
-               AND NOT EXISTS (SELECT 1 FROM durable_completions c WHERE c.task_id = p.task_id)
-             ORDER BY w.wake_at_ms, p.task_id LIMIT ?3",
+            "WITH due AS (
+                SELECT w.task_id, w.wake_at_ms AS due_at
+                FROM durable_wakeups w LEFT JOIN durable_executions r ON r.task_id=w.task_id
+                WHERE w.wake_at_ms <= ?1 AND (w.lease_until_ms IS NULL OR w.lease_until_ms <= ?1)
+                  AND (r.state IS NULL OR r.state IN ('ready','running','suspended'))
+                  AND (r.lease_until_ms IS NULL OR r.lease_until_ms <= ?1)
+                UNION ALL
+                SELECT r.task_id, COALESCE(r.lease_until_ms, 0) AS due_at
+                FROM durable_executions r
+                WHERE r.state IN ('ready','running') AND (r.lease_until_ms IS NULL OR r.lease_until_ms <= ?1)
+                  AND NOT EXISTS(SELECT 1 FROM durable_wakeups w WHERE w.task_id=r.task_id)
+                  AND NOT EXISTS(SELECT 1 FROM durable_signal_waits s WHERE s.task_id=r.task_id)
+             )
+             SELECT p.task_id, p.program_kind, p.source, p.source_sha256, p.registered_at_ms
+             FROM due d JOIN durable_programs p ON p.task_id=d.task_id
+             WHERE p.program_kind=?2
+               AND NOT EXISTS(SELECT 1 FROM durable_completions c WHERE c.task_id=p.task_id)
+             ORDER BY d.due_at, p.task_id LIMIT ?3",
         )?;
         let rows = statement.query_map(
             params![now_ms, kind.as_str(), limit.min(MAX_DURABLE_PROGRAMS) as i64],
@@ -612,6 +651,7 @@ impl SqliteStore {
         let recorded_at_ms = to_sql_integer(recorded_at_ms, "recorded_at_ms")?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.guard_execution(&transaction, task_id)?;
         let sequence = insert_event(
             &transaction,
             task_id,
@@ -620,6 +660,7 @@ impl SqliteStore {
             payload_json,
             recorded_at_ms,
         )?;
+        self.guard_execution(&transaction, task_id)?;
         transaction.commit()?;
         stored_event(task_id, sequence, event, payload_json.into())
     }
@@ -633,6 +674,7 @@ impl SqliteStore {
         let (payload, recorded_at_ms) = validate_event(&event)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.guard_execution(&transaction, task_id)?;
         let sequence = insert_event(
             &transaction,
             task_id,
@@ -641,6 +683,7 @@ impl SqliteStore {
             &payload,
             recorded_at_ms,
         )?;
+        self.guard_execution(&transaction, task_id)?;
         transaction.commit()?;
         stored_event(task_id, sequence, event, payload)
     }
@@ -681,6 +724,7 @@ impl SqliteStore {
         let wake_at_ms = to_sql_integer(wake_at_ms, "wake_at_ms")?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.guard_execution(&transaction, task_id)?;
         let sequence = insert_event(
             &transaction,
             task_id,
@@ -690,6 +734,7 @@ impl SqliteStore {
             recorded_at_ms,
         )?;
         upsert_wakeup(&transaction, task_id, sequence, wake_at_ms)?;
+        self.guard_execution(&transaction, task_id)?;
         transaction.commit()?;
         stored_event(task_id, sequence, event, payload_json.into())
     }
@@ -705,6 +750,7 @@ impl SqliteStore {
         let wake_at_ms_sql = to_sql_integer(wake_at_ms, "wake_at_ms")?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.guard_execution(&transaction, task_id)?;
         let sequence = insert_event(
             &transaction,
             task_id,
@@ -714,6 +760,7 @@ impl SqliteStore {
             recorded_at_ms,
         )?;
         upsert_wakeup(&transaction, task_id, sequence, wake_at_ms_sql)?;
+        self.guard_execution(&transaction, task_id)?;
         transaction.commit()?;
         stored_event(task_id, sequence, event, payload)
     }
@@ -921,7 +968,9 @@ impl SqliteStore {
         lease_owner: Option<&str>,
         now_ms: u64,
     ) -> Result<bool, DurableError> {
-        let connection = self.lock()?;
+        let mut guard = self.lock()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.guard_execution(&connection, task_id)?;
         let id = task_id_bytes(task_id);
         let sequence = to_sql_integer(sequence, "sequence")?;
         let now_ms = to_sql_integer(now_ms, "now_ms")?;
@@ -941,6 +990,8 @@ impl SqliteStore {
                 params![id.as_slice(), sequence],
             )?,
         };
+        self.guard_execution(&connection, task_id)?;
+        connection.commit()?;
         Ok(changed == 1)
     }
 
@@ -1075,6 +1126,17 @@ impl SqliteStore {
         payload: &Value,
         sent_at_ms: u64,
     ) -> Result<u64, DurableError> {
+        self.send_signal_inner(task_id, signal_name, payload, sent_at_ms, None)
+    }
+
+    fn send_signal_inner(
+        &self,
+        task_id: TaskId,
+        signal_name: &str,
+        payload: &Value,
+        sent_at_ms: u64,
+        key: Option<&str>,
+    ) -> Result<u64, DurableError> {
         validate_signal_name(signal_name)?;
         let payload = serde_json::to_string(payload)?;
         if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
@@ -1084,6 +1146,29 @@ impl SqliteStore {
         let id = task_id_bytes(task_id);
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(key) = key {
+            execution::validate_key(key)?;
+            let hash = format!("{:x}", Sha256::digest(payload.as_bytes()));
+            if let Some((name, prior, id)) = transaction.query_row("SELECT signal_name,payload,signal_id FROM durable_signal_receipts WHERE task_id=?1 AND request_key=?2",params![id.as_slice(),key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?))).optional()? {
+                if name != signal_name || prior != hash {return Err(DurableError::AdmissionConflict);}
+                return from_sql_integer(id,"signal_id");
+            }
+            let count: i64 = transaction.query_row(
+                "SELECT COUNT(*) FROM durable_signal_receipts WHERE task_id=?1",
+                params![id.as_slice()],
+                |r| r.get(0),
+            )?;
+            if count >= MAX_HISTORY_EVENTS as i64 {
+                return Err(DurableError::SignalInboxLimit);
+            }
+            if !transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM durable_programs WHERE task_id=?1)",
+                params![id.as_slice()],
+                |row| row.get::<_, bool>(0),
+            )? {
+                return Err(DurableError::AdmissionConflict);
+            }
+        }
         lifecycle::ensure_open(&transaction, task_id)?;
         let (pending_count, pending_bytes) = transaction.query_row(
             "SELECT COUNT(*), COALESCE(SUM(
@@ -1127,6 +1212,9 @@ impl SqliteStore {
                 params![id.as_slice(), sequence, sent_at_ms],
             )?;
         }
+        if let Some(key) = key {
+            transaction.execute("INSERT INTO durable_signal_receipts(task_id,request_key,signal_name,payload,signal_id) VALUES (?1,?2,?3,?4,?5)",params![id.as_slice(),key,signal_name,format!("{:x}",Sha256::digest(payload.as_bytes())),signal_id])?;
+        }
         transaction.commit()?;
         from_sql_integer(signal_id, "signal_id")
     }
@@ -1146,6 +1234,7 @@ impl SqliteStore {
         let id = task_id_bytes(task_id);
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.guard_execution(&transaction, task_id)?;
         lifecycle::ensure_open(&transaction, task_id)?;
         let actual_sequence: i64 = transaction.query_row(
             "SELECT COALESCE(MAX(sequence) + 1, 0)
@@ -1183,6 +1272,7 @@ impl SqliteStore {
             .optional()?;
         let Some((signal_id, payload_json, sent_at_ms)) = queued else {
             register_signal_wait(&transaction, task_id, expected_sequence, signal_name)?;
+            self.guard_execution(&transaction, task_id)?;
             transaction.commit()?;
             return Ok(None);
         };
@@ -1250,6 +1340,7 @@ impl SqliteStore {
              WHERE task_id = ?1 AND sequence = ?2 AND signal_name = ?3",
             params![id.as_slice(), sequence, signal_name],
         )?;
+        self.guard_execution(&transaction, task_id)?;
         transaction.commit()?;
         stored_event(task_id, sequence, event, payload_json).map(Some)
     }
@@ -1260,6 +1351,46 @@ impl SqliteStore {
 }
 
 impl DurableStore for SqliteStore {
+    fn admit_module(
+        &self,
+        id: TaskId,
+        key: &str,
+        source: &str,
+        input: &str,
+        now: u64,
+    ) -> Result<(), DurableError> {
+        self.admit(id, key, source, input, now)
+    }
+    fn claim_execution(
+        &self,
+        id: TaskId,
+        owner: &str,
+        duration: u64,
+    ) -> Result<Option<ExecutionClaim>, DurableError> {
+        self.claim_run(id, owner, duration)
+    }
+    fn execution_failed(&self, task_id: TaskId) -> Result<bool, DurableError> {
+        self.lock()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM durable_executions WHERE task_id=?1 AND state='failed')",
+            params![task_id_bytes(task_id).as_slice()], |row| row.get(0)
+        ).map_err(Into::into)
+    }
+    fn execution_store(&self, claim: &ExecutionClaim) -> Arc<dyn DurableStore> {
+        Arc::new(Self { connection: self.connection.clone(), execution: Some(claim.clone()) })
+    }
+    fn finish_execution(&self, claim: &ExecutionClaim, failed: bool) -> Result<(), DurableError> {
+        self.release_run(claim, failed)
+    }
+    fn send_signal_once(
+        &self,
+        id: TaskId,
+        name: &str,
+        payload: &Value,
+        key: &str,
+        now: u64,
+    ) -> Result<u64, DurableError> {
+        self.send_signal_inner(id, name, payload, now, Some(key))
+    }
     fn completion(&self, task_id: TaskId) -> Result<Option<TaskCompletion>, DurableError> {
         SqliteStore::completion(self, task_id)
     }
@@ -1457,6 +1588,13 @@ impl DurableStore for SqliteStore {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DurableError {
+    #[error("durable execution lease is missing, expired or superseded")]
+    ExecutionLeaseLost,
+    #[error("durable idempotency key conflicts with an existing request")]
+    AdmissionConflict,
+    #[error("durable idempotency key must be 1..=256 bytes")]
+    InvalidIdempotencyKey,
+
     #[error("durable task {task_id} is already completed")]
     TaskCompleted { task_id: TaskId },
     #[error("durable task {task_id} is still suspended or leased")]
@@ -1832,6 +1970,7 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), DurableError> {
          );",
     )?;
     lifecycle::initialize(&transaction)?;
+    execution::initialize(&transaction)?;
     migrate_program_columns(&transaction)?;
     let sequence_added = migrate_wakeup_columns(&transaction)?;
     if sequence_added {
@@ -2166,7 +2305,7 @@ mod tests {
                          key TEXT PRIMARY KEY,
                          value INTEGER NOT NULL
                      );
-                     INSERT INTO tysel_durable_metadata VALUES ('schema_version', 3);",
+                     INSERT INTO tysel_durable_metadata VALUES ('schema_version', 4);",
                 )
                 .unwrap();
         }
@@ -2177,7 +2316,7 @@ mod tests {
         };
         assert!(matches!(
             error,
-            DurableError::UnsupportedLogVersion { found: 3, supported: DURABLE_LOG_VERSION }
+            DurableError::UnsupportedLogVersion { found: 4, supported: DURABLE_LOG_VERSION }
         ));
         let connection = Connection::open(&path).unwrap();
         let events_table_exists: bool = connection
