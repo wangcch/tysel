@@ -87,6 +87,8 @@ pub enum Message {
         body: String,
         #[serde(default)]
         request_id: u64,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
     },
     HttpOk {
         id: u64,
@@ -98,6 +100,8 @@ pub enum Message {
     HttpErr {
         id: u64,
         error: String,
+        #[serde(default)]
+        timed_out: bool,
     },
     CapCall {
         id: u64,
@@ -227,6 +231,7 @@ mod tests {
         write_message(
             &mut buf,
             &Message::Http {
+                timeout_ms: Some(250),
                 id: 3,
                 method: "GET".into(),
                 url: "http://tysel.local/".into(),
@@ -240,6 +245,7 @@ mod tests {
         assert_eq!(
             decoded,
             Message::Http {
+                timeout_ms: Some(250),
                 id: 3,
                 method: "GET".into(),
                 url: "http://tysel.local/".into(),

@@ -104,6 +104,15 @@ Shutdown:
 3. Wait through the configured grace period.
 4. If the process remains, capture logs and process state before forcing it.
 
+On SIGTERM or Ctrl-C, packaged services and `tysel run` close the listener,
+drain HTTP/1 and HTTP/2 connections. Idle sockets
+close immediately. WebSockets receive close code 1001 (Going Away) when the
+transport can send it. Connections that remain after `request_timeout_ms +
+1000` milliseconds are closed forcibly. This HTTP grace is shared across
+connections; task-plane shutdown and telemetry flushing can add time, so keep
+the service-manager grace longer. Development servers use the same draining
+path, with enough grace for the largest timeout seen during reloads.
+
 Clean shutdown flushes OTLP providers and stops the service-owned task plane.
 
 ## Durable Postgres backup and restore

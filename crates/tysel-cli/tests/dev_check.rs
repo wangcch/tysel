@@ -1923,8 +1923,9 @@ export default {
     let error: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(error["error"]["code"], "RUNTIME_ERROR");
     let message = error["error"]["message"].as_str().unwrap();
-    assert!(message.contains("intentional failure"), "{message}");
-    assert!(message.contains("src/index.ts:5"), "{message}");
+    assert_eq!(message, "request execution failed");
+    assert!(!message.contains("intentional failure"), "{message}");
+    assert!(!message.contains("src/index.ts:5"), "{message}");
     assert!(!message.contains("app.js:"), "{message}");
     assert!(error["error"]["requestId"].as_str().is_some_and(|id| id.len() == 16));
 }

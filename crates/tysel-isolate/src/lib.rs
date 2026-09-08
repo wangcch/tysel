@@ -10,6 +10,7 @@ mod landlock;
 mod rlimit;
 mod seccomp;
 mod supervisor;
+mod watchdog;
 mod worker;
 
 pub use handler::{IsolatedHttpPool, IsolatedTaskPool};

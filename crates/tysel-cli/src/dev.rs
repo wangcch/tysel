@@ -18,8 +18,8 @@ use tysel_package::SourceMap;
 #[cfg(unix)]
 use tysel_runtime::ModuleTaskService;
 use tysel_runtime::{
-    AppIsolate, DurablePlane, HttpLimits, RuntimeDiagnostic, SharedPool, handle_stream,
-    spawn_app_isolate,
+    AppIsolate, DurablePlane, HttpLimits, HttpShutdown, RuntimeDiagnostic, SharedPool,
+    handle_stream, spawn_app_isolate,
 };
 use tysel_task_rpc::TaskOutcome;
 
@@ -215,16 +215,22 @@ async fn serve(
     error_format: ErrorFormat,
 ) -> Result<()> {
     let loaded = load_for_serve(&manifest_path, entry.as_deref(), reload)?;
-    let pool = SharedPool::with_server_limits(
+    let shutdown = HttpShutdown::default();
+    let mut grace = loaded.isolate.request_timeout().saturating_add(Duration::from_secs(1));
+    let pool = SharedPool::with_http_limits(
         loaded.isolate,
-        loaded.max_request_bytes,
-        loaded.max_in_flight,
+        HttpLimits {
+            max_request_bytes: loaded.max_request_bytes,
+            max_response_bytes: loaded.max_response_bytes,
+            max_in_flight: loaded.max_in_flight,
+        },
         loaded.websocket,
         loaded.http1,
         loaded.http2,
-        Some(loaded.source_map),
-    );
-    if error_format == ErrorFormat::Json {
+        reload.then_some(loaded.source_map),
+    )
+    .with_shutdown(shutdown.clone());
+    if reload && error_format == ErrorFormat::Json {
         attach_runtime_diagnostics(&pool)?;
     }
     let listener =
@@ -238,17 +244,15 @@ async fn serve(
     }
     print!("{}", listen_announcement(bound));
     io::stdout().flush()?;
-    if reload {
+    let result = if reload {
         report_diagnostics_clear(error_format, 0);
         let mut changes = watch(manifest_path.parent().unwrap_or(Path::new(".")))?;
         let mut diagnostic_generation = 0u64;
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => break,
+                signal = shutdown_signal() => break signal.map_err(Into::into),
                 error = task_service_failure(task_service.as_ref()) => {
-                    shutdown_durable(durable.take()).await?;
-                    shutdown_task_service(task_service).await?;
-                    return Err(error);
+                    break Err(error);
                 }
                 _ = wait_change(&mut changes.rx) => {
                     diagnostic_generation = diagnostic_generation.saturating_add(1);
@@ -263,6 +267,7 @@ async fn serve(
                                         if error_format == ErrorFormat::Human {
                                             eprintln!("tysel reload");
                                         }
+                                        grace = grace.max(next.isolate.request_timeout().saturating_add(Duration::from_secs(1)));
                                         pool.replace_with_server_limits(
                                             next.isolate,
                                             HttpLimits {
@@ -289,32 +294,47 @@ async fn serve(
                     Err(err) => report_dev_error(error_format, diagnostic_generation, &err),
                 }},
                 accepted = listener.accept() => {
-                    let (stream, _) = accepted.context("accept")?;
+                    let (stream, _) = match accepted { Ok(value) => value, Err(error) => break Err(error.into()) };
                     handle_stream(stream, pool.clone());
                 }
             }
         }
-        shutdown_durable(durable.take()).await?;
-        shutdown_task_service(task_service).await?;
-        return Ok(());
-    }
-    loop {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => break,
-            error = task_service_failure(task_service.as_ref()) => {
-                shutdown_durable(durable.take()).await?;
-                shutdown_task_service(task_service).await?;
-                return Err(error);
-            }
-            accepted = listener.accept() => {
-                let (stream, _) = accepted.context("accept")?;
-                handle_stream(stream, pool.clone());
+    } else {
+        loop {
+            tokio::select! {
+                signal = shutdown_signal() => break signal.map_err(Into::into),
+                    error = task_service_failure(task_service.as_ref()) => {
+                    break Err(error);
+                }
+                accepted = listener.accept() => {
+                    let (stream, _) = match accepted { Ok(value) => value, Err(error) => break Err(error.into()) };
+                    handle_stream(stream, pool.clone());
+                }
             }
         }
+    };
+    drop(listener);
+    shutdown.cancel();
+    shutdown.drain(grace).await;
+    let durable_result = shutdown_durable(durable.take()).await;
+    let task_result = shutdown_task_service(task_service).await;
+    result?;
+    durable_result?;
+    task_result
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
     }
-    shutdown_durable(durable.take()).await?;
-    shutdown_task_service(task_service).await?;
-    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> io::Result<()> {
+    tokio::signal::ctrl_c().await
 }
 
 fn attach_runtime_diagnostics(pool: &SharedPool) -> Result<()> {

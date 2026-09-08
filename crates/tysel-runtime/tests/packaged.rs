@@ -19,6 +19,7 @@ const HANDLER: &str = r#"
 export default {
   async fetch(request) {
     const path = new URL(request.url).pathname;
+    if (path === "/error") throw new Error("private-exception-sentinel");
     return Response.json({
       message: "Hello from Tysel",
       path,
@@ -69,6 +70,14 @@ async fn packaged_stub_serves_embedded_bundle() {
     assert!(body.contains("Hello from Tysel"));
     assert!(body.contains("\"path\":\"/hello\""));
     assert!(body.contains("\"packaged\":true"));
+    let (status, body) = request(addr, "/error").await;
+    assert_eq!(status, 500);
+    let error: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(error["error"]["code"], "RUNTIME_ERROR");
+    assert_eq!(error["error"]["message"], "request execution failed");
+    assert!(!body.contains("private-exception-sentinel"));
+    assert!(!body.contains("app.js"));
+    assert!(error["error"]["requestId"].as_str().is_some_and(|id| id.len() == 16));
     child.kill().await.expect("stop packaged stub");
 }
 
@@ -98,6 +107,84 @@ async fn packaged_stub_exits_cleanly_on_sigterm() {
         .expect("timed out waiting for graceful shutdown")
         .expect("wait for packaged stub");
     assert!(status.success(), "status={status}; stderr={}", stderr_text(&stderr));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigterm_drains_streamed_response_and_closes_idle_keepalive() {
+    let _permit = PACKAGE_SEMAPHORE.acquire().await.unwrap();
+    let packaged = package_stub_with_source(
+        r#"
+        export default {fetch() {
+            return new Response(new ReadableStream({async start(c) {
+                c.enqueue(new TextEncoder().encode('first'));
+                await new Promise(resolve => setTimeout(resolve, 200));
+                c.enqueue(new TextEncoder().encode('last'));
+                c.close();
+            }}));
+        }};
+    "#,
+    );
+    let mut child = Command::new(packaged.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let addr = read_listen(child.stdout.take().unwrap()).await.unwrap();
+    // Complete one response and keep its HTTP/1 connection idle during shutdown.
+    let idle = TcpStream::connect(addr).await.unwrap();
+    let (mut idle_client, idle_connection) =
+        hyper::client::conn::http1::handshake(TokioIo::new(idle)).await.unwrap();
+    let idle_driver = tokio::spawn(idle_connection);
+    idle_client
+        .send_request(
+            Request::builder()
+                .uri("/")
+                .header("host", "localhost")
+                .body(Empty::<Bytes>::new())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .into_body()
+        .collect()
+        .await
+        .unwrap();
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut client, connection) =
+        hyper::client::conn::http1::handshake(TokioIo::new(stream)).await.unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let response = client
+        .send_request(
+            Request::builder()
+                .uri("/")
+                .header("host", "localhost")
+                .body(Empty::<Bytes>::new())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+    assert_eq!(
+        body.frame().await.unwrap().unwrap().into_data().unwrap(),
+        Bytes::from_static(b"first")
+    );
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &child.id().unwrap().to_string()])
+            .status()
+            .await
+            .unwrap()
+            .success()
+    );
+    let rest = body.collect().await.unwrap().to_bytes();
+    assert_eq!(rest, Bytes::from_static(b"last"));
+    let status = tokio::time::timeout(Duration::from_secs(4), child.wait()).await.unwrap().unwrap();
+    assert!(status.success());
+    tokio::time::timeout(Duration::from_secs(1), idle_driver).await.unwrap().unwrap().unwrap();
 }
 
 #[tokio::test]
@@ -174,6 +261,10 @@ fn stub_exe() -> PathBuf {
 }
 
 fn package_stub() -> PackagedExecutable {
+    package_stub_with_source(HANDLER)
+}
+
+fn package_stub_with_source(source: &str) -> PackagedExecutable {
     let stub = std::fs::read(stub_exe()).expect("read stub");
     let map = identity_source_map("src/index.ts", TYPESCRIPT).expect("source map");
     let tap = Tap::new(
@@ -204,7 +295,7 @@ fn package_stub() -> PackagedExecutable {
             fs_write: Vec::new(),
             json_logs: true,
         },
-        HANDLER.as_bytes().to_vec(),
+        source.as_bytes().to_vec(),
         map,
     );
     let extracted_map = tap.parsed_source_map().expect("parse map");

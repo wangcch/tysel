@@ -1,7 +1,10 @@
+use crate::watchdog::Watchdog;
 use std::collections::HashMap;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 
 use tysel_engine::{EngineError, HttpHead, HttpRequest, InterruptReason, IsolateConfig, Value};
 use tysel_engine_qjs::ModuleTaskDefinition;
@@ -103,7 +106,8 @@ pub struct Supervisor {
 }
 
 struct WorkerConn {
-    child: Child,
+    child: Arc<Mutex<Child>>,
+    watchdog: Watchdog,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
@@ -153,7 +157,7 @@ impl Supervisor {
         match read_message(&mut conn.stdout) {
             Ok(other) => Err(IsolateError::Worker(format!("worker survived overalloc: {other:?}"))),
             Err(_) => {
-                let _ = conn.child.wait();
+                let _ = conn.child.lock().unwrap().wait();
                 self.child = None;
                 self.cgroup = None;
                 Ok(())
@@ -162,16 +166,16 @@ impl Supervisor {
     }
 
     pub fn kill_worker(&mut self) -> Result<(), IsolateError> {
-        if let Some(mut conn) = self.child.take() {
-            let _ = conn.child.kill();
-            let _ = conn.child.wait();
+        if let Some(conn) = self.child.take() {
+            let _ = conn.child.lock().unwrap().kill();
+            let _ = conn.child.lock().unwrap().wait();
         }
         self.cgroup = None;
         Ok(())
     }
 
     pub fn worker_pid(&self) -> Option<u32> {
-        self.child.as_ref().map(|conn| conn.child.id())
+        self.child.as_ref().map(|conn| conn.child.lock().unwrap().id())
     }
 
     pub fn load_handler(
@@ -186,15 +190,47 @@ impl Supervisor {
     }
 
     pub fn http(&mut self, request: &HttpRequest) -> Result<(HttpHead, Vec<u8>), IsolateError> {
-        match self.http_inner(request) {
-            Ok(value) => Ok(value),
-            Err(err) if self.worker_connection_failed(&err) => {
-                self.restart_worker()?;
-                self.http_inner(request)
-                    .map_err(|retry| IsolateError::Worker(format!("{err}; retry: {retry}")))
-            }
-            Err(err) => Err(err),
+        self.http_until(
+            request,
+            std::time::Instant::now()
+                + std::time::Duration::from_millis(self.spec.request_timeout_ms.max(1)),
+        )
+    }
+
+    pub fn http_until(
+        &mut self,
+        request: &HttpRequest,
+        deadline: std::time::Instant,
+    ) -> Result<(HttpHead, Vec<u8>), IsolateError> {
+        self.http_cancellable(request, deadline, None)
+    }
+
+    pub fn http_cancellable(
+        &mut self,
+        request: &HttpRequest,
+        deadline: std::time::Instant,
+        cancelled: Option<Arc<AtomicBool>>,
+    ) -> Result<(HttpHead, Vec<u8>), IsolateError> {
+        if std::time::Instant::now() >= deadline {
+            return Err(EngineError::Interrupted(InterruptReason::Timeout).into());
         }
+        self.ensure_worker()?;
+        let operation = self.child.as_ref().expect("worker").watchdog.arm(deadline, cancelled);
+        // A disconnected worker may already have executed the request. Do not
+        // automatically replay HTTP writes after an uncertain outcome.
+        let result = self.http_inner(request, deadline);
+        if let Some(reason) = operation.finish() {
+            self.kill_worker()?;
+            return Err(EngineError::Interrupted(reason).into());
+        }
+        if result
+            .as_ref()
+            .err()
+            .is_some_and(|error| matches!(error, IsolateError::Io(_) | IsolateError::Ipc(_)))
+        {
+            self.kill_worker()?;
+        }
+        result
     }
 
     pub fn load_task_module(
@@ -298,11 +334,21 @@ impl Supervisor {
         }
     }
 
-    fn http_inner(&mut self, request: &HttpRequest) -> Result<(HttpHead, Vec<u8>), IsolateError> {
+    fn http_inner(
+        &mut self,
+        request: &HttpRequest,
+        deadline: std::time::Instant,
+    ) -> Result<(HttpHead, Vec<u8>), IsolateError> {
         if request.body.len() > MAX_ISOLATED_HTTP_BODY {
             return Err(IsolateError::Worker("isolated request body exceeds 32KiB IPC cap".into()));
         }
-        self.ensure_worker()?;
+        if std::time::Instant::now() >= deadline {
+            return Err(EngineError::Interrupted(InterruptReason::Timeout).into());
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(EngineError::Interrupted(InterruptReason::Timeout).into());
+        }
         let id = self.next_id;
         self.next_id += 1;
         {
@@ -310,6 +356,7 @@ impl Supervisor {
             write_message(
                 &mut conn.stdin,
                 &Message::Http {
+                    timeout_ms: Some(remaining.as_millis().min(u128::from(u64::MAX)) as u64),
                     id,
                     method: request.method.clone(),
                     url: request.url.clone(),
@@ -348,7 +395,10 @@ impl Supervisor {
                     }
                     return Ok((HttpHead { status, headers, websocket: false }, body.into_bytes()));
                 }
-                Message::HttpErr { id: reply_id, error } if reply_id == id => {
+                Message::HttpErr { id: reply_id, error, timed_out } if reply_id == id => {
+                    if timed_out {
+                        return Err(EngineError::Interrupted(InterruptReason::Timeout).into());
+                    }
                     return Err(IsolateError::Worker(error));
                 }
                 other => return Err(IsolateError::Worker(format!("unexpected message {other:?}"))),
@@ -402,14 +452,28 @@ impl Supervisor {
             child.stdin.take().ok_or_else(|| IsolateError::Worker("missing stdin".into()))?;
         let stdout =
             child.stdout.take().ok_or_else(|| IsolateError::Worker("missing stdout".into()))?;
-        let mut conn = WorkerConn { child, stdin, stdout: BufReader::new(stdout) };
+        let child = Arc::new(Mutex::new(child));
+        let watchdog = match Watchdog::new(child.clone()) {
+            Ok(watchdog) => watchdog,
+            Err(error) => {
+                let mut child = child.lock().unwrap();
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error.into());
+            }
+        };
+        let startup = watchdog.arm(
+            std::time::Instant::now()
+                + std::time::Duration::from_millis(self.spec.request_timeout_ms.max(1_000)),
+            None,
+        );
+        let mut conn = WorkerConn { child, watchdog, stdin, stdout: BufReader::new(stdout) };
         match read_message(&mut conn.stdout) {
             Ok(Message::WorkerReady) => {}
             Ok(other) => {
                 return Err(IsolateError::Worker(format!("expected ready, got {other:?}")));
             }
             Err(err) => {
-                let _ = conn.child.wait();
                 return Err(IsolateError::Worker(format!("worker failed to start: {err}")));
             }
         }
@@ -432,7 +496,7 @@ impl Supervisor {
             Err(err) => return Err(IsolateError::Worker(format!("start handshake failed: {err}"))),
         }
         let _ = conn.stdin.flush();
-        let pid = conn.child.id();
+        let pid = conn.child.lock().unwrap().id();
         self.cgroup = crate::cgroup::attach(pid, self.spec.rlimit_as_bytes);
         self.child = Some(conn);
         if self.handler_source.is_some() {
@@ -441,6 +505,10 @@ impl Supervisor {
         if self.task_source.is_some() {
             self.send_task_load()?;
         }
+        if let Some(reason) = startup.finish() {
+            self.kill_worker()?;
+            return Err(EngineError::Interrupted(reason).into());
+        }
         Ok(())
     }
 
@@ -448,7 +516,7 @@ impl Supervisor {
         let Some(conn) = self.child.as_mut() else {
             return true;
         };
-        match conn.child.try_wait() {
+        match conn.child.lock().unwrap().try_wait() {
             Ok(Some(_)) => true,
             Ok(None) => false,
             Err(_) => true,
@@ -475,12 +543,17 @@ fn task_error(error: String, kind: TaskErrorKind) -> IsolateError {
     IsolateError::Engine(engine)
 }
 
+impl Drop for WorkerConn {
+    fn drop(&mut self) {
+        // Killing before waiting also handles a stopped or unresponsive worker.
+        let mut child = self.child.lock().unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 impl Drop for Supervisor {
     fn drop(&mut self) {
-        if let Some(conn) = self.child.as_mut() {
-            let _ = write_message(&mut conn.stdin, &Message::Shutdown);
-            let _ = conn.child.wait();
-        }
         self.child = None;
         self.cgroup = None;
     }
