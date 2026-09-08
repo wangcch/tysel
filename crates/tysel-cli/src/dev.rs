@@ -251,6 +251,9 @@ async fn serve(
         loop {
             tokio::select! {
                 signal = shutdown_signal() => break signal.map_err(Into::into),
+                error = durable_service_failure(durable.as_ref()) => {
+                    break Err(error);
+                }
                 error = task_service_failure(task_service.as_ref()) => {
                     break Err(error);
                 }
@@ -303,6 +306,9 @@ async fn serve(
         loop {
             tokio::select! {
                 signal = shutdown_signal() => break signal.map_err(Into::into),
+                error = durable_service_failure(durable.as_ref()) => {
+                        break Err(error);
+                    }
                     error = task_service_failure(task_service.as_ref()) => {
                     break Err(error);
                 }
@@ -315,6 +321,9 @@ async fn serve(
     };
     drop(listener);
     shutdown.cancel();
+    if let Some(plane) = &durable {
+        plane.stop_claiming();
+    }
     shutdown.drain(grace).await;
     let durable_result = shutdown_durable(durable.take()).await;
     let task_result = shutdown_task_service(task_service).await;
@@ -663,6 +672,13 @@ async fn start_dev_durable(spec: Option<DurableSpec>) -> Result<Option<Arc<Durab
     }
     let owner = format!("tysel-dev-{}", std::process::id());
     Ok(Some(DurablePlane::start(store, spec.source, spec.config, owner)?))
+}
+
+async fn durable_service_failure(plane: Option<&Arc<DurablePlane>>) -> anyhow::Error {
+    match plane {
+        Some(plane) => plane.failed().await.into(),
+        None => std::future::pending().await,
+    }
 }
 
 async fn shutdown_durable(plane: Option<Arc<DurablePlane>>) -> Result<()> {

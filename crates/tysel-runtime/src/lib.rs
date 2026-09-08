@@ -18,8 +18,8 @@ pub use durable::{
 };
 pub use durable_plane::{DurablePlane, DurablePlaneError};
 pub use durable_poll::{
-    DurablePoller, DurableProgramCatalog, DurableProgramRegistry, PollerError, PollerShutdown,
-    ProgramRegistryError,
+    DurablePoller, DurableProgramCatalog, DurableProgramRegistry, PollerError, PollerHealth,
+    PollerShutdown, ProgramRegistryError,
 };
 pub use http::{
     AppIsolate, HttpError, HttpLimits, HttpShutdown, RuntimeDiagnostic, RuntimeDiagnosticSink,

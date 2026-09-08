@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value as JsonValue, json};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tysel_durable::{DurableError, DurableStore, POSTGRES_URL_ENV, PostgresStore, SqliteStore};
 use tysel_engine::{IsolateConfig, Value};
@@ -14,7 +15,7 @@ use tysel_task::TaskId;
 
 use crate::{
     DispatchError, DurableDispatcher, DurablePoller, DurableProgramCatalog, DurableRun,
-    DurableRunStatus, PollerError, PollerShutdown, ProgramRegistryError,
+    DurableRunStatus, PollerError, PollerHealth, PollerShutdown, ProgramRegistryError,
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -27,6 +28,7 @@ pub struct DurablePlane {
     source: RwLock<Arc<str>>,
     config: IsolateConfig,
     shutdown: PollerShutdown,
+    health: watch::Receiver<PollerHealth>,
     join: Mutex<Option<JoinHandle<Result<(), PollerError>>>>,
 }
 
@@ -44,6 +46,8 @@ pub enum DurablePlaneError {
     Engine(#[from] tysel_engine::EngineError),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("durable scheduler is unavailable; inspect scheduler health")]
+    Unavailable,
     #[error("durable control lock is poisoned")]
     Poisoned,
 }
@@ -139,9 +143,33 @@ impl DurablePlane {
         let poller =
             DurablePoller::new_persistent_modules(dispatcher.clone(), POLL_INTERVAL, POLL_BATCH)?;
         let shutdown = PollerShutdown::default();
+        let (health_tx, health) = watch::channel(PollerHealth::Healthy);
         let join = tokio::spawn({
             let shutdown = shutdown.clone();
-            async move { poller.run(shutdown, |_| {}).await }
+            async move {
+                poller
+                    .run_supervised(
+                        shutdown,
+                        |run| {
+                            let state = match run.result {
+                                Ok(DurableRunStatus::Completed(_)) => "completed",
+                                Ok(DurableRunStatus::Suspended) => "suspended",
+                                Err(_) => "task_failed",
+                            };
+                            tysel_observability::log_durable(state, Some(run.task_id.0), 0);
+                        },
+                        |health| {
+                            let (state, attempt) = match health {
+                                PollerHealth::Healthy => ("healthy", 0),
+                                PollerHealth::Recovering { attempt } => ("recovering", attempt),
+                                PollerHealth::Failed => ("failed", 0),
+                            };
+                            tysel_observability::log_durable(state, None, attempt);
+                            health_tx.send_replace(health);
+                        },
+                    )
+                    .await
+            }
         });
         let plane = Arc::new(Self {
             dispatcher,
@@ -149,6 +177,7 @@ impl DurablePlane {
             source: RwLock::new(Arc::from(source)),
             config,
             shutdown,
+            health,
             join: Mutex::new(Some(join)),
         });
         plane.install_hooks()?;
@@ -195,6 +224,9 @@ impl DurablePlane {
     }
 
     pub fn start_named(&self, name: &str, input_json: &str) -> Result<String, String> {
+        if self.health() != PollerHealth::Healthy {
+            return Err(DurablePlaneError::Unavailable.to_string());
+        }
         let name = name.trim();
         if name.is_empty() || name.len() > 128 {
             return Err("durable export name must be 1..=128 bytes".into());
@@ -207,9 +239,10 @@ impl DurablePlane {
             return Err(format!("durable export {name} is not registered"));
         }
         let wrapped = encode_durable_export(name, source.as_ref());
+        let slot = self.dispatcher.reserve().map_err(|error| error.to_string())?;
         let task_id = next_task_id();
         self.catalog.register_module(task_id, wrapped.clone()).map_err(|err| err.to_string())?;
-        encode_run(self.dispatcher.start_module(task_id, &wrapped, input_json))
+        encode_run(self.dispatcher.start_module_reserved(task_id, &wrapped, input_json, slot))
     }
 
     pub fn send_signal(&self, task_id: &str, name: &str, payload_json: &str) -> Result<(), String> {
@@ -224,12 +257,35 @@ impl DurablePlane {
             .map_err(|err| err.to_string())
     }
 
+    pub fn health(&self) -> PollerHealth {
+        *self.health.borrow()
+    }
+
+    pub async fn failed(&self) -> DurablePlaneError {
+        let mut health = self.health.clone();
+        loop {
+            if *health.borrow_and_update() == PollerHealth::Failed {
+                return DurablePlaneError::Unavailable;
+            }
+            if health.changed().await.is_err() {
+                return DurablePlaneError::Unavailable;
+            }
+        }
+    }
+
+    pub fn stop_claiming(&self) {
+        self.shutdown.cancel();
+    }
+
     pub async fn shutdown(&self) -> Result<(), DurablePlaneError> {
         configure_durable_control(None);
         self.shutdown.cancel();
         let join = self.join.lock().map_err(|_| DurablePlaneError::Poisoned)?.take();
         if let Some(join) = join {
             join.await.map_err(PollerError::Join)??;
+        }
+        if self.dispatcher.has_pending_completions() {
+            return Err(DurablePlaneError::Unavailable);
         }
         Ok(())
     }
@@ -308,6 +364,148 @@ fn resolve_path(path: &str, root: Option<&Path>) -> PathBuf {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn scheduler_recovers_after_store_error_without_restart() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-poller-recovery-{}-{}.db",
+            std::process::id(),
+            unix_time_ms().unwrap()
+        ));
+        let store = Arc::new(SqliteStore::open(&path).unwrap());
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch("ALTER TABLE durable_programs RENAME TO temporarily_unavailable")
+            .unwrap();
+        let plane = DurablePlane::start(store.clone(), r#"
+            export default {durable:{async work(ctx) { await ctx.sleep(1); return await ctx.step('resumed', () => 42); }}};
+        "#.into(), IsolateConfig { cpu_ms_per_turn: 500, request_timeout_ms: 1_000, ..Default::default() }, "recovery").unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !matches!(plane.health(), PollerHealth::Recovering { .. }) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(plane.start_named("work", "null").is_err());
+        connection
+            .execute_batch("ALTER TABLE temporarily_unavailable RENAME TO durable_programs")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while plane.health() != PollerHealth::Healthy {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let started: JsonValue =
+            serde_json::from_str(&plane.start_named("work", "null").unwrap()).unwrap();
+        let id = parse_task_id(started["taskId"].as_str().unwrap()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while store.completion(id).unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(store.completion(id).unwrap().unwrap().value.as_f64(), Some(42.0));
+        assert_eq!(store.program_count().unwrap(), 0);
+        plane.shutdown().await.unwrap();
+        drop(connection);
+        drop(plane);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_write_failure_is_retried_without_replaying_handler() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-finalize-{}-{}.db",
+            std::process::id(),
+            unix_time_ms().unwrap()
+        ));
+        let store = Arc::new(SqliteStore::open(&path).unwrap());
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch("CREATE TRIGGER fail_completion BEFORE INSERT ON durable_completions BEGIN SELECT * FROM temporarily_missing; END").unwrap();
+        let plane = DurablePlane::start(
+            store.clone(),
+            r#"
+            export default {durable:{async work(ctx) { await ctx.sleep(1); return 42; }}};
+        "#
+            .into(),
+            IsolateConfig { cpu_ms_per_turn: 500, request_timeout_ms: 1_000, ..Default::default() },
+            "finalize",
+        )
+        .unwrap();
+        let started: JsonValue =
+            serde_json::from_str(&plane.start_named("work", "null").unwrap()).unwrap();
+        let id = parse_task_id(started["taskId"].as_str().unwrap()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !matches!(plane.health(), PollerHealth::Recovering { .. }) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(store.wakeup(id).unwrap().is_none());
+        assert!(store.completion(id).unwrap().is_none());
+        assert!(plane.start_named("work", "null").is_err());
+        // Replay would now fail. Only writing the retained outcome may succeed.
+        connection.execute_batch("UPDATE durable_programs SET source = 'throw new Error(\"forbidden replay\")'; DROP TRIGGER fail_completion;").unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while store.completion(id).unwrap().is_none() || plane.health() != PollerHealth::Healthy
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(store.completion(id).unwrap().unwrap().value, serde_json::json!(42));
+        assert_eq!(store.program_count().unwrap(), 0);
+        plane.shutdown().await.unwrap();
+        drop(connection);
+        drop(plane);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn corrupted_program_is_reported_to_service_owner() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-poller-fatal-{}-{}.db",
+            std::process::id(),
+            unix_time_ms().unwrap()
+        ));
+        let store = Arc::new(SqliteStore::open(&path).unwrap());
+        store.put_module(TaskId(1), "export default async () => 1", 0).unwrap();
+        store
+            .schedule_wakeup(tysel_durable::Wakeup {
+                task_id: TaskId(1),
+                sequence: 0,
+                wake_at_ms: 0,
+            })
+            .unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch("UPDATE durable_programs SET source_sha256 = zeroblob(32)")
+            .unwrap();
+        let plane = DurablePlane::start(
+            store.clone(),
+            "export default {};".into(),
+            IsolateConfig::default(),
+            "fatal",
+        )
+        .unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(2), plane.failed()).await.unwrap();
+        assert!(matches!(error, DurablePlaneError::Unavailable));
+        assert_eq!(plane.health(), PollerHealth::Failed);
+        assert!(plane.shutdown().await.is_err());
+        assert!(store.wakeup(TaskId(1)).unwrap().is_some());
+        drop(connection);
+        drop(plane);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[tokio::test]
     async fn named_export_survives_store_reopen() {

@@ -23,7 +23,7 @@ mod task_module;
 mod trust;
 
 pub use control::{DurableControl, configure as configure_durable_control};
-pub use durable::DurableSession;
+pub use durable::{DurableCompletion, DurableSession};
 pub use fetch_policy::configure as configure_fetch_hosts;
 pub use isolate::{
     IsolateCancel, encode_durable_export, eval, eval_cancellable, eval_durable,

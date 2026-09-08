@@ -322,14 +322,23 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
                 None => std::future::pending().await,
             }
         } => Err(error.into()),
+        error = async {
+            match &durable { Some(plane) => plane.failed().await, None => std::future::pending().await }
+        } => Err(error.into()),
         signal = shutdown_signal() => signal.map_err(Into::into),
     };
     #[cfg(not(unix))]
     let outcome: Result<(), StubError> = tokio::select! {
         result = &mut server => { server_finished = true; result.map_err(Into::into) }
+        error = async {
+            match &durable { Some(plane) => plane.failed().await, None => std::future::pending().await }
+        } => Err(error.into()),
         signal = shutdown_signal() => signal.map_err(Into::into),
     };
     shutdown.cancel();
+    if let Some(plane) = &durable {
+        plane.stop_claiming();
+    }
     // Keep capability and durable hooks alive while admitted HTTP handlers finish.
     let http_result = if server_finished { Ok(()) } else { server.await };
     let durable_result = shutdown_durable(durable.as_ref()).await;

@@ -115,6 +115,36 @@ pub fn log_capability(
     }
 }
 
+/// Bounded scheduler diagnostics: never emit source, payloads, SQL or provider errors.
+pub fn log_durable(state: &str, task_id: Option<u128>, attempt: u32) {
+    let Some((app, json_logs)) = configured_log() else {
+        return;
+    };
+    let state = allowed_label(
+        state,
+        &[
+            "healthy",
+            "recovering",
+            "failed",
+            "completed",
+            "suspended",
+            "task_failed",
+            "completion_pending",
+        ],
+    );
+    if !json_logs {
+        let task = task_id.map(|id| format!(" task={id:032x}")).unwrap_or_default();
+        write_line(&format!("tysel durable {state}{task} attempt={attempt}"));
+        return;
+    }
+    let mut value =
+        serde_json::json!({"app": app, "event": "durable", "state": state, "attempt": attempt});
+    if let Some(id) = task_id {
+        value["taskId"] = format!("{id:032x}").into();
+    }
+    write_line(&value.to_string());
+}
+
 fn configured_log() -> Option<(String, bool)> {
     let guard = JSON_LOG.read().expect("json log lock");
     guard.as_ref().map(|config| (config.app.clone(), config.enabled))

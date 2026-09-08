@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
-use tysel_durable::{DurableStore, EventKind, ReplayCursor, ReplayError, WakeupClaim};
+use tysel_durable::{
+    DurableError, DurableStore, EventKind, ReplayCursor, ReplayError, WakeupClaim,
+};
 use tysel_task::TaskId;
 
 #[derive(Clone)]
@@ -16,6 +18,8 @@ struct SessionInner {
     next_sequence: u64,
     active_wakeup: Option<WakeupToken>,
     suspended: bool,
+    lease_until_ms: Option<u64>,
+    result_json: Option<serde_json::Value>,
 }
 
 struct WakeupToken {
@@ -57,6 +61,9 @@ impl DurableSession {
     /// Start a task that has no pending wakeup. Suspended tasks must enter via
     /// `from_claim` so they cannot resume early or run under two schedulers.
     pub fn new(store: Arc<dyn DurableStore>, task_id: TaskId) -> Result<Self, String> {
+        if store.completion(task_id).map_err(|err| err.to_string())?.is_some() {
+            return Err("durable task is already completed".into());
+        }
         if let Some(wakeup) = store.wakeup(task_id).map_err(|err| err.to_string())? {
             return Err(format!(
                 "durable task is suspended until {} and must be resumed from a wakeup claim",
@@ -89,6 +96,7 @@ impl DurableSession {
         task_id: TaskId,
         active_claim: Option<WakeupClaim>,
     ) -> Result<Self, String> {
+        let lease_until_ms = active_claim.as_ref().map(|claim| claim.lease_until_ms);
         let history = store.load_history(task_id).map_err(|err| err.to_string())?;
         let next_sequence = history
             .events
@@ -125,6 +133,8 @@ impl DurableSession {
                 next_sequence,
                 active_wakeup,
                 suspended: false,
+                lease_until_ms,
+                result_json: None,
             })),
         })
     }
@@ -230,6 +240,7 @@ impl DurableSession {
             return Err("durable wakeup ownership was lost".into());
         }
         inner.active_wakeup = None;
+        inner.suspended = false;
         Ok(())
     }
 
@@ -251,12 +262,51 @@ impl DurableSession {
             }) {
                 inner.active_wakeup = None;
             }
+            inner.suspended = false;
             json!({ "found": true, "payload": event.payload })
         } else {
             inner.suspended = true;
             json!({ "found": false })
         };
         serde_json::to_string(&response).map_err(|err| err.to_string())
+    }
+
+    pub fn task_id(&self) -> TaskId {
+        self.inner.lock().expect("durable session lock").task_id
+    }
+
+    pub(crate) fn retain_result(&self, value: serde_json::Value) -> Result<(), String> {
+        self.inner.lock().map_err(|_| "durable session lock poisoned")?.result_json = Some(value);
+        Ok(())
+    }
+
+    /// Preserve the JSON number representation validated by the JavaScript engine.
+    pub fn take_result(&self) -> Option<serde_json::Value> {
+        self.inner.lock().ok()?.result_json.take()
+    }
+
+    /// Extract only the authority needed for terminal persistence. No replay
+    /// history or engine state is retained by this handle.
+    pub fn completion_handle(&self) -> Result<DurableCompletion, DurableError> {
+        let inner = self.inner.lock().map_err(|_| DurableError::LockPoisoned)?;
+        if inner.replay.ensure_consumed().is_err()
+            || inner.active_wakeup.is_some()
+            || inner.suspended
+        {
+            return Err(DurableError::TaskSuspended { task_id: inner.task_id });
+        }
+        Ok(DurableCompletion {
+            store: inner.store.clone(),
+            task_id: inner.task_id,
+            next_sequence: inner.next_sequence,
+            lease_until_ms: inner.lease_until_ms,
+        })
+    }
+
+    /// Persist successful termination after complete replay. Persistent suspension
+    /// checks run atomically inside the store's completion transaction.
+    pub fn complete(&self, value: &serde_json::Value) -> Result<bool, DurableError> {
+        self.completion_handle()?.complete(value)
     }
 
     pub(crate) fn is_suspended(&self) -> Result<bool, String> {
@@ -267,13 +317,42 @@ impl DurableSession {
     pub(crate) fn ensure_consumed(&self) -> Result<(), String> {
         let inner = self.inner.lock().map_err(|_| "durable session lock poisoned")?;
         inner.replay.ensure_consumed().map_err(replay_error)?;
-        let persisted_suspension =
-            inner.store.wakeup(inner.task_id).map_err(|err| err.to_string())?.is_some()
-                || inner.store.signal_wait(inner.task_id).map_err(|err| err.to_string())?.is_some();
-        if inner.active_wakeup.is_some() || persisted_suspension {
+        // Storage checks belong to terminal persistence, where availability
+        // errors can be retried with the computed result. Keep this check local.
+        if inner.active_wakeup.is_some() || inner.suspended {
             return Err("durable execution returned with a persisted suspension".into());
         }
         Ok(())
+    }
+}
+
+/// Lightweight terminal write authority; deliberately contains no replay cursor.
+pub struct DurableCompletion {
+    store: Arc<dyn DurableStore>,
+    task_id: TaskId,
+    next_sequence: u64,
+    lease_until_ms: Option<u64>,
+}
+
+impl DurableCompletion {
+    pub fn task_id(&self) -> TaskId {
+        self.task_id
+    }
+
+    pub fn complete(&self, value: &serde_json::Value) -> Result<bool, DurableError> {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(std::io::Error::other)?
+            .as_millis() as u64;
+        if self.lease_until_ms.is_some_and(|until| now_ms >= until) {
+            if self.store.completion(self.task_id)?.is_some_and(|completion| {
+                completion.next_sequence == self.next_sequence && completion.value == *value
+            }) {
+                return Ok(true);
+            }
+            return Err(DurableError::TaskSuspended { task_id: self.task_id });
+        }
+        self.store.complete_task(self.task_id, self.next_sequence, value, now_ms)
     }
 }
 
@@ -299,4 +378,61 @@ fn unix_time_ms() -> Result<u64, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|err| err.to_string())?;
     u64::try_from(duration.as_millis()).map_err(|_| "system time is too large".into())
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+    use tysel_durable::SqliteStore;
+
+    #[test]
+    fn completion_handle_does_not_retain_consumed_history() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let id = TaskId(982);
+        store.put_program(id, "42", 0).unwrap();
+        store
+            .append_event_json_at(
+                id,
+                0,
+                EventKind::Step,
+                "large".into(),
+                &serde_json::to_string(&"x".repeat(1_000_000)).unwrap(),
+                0,
+            )
+            .unwrap();
+        let session = DurableSession::new(store.clone(), id).unwrap();
+        session.lookup_json("step", "large").unwrap();
+        let weak = Arc::downgrade(&session.inner);
+        let completion = session.completion_handle().unwrap();
+        drop(session);
+        assert!(weak.upgrade().is_none(), "finalization must release the replay owner");
+        assert!(completion.complete(&json!(42)).unwrap());
+    }
+
+    #[test]
+    fn completion_transaction_rejects_a_new_persisted_wait() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let id = TaskId(983);
+        store.put_program(id, "42", 0).unwrap();
+        let session = DurableSession::new(store.clone(), id).unwrap();
+        let completion = session.completion_handle().unwrap();
+        store.poll_signal(id, 0, "late", 0, None).unwrap();
+        assert!(matches!(completion.complete(&json!(42)), Err(DurableError::TaskSuspended { .. })));
+        assert!(store.completion(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn expired_completion_can_only_acknowledge_an_identical_committed_outcome() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let task_id = TaskId(981);
+        store.put_program(task_id, "42", 0).unwrap();
+        let session = DurableSession::new(store.clone(), task_id).unwrap();
+        session.inner.lock().unwrap().lease_until_ms = Some(0);
+        assert!(matches!(session.complete(&json!(42)), Err(DurableError::TaskSuspended { .. })));
+        assert!(store.completion(task_id).unwrap().is_none());
+        store.complete_task(task_id, 0, &json!(42), 1).unwrap();
+        assert!(session.complete(&json!(42)).unwrap());
+        assert!(matches!(session.complete(&json!(43)), Err(DurableError::TaskSuspended { .. })));
+        assert_eq!(store.completion(task_id).unwrap().unwrap().value, json!(42));
+    }
 }

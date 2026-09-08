@@ -31,6 +31,7 @@ tysel-observability.workspace = true
 tysel-capability.workspace = true
 tysel-cap-mcp.workspace = true
 tysel-task-rpc.workspace = true
+tysel-task.workspace = true
 tysel-package.workspace = true
 tysel-testkit = { path = "../tysel-testkit" }
 notify = "6"
@@ -42,4 +43,5 @@ libc.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }
 
 [dev-dependencies]
+tysel-durable = { path = "../tysel-durable" }
 wat = "1"

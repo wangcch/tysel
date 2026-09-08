@@ -55,3 +55,42 @@ from `kind: "mcp"` entries in the application's `tasks` export.
 
 See [Application module](../runtime/application.md) for queue and MCP handler
 types and [Limits and defaults](../limits-and-defaults.md) for protocol bounds.
+
+
+## `tysel durable`
+
+Inspect retained results or delete a bounded batch of completed history from
+the selected project's durable store. The application is not loaded or executed.
+
+```sh
+tysel -C services/worker durable result 00000000000000000000000000000001
+tysel -C services/worker durable prune --older-than-secs 604800 --limit 32
+```
+
+`--manifest FILE` is also accepted. Store selection follows the runtime:
+`TYSEL_DURABLE_POSTGRES_URL` takes precedence, then `TYSEL_DURABLE_SQLITE_PATH`,
+then the `durable-events.db` beside the manifest's SQLite capability path.
+An absent SQLite event store is an error; the command does not create it.
+
+`result` writes JSON with `taskId` and `completion`. A retained completion has
+`status: "completed"`, `value`, and `completedAtMs`. A null completion means no
+retained result is available; it does not distinguish an active, failed,
+unknown, or previously pruned task.
+
+`prune` defaults to retaining seven days and deleting at most 32 tasks. The
+limit must be 1–100. Only explicit completions strictly older than the cutoff
+are eligible; pending wakeups, leases, and signal waits prevent deletion. A
+batch also stops at 16 MiB of retained program, result, history, and inbox
+payload, allowing one larger task so cleanup can progress. The JSON report
+contains `deleted`, `beforeMs`, and `limit`. A batch may delete fewer than its
+limit; repeat it deliberately if more cleanup is needed.
+
+Pruning permanently removes the selected result, program, events, and inbox.
+It does not cancel active tasks or automatically compact database files.
+PostgreSQL retains a small per-task synchronization row to keep concurrent
+writers safe. Do not reuse pruned task IDs: completion deduplication is retained
+only until pruning. There is no automatic retention timer.
+
+Opening a store, including through these commands, migrates durable log v1 to
+v2. Follow the [upgrade procedure](../../operations/production.md#durable-log-v2-upgrade)
+before pointing this release at an existing store.

@@ -21,7 +21,8 @@ const MAX_HISTORY_BYTES: usize = 16 * 1_048_576;
 const MAX_PENDING_SIGNALS: usize = 1_000;
 const MAX_LEASE_OWNER_BYTES: usize = 128;
 /// Durable SQLite schema and replay-log contract supported by this runtime.
-pub const DURABLE_LOG_VERSION: u32 = 1;
+pub const DURABLE_LOG_VERSION: u32 = 2;
+mod lifecycle;
 pub const MAX_DURABLE_PROGRAM_BYTES: usize = 1_048_576;
 pub const MAX_DURABLE_PROGRAM_TOTAL_BYTES: usize = 64 * 1_048_576;
 pub const MAX_DURABLE_PROGRAMS: usize = 10_000;
@@ -216,12 +217,39 @@ pub enum DurableProgramKind {
     Module,
 }
 
+/// Persisted successful termination. Retained history is audit state, not active work.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskCompletion {
+    pub task_id: TaskId,
+    pub next_sequence: u64,
+    pub value: Value,
+    pub completed_at_ms: u64,
+}
+
 /// Storage contract consumed by the durable engine and scheduler.
 ///
 /// Implementations must preserve per-task event ordering and make composite
 /// event/wakeup and signal operations atomic. The synchronous surface is
 /// intentional: callers run durable storage work on blocking worker threads.
 pub trait DurableStore: Send + Sync {
+    fn completion(&self, task_id: TaskId) -> Result<Option<TaskCompletion>, DurableError>;
+    /// Persist completion for a registered program. Returns false for unregistered
+    /// low-level sessions, which retain the caller-managed lifecycle contract.
+    fn complete_task(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        completed_at_ms: u64,
+    ) -> Result<bool, DurableError>;
+    /// Delete only explicitly completed tasks older than the cutoff, at most 100 per call.
+    fn prune_completed(&self, before_ms: u64, limit: usize) -> Result<usize, DurableError>;
+    fn load_due_programs_batch(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+        limit: usize,
+    ) -> Result<Vec<DurableProgram>, DurableError>;
     fn log_version(&self) -> Result<u32, DurableError>;
     fn put_program(
         &self,
@@ -393,6 +421,7 @@ impl SqliteStore {
         let digest: [u8; 32] = Sha256::digest(source.as_bytes()).into();
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        lifecycle::ensure_open(&transaction, task_id)?;
         if let Some(existing) = select_program(&transaction, task_id)? {
             if existing.kind != kind
                 || existing.source_sha256 != digest
@@ -404,8 +433,7 @@ impl SqliteStore {
             return Ok(Some(existing));
         }
         let (count, total_bytes): (i64, i64) = transaction.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(length(CAST(source AS BLOB))), 0)
-             FROM durable_programs",
+            "SELECT active_count, active_bytes FROM durable_program_stats WHERE singleton = 1",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
@@ -426,6 +454,7 @@ impl SqliteStore {
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![id.as_slice(), kind.as_str(), source, digest.as_slice(), registered_at_ms],
         )?;
+        transaction.execute("UPDATE durable_program_stats SET active_count = active_count + 1, active_bytes = active_bytes + ?1 WHERE singleton = 1", params![source_bytes])?;
         transaction.commit()?;
         Ok(None)
     }
@@ -439,7 +468,7 @@ impl SqliteStore {
         let connection = self.lock()?;
         let mut statement = connection.prepare(
             "SELECT task_id, program_kind, source, source_sha256, registered_at_ms
-             FROM durable_programs ORDER BY task_id LIMIT ?1",
+             FROM durable_programs p WHERE NOT EXISTS (SELECT 1 FROM durable_completions c WHERE c.task_id = p.task_id) ORDER BY task_id LIMIT ?1",
         )?;
         let rows = statement.query_map(params![(MAX_DURABLE_PROGRAMS + 1) as i64], |row| {
             Ok((
@@ -465,6 +494,15 @@ impl SqliteStore {
         now_ms: u64,
         kind: DurableProgramKind,
     ) -> Result<Vec<DurableProgram>, DurableError> {
+        self.load_due_programs_batch(now_ms, kind, MAX_DURABLE_PROGRAMS)
+    }
+
+    pub fn load_due_programs_batch(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+        limit: usize,
+    ) -> Result<Vec<DurableProgram>, DurableError> {
         let connection = self.lock()?;
         let now_ms = to_sql_integer(now_ms, "now_ms")?;
         let mut statement = connection.prepare(
@@ -474,10 +512,11 @@ impl SqliteStore {
              WHERE w.wake_at_ms <= ?1
                AND (w.lease_until_ms IS NULL OR w.lease_until_ms <= ?1)
                AND p.program_kind = ?2
-             ORDER BY p.task_id LIMIT ?3",
+               AND NOT EXISTS (SELECT 1 FROM durable_completions c WHERE c.task_id = p.task_id)
+             ORDER BY w.wake_at_ms, p.task_id LIMIT ?3",
         )?;
         let rows = statement.query_map(
-            params![now_ms, kind.as_str(), (MAX_DURABLE_PROGRAMS + 1) as i64],
+            params![now_ms, kind.as_str(), limit.min(MAX_DURABLE_PROGRAMS) as i64],
             |row| {
                 Ok((
                     row.get::<_, Vec<u8>>(0)?,
@@ -495,8 +534,9 @@ impl SqliteStore {
         let id = task_id_bytes(task_id);
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        lifecycle::ensure_open(&transaction, task_id)?;
         let existing = select_program(&transaction, task_id)?;
-        if existing.is_some() {
+        if let Some(program) = &existing {
             let in_use = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM durable_events WHERE task_id = ?1)
                      OR EXISTS(SELECT 1 FROM durable_wakeups WHERE task_id = ?1)
@@ -508,6 +548,7 @@ impl SqliteStore {
             if in_use {
                 return Err(DurableError::ProgramInUse { task_id });
             }
+            transaction.execute("UPDATE durable_program_stats SET active_count = active_count - 1, active_bytes = active_bytes - ?1 WHERE singleton = 1", params![program.source.len() as i64])?;
             transaction.execute(
                 "DELETE FROM durable_programs WHERE task_id = ?1",
                 params![id.as_slice()],
@@ -519,8 +560,11 @@ impl SqliteStore {
 
     pub fn program_count(&self) -> Result<usize, DurableError> {
         let connection = self.lock()?;
-        let count: i64 =
-            connection.query_row("SELECT COUNT(*) FROM durable_programs", [], |row| row.get(0))?;
+        let count: i64 = connection.query_row(
+            "SELECT active_count FROM durable_program_stats WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )?;
         usize::try_from(count).map_err(|_| DurableError::ProgramLimit)
     }
 
@@ -711,13 +755,16 @@ impl SqliteStore {
     }
 
     pub fn schedule_wakeup(&self, wakeup: Wakeup) -> Result<(), DurableError> {
-        let connection = self.lock()?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        lifecycle::ensure_open(&transaction, wakeup.task_id)?;
         upsert_wakeup(
-            &connection,
+            &transaction,
             wakeup.task_id,
             to_sql_integer(wakeup.sequence, "sequence")?,
             to_sql_integer(wakeup.wake_at_ms, "wake_at_ms")?,
         )?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -1027,6 +1074,7 @@ impl SqliteStore {
         let id = task_id_bytes(task_id);
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        lifecycle::ensure_open(&transaction, task_id)?;
         let (pending_count, pending_bytes) = transaction.query_row(
             "SELECT COUNT(*), COALESCE(SUM(
                  length(CAST(signal_name AS BLOB)) + length(CAST(payload AS BLOB))
@@ -1088,6 +1136,7 @@ impl SqliteStore {
         let id = task_id_bytes(task_id);
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        lifecycle::ensure_open(&transaction, task_id)?;
         let actual_sequence: i64 = transaction.query_row(
             "SELECT COALESCE(MAX(sequence) + 1, 0)
              FROM durable_events WHERE task_id = ?1",
@@ -1201,6 +1250,29 @@ impl SqliteStore {
 }
 
 impl DurableStore for SqliteStore {
+    fn completion(&self, task_id: TaskId) -> Result<Option<TaskCompletion>, DurableError> {
+        SqliteStore::completion(self, task_id)
+    }
+    fn complete_task(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        completed_at_ms: u64,
+    ) -> Result<bool, DurableError> {
+        SqliteStore::complete_task(self, task_id, expected_sequence, value, completed_at_ms)
+    }
+    fn prune_completed(&self, before_ms: u64, limit: usize) -> Result<usize, DurableError> {
+        SqliteStore::prune_completed(self, before_ms, limit)
+    }
+    fn load_due_programs_batch(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+        limit: usize,
+    ) -> Result<Vec<DurableProgram>, DurableError> {
+        SqliteStore::load_due_programs_batch(self, now_ms, kind, limit)
+    }
     fn log_version(&self) -> Result<u32, DurableError> {
         SqliteStore::log_version(self)
     }
@@ -1366,6 +1438,10 @@ impl DurableStore for SqliteStore {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DurableError {
+    #[error("durable task {task_id} is already completed")]
+    TaskCompleted { task_id: TaskId },
+    #[error("durable task {task_id} is still suspended or leased")]
+    TaskSuspended { task_id: TaskId },
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -1426,6 +1502,31 @@ pub enum DurableError {
     InvalidLogVersion,
     #[error("durable log version {found} is newer than this runtime supports ({supported})")]
     UnsupportedLogVersion { found: u32, supported: u32 },
+}
+
+impl DurableError {
+    /// Retry transport/availability failures, never corrupted history or identity.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::Sqlite(rusqlite::Error::SqliteFailure(error, _)) => !matches!(
+                error.code,
+                rusqlite::ErrorCode::DatabaseCorrupt
+                    | rusqlite::ErrorCode::NotADatabase
+                    | rusqlite::ErrorCode::ConstraintViolation
+            ),
+            Self::Sqlite(rusqlite::Error::SqlInputError { .. }) => true,
+            Self::Io(_) | Self::PostgresPool(_) => true,
+            Self::Postgres(error) => {
+                error.is_closed()
+                    || error.code().is_some_and(|code| {
+                        ["08", "40", "53", "55", "57", "58"]
+                            .iter()
+                            .any(|prefix| code.code().starts_with(prefix))
+                    })
+            }
+            _ => false,
+        }
+    }
 }
 
 fn validate_program_source(source: &str) -> Result<(), DurableError> {
@@ -1541,6 +1642,7 @@ fn insert_event(
     payload: &str,
     recorded_at_ms: i64,
 ) -> Result<i64, DurableError> {
+    lifecycle::ensure_open(transaction, task_id)?;
     let id = task_id_bytes(task_id);
     let event_bytes =
         event.key.len().checked_add(payload.len()).ok_or(DurableError::HistoryByteLimit)?;
@@ -1657,7 +1759,8 @@ fn register_signal_wait(
 
 fn initialize_schema(connection: &mut Connection) -> Result<(), DurableError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if let Some(found) = read_log_version(&transaction)?
+    let previous_version = read_log_version(&transaction)?;
+    if let Some(found) = previous_version
         && found > DURABLE_LOG_VERSION
     {
         return Err(DurableError::UnsupportedLogVersion { found, supported: DURABLE_LOG_VERSION });
@@ -1709,6 +1812,7 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), DurableError> {
              registered_at_ms INTEGER NOT NULL CHECK (registered_at_ms >= 0)
          );",
     )?;
+    lifecycle::initialize(&transaction)?;
     migrate_program_columns(&transaction)?;
     let sequence_added = migrate_wakeup_columns(&transaction)?;
     if sequence_added {
@@ -1721,8 +1825,9 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), DurableError> {
              ), sequence);",
         )?;
     }
-    transaction.execute_batch(
-        "DROP INDEX IF EXISTS durable_wakeups_due;
+    if previous_version.unwrap_or(0) < 2 {
+        transaction.execute_batch(
+            "DROP INDEX IF EXISTS durable_wakeups_due;
          CREATE INDEX durable_wakeups_due
              ON durable_wakeups (wake_at_ms, lease_until_ms, task_id);
          CREATE INDEX IF NOT EXISTS durable_signal_inbox_task
@@ -1733,7 +1838,8 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), DurableError> {
              length(CAST(payload AS BLOB)) + length(CAST(event_key AS BLOB))
          ), 0)
          FROM durable_events GROUP BY task_id;",
-    )?;
+        )?;
+    }
     transaction.execute(
         "INSERT INTO tysel_durable_metadata (key, value)
          VALUES ('schema_version', ?1)
@@ -2041,7 +2147,7 @@ mod tests {
                          key TEXT PRIMARY KEY,
                          value INTEGER NOT NULL
                      );
-                     INSERT INTO tysel_durable_metadata VALUES ('schema_version', 2);",
+                     INSERT INTO tysel_durable_metadata VALUES ('schema_version', 3);",
                 )
                 .unwrap();
         }
@@ -2052,7 +2158,7 @@ mod tests {
         };
         assert!(matches!(
             error,
-            DurableError::UnsupportedLogVersion { found: 2, supported: DURABLE_LOG_VERSION }
+            DurableError::UnsupportedLogVersion { found: 3, supported: DURABLE_LOG_VERSION }
         ));
         let connection = Connection::open(&path).unwrap();
         let events_table_exists: bool = connection

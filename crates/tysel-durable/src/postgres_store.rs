@@ -1,3 +1,4 @@
+mod lifecycle;
 use native_tls::TlsConnector;
 use postgres::{Client, GenericClient, NoTls, Transaction};
 use postgres_native_tls::MakeTlsConnector;
@@ -9,10 +10,10 @@ use tysel_task::TaskId;
 use super::{
     DURABLE_LOG_VERSION, DurableError, DurableProgram, DurableProgramKind, DurableStore, EventKind,
     History, MAX_DURABLE_PROGRAM_TOTAL_BYTES, MAX_DURABLE_PROGRAMS, MAX_EVENT_PAYLOAD_BYTES,
-    MAX_HISTORY_BYTES, MAX_HISTORY_EVENTS, MAX_PENDING_SIGNALS, NewEvent, SignalWait, TaskEvent,
-    Wakeup, WakeupClaim, from_sql_integer, raw_event, stored_event, task_id_bytes,
-    task_id_from_bytes, to_sql_integer, validate_lease_owner, validate_program_source,
-    validate_signal_name,
+    MAX_HISTORY_BYTES, MAX_HISTORY_EVENTS, MAX_PENDING_SIGNALS, NewEvent, SignalWait,
+    TaskCompletion, TaskEvent, Wakeup, WakeupClaim, from_sql_integer, raw_event, stored_event,
+    task_id_bytes, task_id_from_bytes, to_sql_integer, validate_lease_owner,
+    validate_program_source, validate_signal_name,
 };
 
 const MAX_WAKEUP_BATCH: usize = 10_000;
@@ -164,6 +165,7 @@ fn initialize_schema(client: &mut Client) -> Result<(), DurableError> {
             });
         }
     }
+    lifecycle::initialize(&mut tx)?;
     tx.execute(
         "INSERT INTO tysel_durable_metadata (key, value) VALUES ('schema_version', $1)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
@@ -183,6 +185,15 @@ fn lock_task(tx: &mut Transaction<'_>, task_id: TaskId) -> Result<[u8; 16], Dura
         "SELECT task_id FROM durable_task_locks WHERE task_id = $1 FOR UPDATE",
         &[&&id[..]],
     )?;
+    if tx
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM durable_completions WHERE task_id = $1)",
+            &[&&id[..]],
+        )?
+        .get::<_, bool>(0)
+    {
+        return Err(DurableError::TaskCompleted { task_id });
+    }
     Ok(id)
 }
 
@@ -315,13 +326,8 @@ impl PostgresStore {
                 tx.commit()?;
                 return Ok(Some(existing));
             }
-            tx.query_one(
-                "SELECT value FROM tysel_durable_metadata WHERE key = 'schema_version' FOR UPDATE",
-                &[],
-            )?;
             let row = tx.query_one(
-                "SELECT COUNT(*), COALESCE(SUM(octet_length(source)), 0) FROM durable_programs",
-                &[],
+                "SELECT active_count, active_bytes FROM durable_program_stats WHERE singleton = 1 FOR UPDATE", &[],
             )?;
             let count: i64 = row.get(0);
             let total_bytes: i64 = row.get(1);
@@ -342,6 +348,7 @@ impl PostgresStore {
                  VALUES ($1, $2, $3, $4, $5)",
                 &[&&id[..], &kind.as_str(), &source, &&digest[..], &registered_at_ms],
             )?;
+            tx.execute("UPDATE durable_program_stats SET active_count = active_count + 1, active_bytes = active_bytes + $1 WHERE singleton = 1", &[&source_bytes])?;
             tx.commit()?;
             Ok(None)
         })
@@ -377,6 +384,21 @@ impl PostgresStore {
 }
 
 impl DurableStore for PostgresStore {
+    fn completion(&self, task_id: TaskId) -> Result<Option<TaskCompletion>, DurableError> {
+        self.read_completion(task_id)
+    }
+    fn complete_task(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        completed_at_ms: u64,
+    ) -> Result<bool, DurableError> {
+        self.finish_task(task_id, expected_sequence, value, completed_at_ms)
+    }
+    fn prune_completed(&self, before_ms: u64, limit: usize) -> Result<usize, DurableError> {
+        self.prune_finished(before_ms, limit)
+    }
     fn log_version(&self) -> Result<u32, DurableError> {
         self.with_client(|client| {
             let row = client
@@ -416,14 +438,25 @@ impl DurableStore for PostgresStore {
         now_ms: u64,
         kind: DurableProgramKind,
     ) -> Result<Vec<DurableProgram>, DurableError> {
+        self.load_due_programs_batch(now_ms, kind, MAX_DURABLE_PROGRAMS)
+    }
+
+    fn load_due_programs_batch(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+        limit: usize,
+    ) -> Result<Vec<DurableProgram>, DurableError> {
         let now_ms = to_sql_integer(now_ms, "now_ms")?;
         self.with_client(|client| {
             let rows = client.query(
                 "SELECT p.task_id, p.program_kind, p.source, p.source_sha256, p.registered_at_ms
                  FROM durable_programs p JOIN durable_wakeups w ON w.task_id = p.task_id
                  WHERE w.wake_at_ms <= $1 AND (w.lease_until_ms IS NULL OR w.lease_until_ms <= $1)
-                   AND p.program_kind = $2 ORDER BY p.task_id LIMIT $3",
-                &[&now_ms, &kind.as_str(), &((MAX_DURABLE_PROGRAMS + 1) as i64)],
+                   AND p.program_kind = $2
+                   AND NOT EXISTS (SELECT 1 FROM durable_completions c WHERE c.task_id = p.task_id)
+                   ORDER BY w.wake_at_ms, p.task_id LIMIT $3",
+                &[&now_ms, &kind.as_str(), &(limit.min(MAX_DURABLE_PROGRAMS) as i64)],
             )?;
             if rows.len() > MAX_DURABLE_PROGRAMS {
                 return Err(DurableError::ProgramLimit);
@@ -449,7 +482,7 @@ impl DurableStore for PostgresStore {
             let mut tx = client.transaction()?;
             let id = lock_task(&mut tx, task_id)?;
             let existing = select_program(&mut tx, task_id)?;
-            if existing.is_some() {
+            if let Some(program) = &existing {
                 let row = tx.query_one(
                     "SELECT EXISTS(SELECT 1 FROM durable_events WHERE task_id = $1)
                        OR EXISTS(SELECT 1 FROM durable_wakeups WHERE task_id = $1)
@@ -460,6 +493,7 @@ impl DurableStore for PostgresStore {
                 if row.get::<_, bool>(0) {
                     return Err(DurableError::ProgramInUse { task_id });
                 }
+                tx.execute("UPDATE durable_program_stats SET active_count = active_count - 1, active_bytes = active_bytes - $1 WHERE singleton = 1", &[&(program.source.len() as i64)])?;
                 tx.execute("DELETE FROM durable_programs WHERE task_id = $1", &[&&id[..]])?;
             }
             tx.commit()?;
@@ -469,7 +503,12 @@ impl DurableStore for PostgresStore {
 
     fn program_count(&self) -> Result<usize, DurableError> {
         self.with_client(|client| {
-            let count: i64 = client.query_one("SELECT COUNT(*) FROM durable_programs", &[])?.get(0);
+            let count: i64 = client
+                .query_one(
+                    "SELECT active_count FROM durable_program_stats WHERE singleton = 1",
+                    &[],
+                )?
+                .get(0);
             usize::try_from(count).map_err(|_| DurableError::ProgramLimit)
         })
     }

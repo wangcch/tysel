@@ -105,7 +105,7 @@ Shutdown:
 4. If the process remains, capture logs and process state before forcing it.
 
 On SIGTERM or Ctrl-C, packaged services and `tysel run` close the listener,
-drain HTTP/1 and HTTP/2 connections. Idle sockets
+stop new durable claims, and drain HTTP/1 and HTTP/2 connections. Idle sockets
 close immediately. WebSockets receive close code 1001 (Going Away) when the
 transport can send it. Connections that remain after `request_timeout_ms +
 1000` milliseconds are closed forcibly. This HTTP grace is shared across
@@ -114,6 +114,50 @@ the service-manager grace longer. Development servers use the same draining
 path, with enough grace for the largest timeout seen during reloads.
 
 Clean shutdown flushes OTLP providers and stops the service-owned task plane.
+
+Durable storage availability errors move the scheduler to `recovering`, with
+exponential retry from 200 ms to a 5-second base plus at most 25% jitter. New
+durable starts fail while recovery is pending. A successful poll restores
+`healthy`. Unrecoverable store/scheduler failures, such as a corrupt program
+digest, reach the service owner, which drains and exits unsuccessfully.
+Completion-write availability failures retain the JSON outcome in memory and retry
+persistence without rerunning the handler. At most 32 active executions and pending
+finalizations share reserved slots. Pending entries retain compact results and
+lease/sequence metadata, releasing consumed replay history. `completion_pending`
+logs the affected task ID. Completed outcomes are still reported when a different
+task in the same scheduling batch encounters a storage failure.
+Retries remain subject to the original lease; lease expiry or shutdown with pending
+outcomes reports failure and needs operator investigation. This does not provide
+recovery after process death: active task restart eligibility and atomic application
+admission/signal delivery remain release blockers (G1/G2).
+
+Per-task execution failures are logged as `task_failed`; they do not by
+themselves stop unrelated work. These states
+and task outcomes are bounded `durable` log events containing task IDs and
+attempt counts, without payloads, source, or database credentials. An HTTP-only
+health route may still succeed during recovery; use scheduler diagnostics for
+durable health.
+
+### Durable log v2 upgrade
+
+This release migrates durable log v1 to v2 transactionally on store open. The
+application manifest schema remains version 1. Before upgrading:
+
+1. Drain and stop **all** old writers and schedulers.
+2. Back up the complete durable store and verify that it can be restored.
+3. Start the new release or its admin command; verify replay and completion.
+4. Resume traffic only after those checks pass.
+
+Do not run old and new writers together. Old runtimes reject v2 on startup;
+rollback requires restoring the pre-upgrade snapshot and its matching release.
+Existing v1 programs remain active unless a new execution explicitly completes
+them. An absent wakeup is not proof of completion. Completion results and the
+active catalog counters persist across reopen. Retained data is removed only
+by [`tysel durable prune`](../reference/cli/tasks.md#tysel-durable).
+
+Failed executions and interrupted runs without an explicit completion are
+retained for investigation. This change does not add automatic replay of
+orphaned runs or an exactly-once external-effect guarantee.
 
 ## Durable Postgres backup and restore
 
@@ -131,7 +175,7 @@ storage option, not a shared multi-replica durable backend.
 5. Resume writers only after durable backup completion.
 
 The backup must contain all Tysel durable tables, including metadata, programs,
-events, wakeups, signals, task locks, and statistics. Do not copy selected task
+events, wakeups, signals, completions, task locks, and statistics. Do not copy selected task
 rows or individual tables.
 
 ### Restore

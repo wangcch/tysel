@@ -254,7 +254,11 @@ fn run_with_reactor(
                     }
                     let value: serde_json::Value = serde_json::from_str(&json)
                         .map_err(|err| EngineError::Isolate(err.to_string()))?;
-                    Ok(from_json(value))
+                    let output = from_json_ref(&value);
+                    if let Some(session) = &durable {
+                        session.retain_result(value).map_err(EngineError::Isolate)?;
+                    }
+                    Ok(output)
                 })
             } else {
                 Ok(settled)
@@ -474,6 +478,21 @@ fn from_js(ctx: &Ctx<'_>, value: rquickjs::Value<'_>) -> Result<Value, EngineErr
     }
     let _ = ctx;
     Err(EngineError::Isolate(format!("unsupported js type: {}", value.type_name())))
+}
+
+fn from_json_ref(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(value) => Value::Bool(*value),
+        serde_json::Value::Number(value) => Value::Number(value.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(value) => Value::String(value.clone()),
+        serde_json::Value::Array(values) => {
+            Value::Array(values.iter().map(from_json_ref).collect())
+        }
+        serde_json::Value::Object(fields) => Value::Record(
+            fields.iter().map(|(key, value)| (key.clone(), from_json_ref(value))).collect(),
+        ),
+    }
 }
 
 pub(crate) fn from_json(value: serde_json::Value) -> Value {

@@ -19,6 +19,7 @@ mod compat;
 mod cross_target;
 mod dev;
 mod doctor;
+mod durable_admin;
 mod image;
 mod init;
 mod integrity;
@@ -120,6 +121,13 @@ enum ConfigCommand {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Inspect retained durable results and maintain completed history.
+    Durable {
+        #[command(subcommand)]
+        command: durable_admin::DurableCommand,
+        #[arg(long, global = true)]
+        manifest: Option<PathBuf>,
+    },
     /// Create a new Tysel application.
     Init {
         /// Project directory; omit it in a terminal to choose interactively.
@@ -444,6 +452,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Ok(project)
     };
     let result = match cli.command {
+        Commands::Durable { command, manifest } => {
+            durable_admin::run(command, &context(manifest.as_deref())?)
+        }
         Commands::Inspect { manifest } => inspect(&context(manifest.as_deref())?),
         Commands::Check { manifest } => {
             let project = context(manifest.as_deref())?;

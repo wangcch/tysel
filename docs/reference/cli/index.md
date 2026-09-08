@@ -38,7 +38,7 @@ tysel run --manifest services/worker/tysel.toml
 | --- | --- |
 | Project setup | [`init`, `config`](project.md) |
 | Development | [`check`, `types`, `compat`, `test`, `dev`, `run`, `inspect`](development.md) |
-| Tasks and protocols | [`task`, `queue`, `mcp`](tasks.md) |
+| Tasks and protocols | [`task`, `queue`, `mcp`, `durable`](tasks.md) |
 | Delivery | [`build`, `image`](delivery.md) |
 | Installation | [`doctor`, `upgrade`](installation.md) |
 | Evidence | [`bench`, `release`](evidence.md) |

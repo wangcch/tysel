@@ -76,7 +76,14 @@ tysel.durable.sendSignal(status.taskId, "approval", { approved: true });
 ```
 
 `start` returns either a completed result or a suspended status.
-`sendSignal` appends a JSON signal for a waiting workflow.
+`sendSignal` appends a JSON signal for a waiting workflow. Once a registered
+workflow completes successfully, its JSON result is persisted and its active
+program quota is released. Its program and replay history remain retained.
+Later writes or signals to a retained completed task are rejected.
+
+Use [`tysel durable result` and `tysel durable prune`](../cli/tasks.md#tysel-durable)
+to read a retained result or remove an aged batch. Failed and legacy tasks are
+never inferred complete from the absence of a wakeup.
 
 Durable inputs and results are limited to 1 MiB, with additional history,
 signal, and program bounds listed under [Limits and defaults](../limits-and-defaults.md).
