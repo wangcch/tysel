@@ -197,3 +197,53 @@ fn postgres_v1_migration_keeps_unclassified_work_and_reopens_completion_counters
     }
     admin.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).unwrap();
 }
+
+#[test]
+fn postgres_completion_rechecks_lease_after_task_and_quota_lock_waits() {
+    let Some(store) = store() else {
+        return;
+    };
+    let url = std::env::var("TYSEL_POSTGRES_TEST_URL").unwrap();
+    let mut blocker = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    for quota in [false, true] {
+        let id = task(901 + u128::from(quota));
+        store.put_program(id, "42", 0).unwrap();
+        let active_before = store.program_count().unwrap();
+        let bytes = id.0.to_be_bytes();
+        let mut tx = blocker.transaction().unwrap();
+        if quota {
+            tx.query_one(
+                "SELECT singleton FROM durable_program_stats WHERE singleton = 1 FOR UPDATE",
+                &[],
+            )
+            .unwrap();
+        } else {
+            tx.query_one(
+                "SELECT task_id FROM durable_task_locks WHERE task_id = $1 FOR UPDATE",
+                &[&&bytes[..]],
+            )
+            .unwrap();
+        }
+        let now = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        let until = now() + 500;
+        let worker = {
+            let store = store.clone();
+            std::thread::spawn(move || store.complete_task_before(id, 0, &json!(42), until))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        assert!(!worker.is_finished(), "completion must wait for the held lock");
+        tx.rollback().unwrap();
+        assert!(matches!(worker.join().unwrap(), Err(DurableError::TaskSuspended { .. })));
+        assert!(store.completion(id).unwrap().is_none());
+        assert!(store.program(id).unwrap().is_some());
+        assert_eq!(store.program_count().unwrap(), active_before);
+        let before = now();
+        assert!(store.complete_task_before(id, 0, &json!(42), now() + 5_000).unwrap());
+        assert!(store.completion(id).unwrap().unwrap().completed_at_ms >= before);
+        assert!(store.complete_task_before(id, 0, &json!(42), 0).unwrap());
+        assert!(matches!(
+            store.complete_task_before(id, 0, &json!(43), 0),
+            Err(DurableError::TaskCompleted { .. })
+        ));
+    }
+}

@@ -60,6 +60,7 @@ impl PostgresStore {
         expected_sequence: u64,
         value: &Value,
         completed_at_ms: u64,
+        lease_until_ms: Option<u64>,
     ) -> Result<bool, DurableError> {
         let json = serde_json::to_string(value)?;
         if json.len() > MAX_EVENT_PAYLOAD_BYTES {
@@ -83,9 +84,14 @@ impl PostgresStore {
             }
             let suspended: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM durable_wakeups WHERE task_id = $1) OR EXISTS(SELECT 1 FROM durable_signal_waits WHERE task_id = $1)", &[&&id[..]])?.get(0);
             if suspended { return Err(DurableError::TaskSuspended { task_id }); }
+            // Perform the existing quota update before checking time so its row
+            // lock cannot introduce an unchecked wait after the lease check.
+            // Expiry rolls this update back with the completion transaction.
+            tx.execute("UPDATE durable_program_stats SET active_count = active_count - 1, active_bytes = active_bytes - $1 WHERE singleton = 1", &[&source_bytes])?;
+            let completed_at_ms = crate::lifecycle::completion_time(task_id, completed_at_ms, lease_until_ms)?;
             tx.execute("INSERT INTO durable_completions (task_id, next_sequence, result_json, completed_at_ms) VALUES ($1, $2, $3, $4)",
                 &[&&id[..], &actual, &json, &to_sql_integer(completed_at_ms, "completed_at_ms")?])?;
-            tx.execute("UPDATE durable_program_stats SET active_count = active_count - 1, active_bytes = active_bytes - $1 WHERE singleton = 1", &[&source_bytes])?;
+            crate::lifecycle::completion_time(task_id, completed_at_ms, lease_until_ms)?;
             tx.commit()?;
             Ok(true)
         })

@@ -37,6 +37,26 @@ pub(super) fn ensure_open(connection: &Connection, task_id: TaskId) -> Result<()
     Ok(())
 }
 
+/// Validate at the terminal transaction boundary, never with a caller's stale clock.
+/// The unleased low-level API preserves its explicit timestamp contract.
+pub(super) fn completion_time(
+    task_id: TaskId,
+    timestamp: u64,
+    lease_until_ms: Option<u64>,
+) -> Result<u64, DurableError> {
+    let Some(until) = lease_until_ms else {
+        return Ok(timestamp);
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(std::io::Error::other)?
+        .as_millis();
+    if now >= u128::from(until) {
+        return Err(DurableError::TaskSuspended { task_id });
+    }
+    Ok(now as u64)
+}
+
 impl SqliteStore {
     pub fn completion(&self, task_id: TaskId) -> Result<Option<TaskCompletion>, DurableError> {
         let connection = self.lock()?;
@@ -64,6 +84,17 @@ impl SqliteStore {
         expected_sequence: u64,
         value: &Value,
         completed_at_ms: u64,
+    ) -> Result<bool, DurableError> {
+        self.finish_task(task_id, expected_sequence, value, completed_at_ms, None)
+    }
+
+    pub(super) fn finish_task(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        completed_at_ms: u64,
+        lease_until_ms: Option<u64>,
     ) -> Result<bool, DurableError> {
         let json = serde_json::to_string(value)?;
         if json.len() > MAX_EVENT_PAYLOAD_BYTES {
@@ -115,9 +146,11 @@ impl SqliteStore {
         if suspended {
             return Err(DurableError::TaskSuspended { task_id });
         }
+        let completed_at_ms = completion_time(task_id, completed_at_ms, lease_until_ms)?;
         tx.execute("INSERT INTO durable_completions (task_id, next_sequence, result_json, completed_at_ms) VALUES (?1, ?2, ?3, ?4)",
             params![id.as_slice(), actual, json, to_sql_integer(completed_at_ms, "completed_at_ms")?])?;
         tx.execute("UPDATE durable_program_stats SET active_count = active_count - 1, active_bytes = active_bytes - ?1 WHERE singleton = 1", params![source_bytes])?;
+        completion_time(task_id, completed_at_ms, lease_until_ms)?;
         tx.commit()?;
         Ok(true)
     }
@@ -175,6 +208,27 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leased_completion_preserves_idempotence_and_uses_transaction_time() {
+        let store = SqliteStore::in_memory().unwrap();
+        let id = TaskId(801);
+        store.put_program(id, "42", 0).unwrap();
+        assert!(matches!(
+            store.complete_task_before(id, 0, &Value::from(42), 0),
+            Err(DurableError::TaskSuspended { .. })
+        ));
+        assert!(store.completion(id).unwrap().is_none());
+        let before = completion_time(id, 0, Some(u64::MAX)).unwrap();
+        assert!(store.complete_task_before(id, 0, &Value::from(42), u64::MAX).unwrap());
+        assert!(store.completion(id).unwrap().unwrap().completed_at_ms >= before);
+        assert!(store.complete_task_before(id, 0, &Value::from(42), 0).unwrap());
+        assert!(matches!(
+            store.complete_task_before(id, 0, &Value::from(43), 0),
+            Err(DurableError::TaskCompleted { .. })
+        ));
+        assert_eq!(store.program_count().unwrap(), 0);
+    }
 
     #[test]
     fn completion_releases_quota_and_retention_preserves_live_history() {

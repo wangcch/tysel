@@ -242,6 +242,16 @@ pub trait DurableStore: Send + Sync {
         value: &Value,
         completed_at_ms: u64,
     ) -> Result<bool, DurableError>;
+    /// Complete under an absolute lease deadline. Implementations must validate a
+    /// fresh clock after acquiring transaction locks and before commit. Identical
+    /// already-committed outcomes may be acknowledged after expiry.
+    fn complete_task_before(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        lease_until_ms: u64,
+    ) -> Result<bool, DurableError>;
     /// Delete only explicitly completed tasks older than the cutoff, at most 100 per call.
     fn prune_completed(&self, before_ms: u64, limit: usize) -> Result<usize, DurableError>;
     fn load_due_programs_batch(
@@ -1261,6 +1271,15 @@ impl DurableStore for SqliteStore {
         completed_at_ms: u64,
     ) -> Result<bool, DurableError> {
         SqliteStore::complete_task(self, task_id, expected_sequence, value, completed_at_ms)
+    }
+    fn complete_task_before(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        lease_until_ms: u64,
+    ) -> Result<bool, DurableError> {
+        self.finish_task(task_id, expected_sequence, value, 0, Some(lease_until_ms))
     }
     fn prune_completed(&self, before_ms: u64, limit: usize) -> Result<usize, DurableError> {
         SqliteStore::prune_completed(self, before_ms, limit)

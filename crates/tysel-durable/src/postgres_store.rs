@@ -394,7 +394,16 @@ impl DurableStore for PostgresStore {
         value: &Value,
         completed_at_ms: u64,
     ) -> Result<bool, DurableError> {
-        self.finish_task(task_id, expected_sequence, value, completed_at_ms)
+        self.finish_task(task_id, expected_sequence, value, completed_at_ms, None)
+    }
+    fn complete_task_before(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        lease_until_ms: u64,
+    ) -> Result<bool, DurableError> {
+        self.finish_task(task_id, expected_sequence, value, 0, Some(lease_until_ms))
     }
     fn prune_completed(&self, before_ms: u64, limit: usize) -> Result<usize, DurableError> {
         self.prune_finished(before_ms, limit)

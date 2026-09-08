@@ -126,7 +126,10 @@ finalizations share reserved slots. Pending entries retain compact results and
 lease/sequence metadata, releasing consumed replay history. `completion_pending`
 logs the affected task ID. Completed outcomes are still reported when a different
 task in the same scheduling batch encounters a storage failure.
-Retries remain subject to the original lease; lease expiry or shutdown with pending
+Retries remain subject to the original lease. Completion transactions check fresh
+time after acquiring their locks and again before commit; expiry rolls back both
+the result and quota changes. An identical already-committed outcome can still be
+acknowledged after expiry. Lease expiry or shutdown with pending
 outcomes reports failure and needs operator investigation. This does not provide
 recovery after process death: active task restart eligibility and atomic application
 admission/signal delivery remain release blockers (G1/G2).

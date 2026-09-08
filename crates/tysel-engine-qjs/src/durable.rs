@@ -340,18 +340,13 @@ impl DurableCompletion {
     }
 
     pub fn complete(&self, value: &serde_json::Value) -> Result<bool, DurableError> {
+        if let Some(until) = self.lease_until_ms {
+            return self.store.complete_task_before(self.task_id, self.next_sequence, value, until);
+        }
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(std::io::Error::other)?
             .as_millis() as u64;
-        if self.lease_until_ms.is_some_and(|until| now_ms >= until) {
-            if self.store.completion(self.task_id)?.is_some_and(|completion| {
-                completion.next_sequence == self.next_sequence && completion.value == *value
-            }) {
-                return Ok(true);
-            }
-            return Err(DurableError::TaskSuspended { task_id: self.task_id });
-        }
         self.store.complete_task(self.task_id, self.next_sequence, value, now_ms)
     }
 }
@@ -432,7 +427,7 @@ mod completion_tests {
         assert!(store.completion(task_id).unwrap().is_none());
         store.complete_task(task_id, 0, &json!(42), 1).unwrap();
         assert!(session.complete(&json!(42)).unwrap());
-        assert!(matches!(session.complete(&json!(43)), Err(DurableError::TaskSuspended { .. })));
+        assert!(matches!(session.complete(&json!(43)), Err(DurableError::TaskCompleted { .. })));
         assert_eq!(store.completion(task_id).unwrap().unwrap().value, json!(42));
     }
 }
