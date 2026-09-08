@@ -1,7 +1,8 @@
 # Durable API
 
-Durable handlers record effect boundaries so interrupted work can resume
-without repeating already committed external actions.
+Durable handlers record effect outcomes so interrupted work can replay recorded
+boundaries. An external commit without a recorded outcome still requires provider
+idempotency or reconciliation when the callback is entered again.
 
 ```ts
 interface DurableContext {
@@ -71,15 +72,69 @@ their results are not wrapped by a recorded boundary.
 ## Control API
 
 ```ts
-const status = tysel.durable.start("provision", input);
-tysel.durable.sendSignal(status.taskId, "approval", { approved: true });
+const status = tysel.durable.start("provision", input, {
+  idempotencyKey: "tenant-42:provision:request-123",
+});
+tysel.durable.sendSignal(status.taskId, "approval", { approved: true }, {
+  idempotencyKey: "approval-decision-456",
+});
 ```
 
-`start` returns either a completed result or a suspended status.
-`sendSignal` appends a JSON signal for a waiting workflow. Once a registered
-workflow completes successfully, its JSON result is persisted and its active
-program quota is released. Its program and replay history remain retained.
-Later writes or signals to a retained completed task are rejected.
+`start` atomically persists the task, immutable input and restart eligibility
+before executing the handler. It returns `completed`, `suspended`, or `accepted`
+when another execution owns the task or it is already queued/waiting. `accepted`
+is not a suspension acknowledgement or a terminal result.
+
+The optional start key is scoped to the entire durable store: namespace it by
+tenant and operation. Repeating it with the same bundled handler and canonical
+JSON input returns the same task ID without starting a replacement. Changing the
+handler or input under the same key is a conflict. A failed task returns an
+explicit error on same-key admission retry; it is not acknowledged as `accepted`. Without a key, every call is a
+new admission; a lost acknowledgement cannot be safely repaired by another start.
+
+Signal keys are scoped to a task. Receipt and inbox insertion share one transaction.
+Repeating the same name, payload and key is acknowledged even after consumption or
+completion, without adding another signal. Conflicting reuse is rejected. Unkeyed
+signals retain FIFO semantics and each call enqueues a new signal. New signals to
+completed tasks are rejected. Up to 10,000 keyed signal receipts are retained per
+task, independently of the pending inbox bound.
+
+Applications using a separate database should persist an outbox intent and stable
+key in their own transaction, retry the exact request after uncertain delivery,
+and mark it delivered after acknowledgement. This provides a repairable protocol,
+**not a transaction across the application and runtime databases**. Tysel does not
+run or drain the application's outbox. Both admission and signal deduplication
+last until explicit `prune` removes the completed task; retain tasks longer than
+the application's retry horizon, and do not reuse keys after cleanup.
+
+## Active crash recovery
+
+The service scheduler persists an execution lease independently of wakeups.
+After process death, an eligible task is claimed after lease expiry and resumes
+against its original source and history. Recorded effects return their recorded
+result; an effect interrupted before recording its outcome is entered again.
+Use the same provider operation key or reconcile its outcome before another write.
+Execution generations and unique ownership tokens fence history, suspension and
+completion writes from stale executors. They cannot fence an external provider's
+in-flight request. The lease is the request timeout plus the scheduler margin;
+recovery is not instantaneous. Pending completion retries also respect that
+lease: a stale completion handle is discarded without stopping the service, and
+the original managed task becomes eligible for normal fenced recovery.
+
+A storage failure at a durable boundary invalidates the current execution attempt,
+even if handler code catches the JavaScript exception. The runtime preserves the
+storage error and restart eligibility rather than committing a fallback result.
+After storage recovers and the lease expires, the original history is replayed.
+Ordinary handler exceptions and task boundary validation/limit errors fail only
+the task; they do not stop the scheduler. Lost execution authority abandons the
+stale attempt without stopping other tasks.
+
+Completion releases active quota while retaining program, history and receipts.
+Legacy v1/v2 tasks with persisted wakeups can enter the managed lifecycle when
+resumed. Legacy orphan tasks with neither a wakeup nor an execution record are
+not guessed runnable; investigate them before initiating further external writes.
+Low-level caller-owned Rust sessions and in-memory registries retain their
+caller-managed lifecycle contract.
 
 Use [`tysel durable result` and `tysel durable prune`](../cli/tasks.md#tysel-durable)
 to read a retained result or remove an aged batch. Failed and legacy tasks are

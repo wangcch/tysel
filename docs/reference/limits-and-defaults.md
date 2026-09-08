@@ -86,6 +86,8 @@ request limit. The smaller applicable bound wins.
 | Retained completion result | 1 MiB per task |
 | Retention cleanup | At most 100 tasks; 16 MiB of retained payload per batch, or one larger task |
 | Concurrent durable polling | 16 |
+| Idempotency key | 1–256 UTF-8 bytes |
+| Retained keyed signal receipts | 10,000 per task; removed with completed-task cleanup |
 
 Completed programs and history remain stored until explicit cleanup, but do
 not consume the active catalog quota. Legacy records without an explicit

@@ -121,7 +121,11 @@ durable starts fail while recovery is pending. A successful poll restores
 `healthy`. Unrecoverable store/scheduler failures, such as a corrupt program
 digest, reach the service owner, which drains and exits unsuccessfully.
 Completion-write availability failures retain the JSON outcome in memory and retry
-persistence without rerunning the handler. At most 32 active executions and pending
+persistence without rerunning the handler while the execution lease is valid.
+If that authority expires or is superseded, the pending handle and its slot are
+released without reporting completion. The scheduler can reclaim the original
+managed task and replay its history; recorded effects do not execute again.
+At most 32 active executions and pending
 finalizations share reserved slots. Pending entries retain compact results and
 lease/sequence metadata, releasing consumed replay history. `completion_pending`
 logs the affected task ID. Completed outcomes are still reported when a different
@@ -129,10 +133,18 @@ task in the same scheduling batch encounters a storage failure.
 Retries remain subject to the original lease. Completion transactions check fresh
 time after acquiring their locks and again before commit; expiry rolls back both
 the result and quota changes. An identical already-committed outcome can still be
-acknowledged after expiry. Lease expiry or shutdown with pending
-outcomes reports failure and needs operator investigation. This does not provide
-recovery after process death: active task restart eligibility and atomic application
-admission/signal delivery remain release blockers (G1/G2).
+acknowledged after expiry. Lease expiry or shutdown with pending outcomes reports
+failure. Persisted execution eligibility survives process death; a new scheduler
+can reclaim the same task after expiry. Every execution has a unique token and
+generation, and stale history/suspension/completion writes are rejected. Interrupted
+unrecorded effects are re-entered: reconcile external outcomes or use provider
+idempotency before repeating writes. Automatic replay does not imply exactly-once
+external effects.
+
+For admission and signal acknowledgement gaps, use the optional stable
+`idempotencyKey` and an application outbox. The runtime atomically records each
+keyed request in its own database; it cannot atomically commit the application's
+separate database. See the [control contract](../reference/runtime/durable.md#control-api).
 
 Per-task execution failures are logged as `task_failed`; they do not by
 themselves stop unrelated work. These states
@@ -141,9 +153,9 @@ attempt counts, without payloads, source, or database credentials. An HTTP-only
 health route may still succeed during recovery; use scheduler diagnostics for
 durable health.
 
-### Durable log v2 upgrade
+### Durable log v3 upgrade
 
-This release migrates durable log v1 to v2 transactionally on store open. The
+This release migrates durable log v1/v2 to v3 transactionally on store open. The
 application manifest schema remains version 1. Before upgrading:
 
 1. Drain and stop **all** old writers and schedulers.
@@ -151,16 +163,18 @@ application manifest schema remains version 1. Before upgrading:
 3. Start the new release or its admin command; verify replay and completion.
 4. Resume traffic only after those checks pass.
 
-Do not run old and new writers together. Old runtimes reject v2 on startup;
+Do not run old and new writers together. Old runtimes reject v3 on startup;
 rollback requires restoring the pre-upgrade snapshot and its matching release.
-Existing v1 programs remain active unless a new execution explicitly completes
+Existing v1/v2 programs remain active unless a new execution explicitly completes
 them. An absent wakeup is not proof of completion. Completion results and the
 active catalog counters persist across reopen. Retained data is removed only
 by [`tysel durable prune`](../reference/cli/tasks.md#tysel-durable).
 
-Failed executions and interrupted runs without an explicit completion are
-retained for investigation. This change does not add automatic replay of
-orphaned runs or an exactly-once external-effect guarantee.
+Failed executions are retained for investigation. Legacy interrupted runs without
+a wakeup or a v3 execution record remain unclassified and are not automatically
+replayed. Do not infer a safe replacement write from absent runtime history.
+Completion pruning also removes admission identities and signal receipts; keep
+retention longer than the application outbox retry horizon.
 
 ## Durable Postgres backup and restore
 
@@ -178,7 +192,8 @@ storage option, not a shared multi-replica durable backend.
 5. Resume writers only after durable backup completion.
 
 The backup must contain all Tysel durable tables, including metadata, programs,
-events, wakeups, signals, completions, task locks, and statistics. Do not copy selected task
+events, wakeups, signals, completions, execution leases, idempotency receipts,
+task locks, and statistics. Do not copy selected task
 rows or individual tables.
 
 ### Restore
@@ -273,3 +288,28 @@ logs.
 
 After recovery, rerun release admission and one durable restart/replay test
 before closing the incident. See [Debugging](../guides/debugging.md).
+
+### Active-crash and acknowledgement gates
+
+From a checked-out runtime source tree, build the local binaries and run:
+
+```sh
+cargo build --locked -p tysel-cli -p tysel-runtime -p tysel-isolate --bins
+python3 tests/p1/crash_recovery.py
+```
+
+The gate uses only loopback services and disposable databases. It covers six
+SIGKILL windows in both `tysel run` and standalone mode with an empty PATH:
+initial unacknowledged admission, before the external write, external commit
+before response, response before effect recording, after effect recording, and
+projection update before signal-wait registration. It also retries a persisted
+signal after its HTTP acknowledgement is lost. Passing requires the same task
+to complete with the reconciled result, a single external create, and a single
+consumed approval event. The fake provider reconciles by stable operation ID;
+the runtime does not make arbitrary provider writes exactly-once.
+
+Run `cargo test --locked -p tysel-durable --test execution` with a disposable
+`TYSEL_POSTGRES_TEST_URL` to also exercise PostgreSQL execution fencing and
+idempotency. The SIGKILL gate above uses SQLite; PostgreSQL deployment crash and
+capacity checks, and an application's own outbox integration, remain separate
+release verification work.

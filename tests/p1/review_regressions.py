@@ -16,6 +16,7 @@ import tempfile
 import time
 
 REPO = Path(__file__).resolve().parents[2]
+BIN_DIR = Path(os.environ.get("TYSEL_GATE_BIN_DIR", str(REPO / "target/debug"))).resolve()
 ROOT = Path(tempfile.mkdtemp(prefix="tysel-review-gates-"))
 
 
@@ -32,10 +33,10 @@ class Service:
         )
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("TYSEL_DURABLE_", "OTEL_"))}
-        env.update(OTEL_SDK_DISABLED="true", TYSEL_WORKER=str(REPO / "target/debug/tysel-worker"))
+        env.update(OTEL_SDK_DISABLED="true", TYSEL_WORKER=str(BIN_DIR / "tysel-worker"))
         self.log = (self.root / "service.log").open("w")
         self.process = subprocess.Popen(
-            [str(REPO / "target/debug/tysel"), "-C", str(self.root), "run"],
+            [str(BIN_DIR / "tysel"), "-C", str(self.root), "run"],
             stdout=self.log, stderr=self.log, env=env,
         )
 
