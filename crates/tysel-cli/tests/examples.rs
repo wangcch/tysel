@@ -25,7 +25,7 @@ fn isolated_plugin_enforces_profile_and_recovers() {
             .stderr(Stdio::piped()),
         "isolated plugin example",
     );
-    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
 
     let (status, root) = http_json(&addr, "/");
     assert_eq!(status, 200);
@@ -51,9 +51,18 @@ fn isolated_plugin_enforces_profile_and_recovers() {
         .status()
         .expect("kill isolated worker");
     assert!(status.success());
+    // Signal delivery is asynchronous. A request racing worker exit can fail
+    // with an uncertain outcome and must not be transparently replayed. This
+    // test checks recovery after confirmed exit; supervisor tests cover the race.
+    wait_for_worker_exit(original, Duration::from_secs(5));
 
     let (status, recovered) = http_json(&addr, "/");
-    assert_eq!(status, 200, "worker did not recover: {recovered}");
+    assert_eq!(
+        status,
+        200,
+        "worker did not recover: {recovered}; logs: {}",
+        log.lock().expect("captured service log")
+    );
     assert_eq!(recovered["plugin"], "echo");
     let replacement = wait_for_worker(child.id(), Some(original), Duration::from_secs(5));
     assert_ne!(replacement, original);
@@ -172,6 +181,28 @@ fn wait_for_worker(parent: u32, exclude: Option<u32>, timeout: Duration) -> u32 
         thread::sleep(Duration::from_millis(20));
     }
     panic!("timed out waiting for tysel-worker child of {parent}");
+}
+
+fn wait_for_worker_exit(pid: u32, timeout: Duration) {
+    let started = Instant::now();
+    loop {
+        let output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .output()
+            .expect("inspect killed worker");
+        assert!(
+            output.status.success() || output.status.code() == Some(1),
+            "ps failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let state = String::from_utf8_lossy(&output.stdout);
+        // A zombie has exited and can be reaped by the supervisor's try_wait.
+        if state.trim().is_empty() || state.trim_start().starts_with('Z') {
+            return;
+        }
+        assert!(started.elapsed() < timeout, "worker {pid} did not exit: {state}");
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn worker_children(parent: u32) -> Vec<u32> {
