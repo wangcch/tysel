@@ -19,6 +19,7 @@
   <a href="docs/getting-started.md">Get started</a> ·
   <a href="docs/guides/examples.md">Examples</a> ·
   <a href="docs/index.md">Documentation</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
   <a href="docs/security/README.md">Security</a>
 </p>
 

@@ -22,7 +22,22 @@ env:
   TYSEL_TOOLCHAIN_IMAGE: ghcr.io/wangcch/tysel-toolchain
 
 jobs:
+  release-notes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate changelog before building release artifacts
+        run: |
+          python3 .github/scripts/test-release-notes.py
+          args=()
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            args+=(--release-tag "$GITHUB_REF_NAME")
+          fi
+          python3 .github/scripts/release-notes.py "${args[@]}" > /dev/null
+
   policy:
+    needs: release-notes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -100,6 +115,7 @@ jobs:
           if-no-files-found: error
 
   package-npm:
+    needs: release-notes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -124,6 +140,7 @@ jobs:
           if-no-files-found: error
 
   package-rust-sdk:
+    needs: release-notes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -139,6 +156,7 @@ jobs:
           if-no-files-found: error
 
   package-component-starters:
+    needs: release-notes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -186,6 +204,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
+    needs: release-notes
     strategy:
       fail-fast: false
       matrix:
@@ -260,6 +279,7 @@ jobs:
           if-no-files-found: error
 
   build-darwin:
+    needs: release-notes
     strategy:
       fail-fast: false
       matrix:
@@ -543,13 +563,15 @@ jobs:
           version="$(bash .github/scripts/check-version-sync.sh)"
           channel="$(bash .github/scripts/release-channel.sh "$version")"
           bash .github/scripts/verify-release-assets.sh target/publish "$version"
+          python3 .github/scripts/release-notes.py "$version" --release-tag "$GITHUB_REF_NAME" > target/release-notes.md
           if gh release view "$GITHUB_REF_NAME" --json isDraft > target/release-state.json 2>/dev/null; then
             jq -e '.isDraft == true' target/release-state.json > /dev/null || {
               echo "release is already public and immutable" >&2
               exit 1
             }
+            gh release edit "$GITHUB_REF_NAME" --notes-file target/release-notes.md
           else
-            release_flags=(--draft --verify-tag --generate-notes)
+            release_flags=(--draft --verify-tag --notes-file target/release-notes.md)
             [[ "$channel" == stable ]] || release_flags+=(--prerelease)
             gh release create "$GITHUB_REF_NAME" "${release_flags[@]}"
           fi
