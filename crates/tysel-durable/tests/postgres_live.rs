@@ -7,9 +7,39 @@ use tysel_durable::{
 };
 use tysel_task::TaskId;
 
-fn store() -> Option<Arc<PostgresStore>> {
+struct TestSchema {
+    admin: postgres::Client,
+    schema: String,
+    url: String,
+}
+
+impl Drop for TestSchema {
+    fn drop(&mut self) {
+        let result = self.admin.batch_execute(&format!("DROP SCHEMA {} CASCADE", self.schema));
+        if !std::thread::panicking() {
+            result.expect("remove test schema");
+        }
+    }
+}
+
+fn store() -> Option<(Arc<PostgresStore>, TestSchema)> {
     let url = std::env::var("TYSEL_POSTGRES_TEST_URL").ok()?;
-    Some(Arc::new(PostgresStore::connect_with_pool_size(&url, 8).expect("connect durable store")))
+    let schema = format!("tysel_live_{}", task(0).0);
+    let mut admin = postgres::Client::connect(&url, postgres::NoTls).expect("connect schema owner");
+    admin.batch_execute(&format!("CREATE SCHEMA {schema}")).expect("create test schema");
+    let scoped = if url.contains("://") {
+        format!(
+            "{url}{}options=-csearch_path%3D{schema}",
+            if url.contains('?') { "&" } else { "?" }
+        )
+    } else {
+        format!("{url} options='-c search_path={schema}'")
+    };
+    let fixture = TestSchema { admin, schema, url: scoped };
+    let store = Arc::new(
+        PostgresStore::connect_with_pool_size(&fixture.url, 8).expect("connect durable store"),
+    );
+    Some((store, fixture))
 }
 
 fn task(offset: u128) -> TaskId {
@@ -19,7 +49,7 @@ fn task(offset: u128) -> TaskId {
 
 #[test]
 fn postgres_preserves_replay_claim_signal_and_catalog_contracts() {
-    let Some(store) = store() else {
+    let Some((store, _fixture)) = store() else {
         return;
     };
     assert_eq!(store.log_version().unwrap(), DURABLE_LOG_VERSION);
@@ -85,7 +115,7 @@ fn postgres_preserves_replay_claim_signal_and_catalog_contracts() {
 
 #[test]
 fn postgres_completion_serializes_with_writers_and_prunes_only_terminal_tasks() {
-    let Some(store) = store() else {
+    let Some((store, _fixture)) = store() else {
         return;
     };
     let initial = store.program_count().unwrap();
@@ -200,11 +230,10 @@ fn postgres_v1_migration_keeps_unclassified_work_and_reopens_completion_counters
 
 #[test]
 fn postgres_completion_rechecks_lease_after_task_and_quota_lock_waits() {
-    let Some(store) = store() else {
+    let Some((store, fixture)) = store() else {
         return;
     };
-    let url = std::env::var("TYSEL_POSTGRES_TEST_URL").unwrap();
-    let mut blocker = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    let mut blocker = postgres::Client::connect(&fixture.url, postgres::NoTls).unwrap();
     for quota in [false, true] {
         let id = task(901 + u128::from(quota));
         store.put_program(id, "42", 0).unwrap();
