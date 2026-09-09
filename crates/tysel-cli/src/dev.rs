@@ -238,15 +238,17 @@ async fn serve(
     let mut task_generation = 1u64;
     let mut task_service = start_task_service(loaded.task, task_generation).await?;
     let mut durable = start_dev_durable(loaded.durable).await?;
+    // Readiness must not be announced until edits can be observed.
+    let changes =
+        reload.then(|| watch(manifest_path.parent().unwrap_or(Path::new(".")))).transpose()?;
     let bound = listener.local_addr()?;
     if durable.is_some() {
         println!("tysel durable on");
     }
     print!("{}", listen_announcement(bound));
     io::stdout().flush()?;
-    let result = if reload {
+    let result = if let Some(mut changes) = changes {
         report_diagnostics_clear(error_format, 0);
-        let mut changes = watch(manifest_path.parent().unwrap_or(Path::new(".")))?;
         let mut diagnostic_generation = 0u64;
         loop {
             tokio::select! {
