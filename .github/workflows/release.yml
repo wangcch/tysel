@@ -27,6 +27,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Verify release tag targets current main
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: bash .github/scripts/verify-current-main.sh "$GITHUB_SHA"
       - name: Validate changelog before building release artifacts
         run: |
           python3 .github/scripts/test-release-notes.py
@@ -37,7 +40,7 @@ jobs:
           python3 .github/scripts/release-notes.py "${args[@]}" > /dev/null
 
   policy:
-    needs: release-notes
+    needs: build-linux-x64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -54,9 +57,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Verify release tag targets current main
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: bash .github/scripts/verify-current-main.sh "$GITHUB_SHA"
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
         with:
           tool: cargo-audit@0.22.2,cargo-deny@0.20.2,cargo-fuzz@0.13.2
@@ -115,7 +115,7 @@ jobs:
           if-no-files-found: error
 
   package-npm:
-    needs: release-notes
+    needs: build-linux-x64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -140,7 +140,7 @@ jobs:
           if-no-files-found: error
 
   package-rust-sdk:
-    needs: release-notes
+    needs: build-linux-x64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -156,7 +156,7 @@ jobs:
           if-no-files-found: error
 
   package-component-starters:
-    needs: release-notes
+    needs: build-linux-x64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -203,83 +203,23 @@ jobs:
           path: target/component-starters-output/*
           if-no-files-found: error
 
-  build-linux:
+  # Run the full Linux x64 release gate before allocating other build runners.
+  build-linux-x64:
     needs: release-notes
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: linux-x64
-          - runner: ubuntu-24.04-arm
-            target: linux-arm64
-    runs-on: ${{ matrix.runner }}
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: tysel
-          POSTGRES_PASSWORD: tysel
-          POSTGRES_DB: tysel
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U tysel -d tysel"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      TYSEL_POSTGRES_TEST_URL: postgres://tysel:tysel@127.0.0.1:5432/tysel
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Build TypeScript SDK for application fixtures
-        run: |
-          pnpm --filter @tysel/types build
-          pnpm --filter @tysel/sdk build
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
-        with:
-          toolchain: 1.97.1
-          components: clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Record deterministic build epoch
-        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
-      - name: Run target production acceptance suite
-        run: |
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo test --locked --workspace --all-targets
-      - name: Build and package two independent release trees
-        shell: bash
-        run: >-
-          bash .github/scripts/package-release-target.sh
-          "${{ matrix.target }}" "$SOURCE_DATE_EPOCH"
-      - name: Run local installer fixture
-        shell: bash
-        run: |
-          version="$(bash .github/scripts/check-version-sync.sh)"
-          bash .github/scripts/test-installer.sh \
-            "$version" "${{ matrix.target }}" target/release-output
-      - name: Record target benchmark evidence
-        env:
-          TYSEL_STUB: target/repro-1/release/tysel-service
-        run: >-
-          cargo run --locked -p tysel-testkit --bin tysel-bench --release --
-          --evidence target/release-output/benchmark-evidence-${{ matrix.target }}.json
-          --source-commit ${{ github.sha }}
-          --command "cargo run --locked -p tysel-testkit --bin tysel-bench --release"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: unsigned-release-${{ matrix.target }}
-          path: target/release-output/*
-          if-no-files-found: error
+    uses: ./.github/workflows/release-linux.yml
+    with:
+      runner: ubuntu-24.04
+      target: linux-x64
+
+  build-linux-arm64:
+    needs: build-linux-x64
+    uses: ./.github/workflows/release-linux.yml
+    with:
+      runner: ubuntu-24.04-arm
+      target: linux-arm64
 
   build-darwin:
-    needs: release-notes
+    needs: build-linux-x64
     strategy:
       fail-fast: false
       matrix:
@@ -330,7 +270,7 @@ jobs:
           if-no-files-found: error
 
   sign:
-    needs: [policy, build-linux, build-darwin, package-component-starters]
+    needs: [policy, build-linux-x64, build-linux-arm64, build-darwin, package-component-starters]
     runs-on: ubuntu-latest
     permissions:
       contents: read
