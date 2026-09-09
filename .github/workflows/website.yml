@@ -136,6 +136,7 @@ jobs:
             website/out/benchmark-evidence/latest.json > /dev/null
           test -n "$(find website/out/_next/static -type f -print -quit)"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name != 'pull_request'
         with:
           name: website-static-${{ github.sha }}
           path: website/out
