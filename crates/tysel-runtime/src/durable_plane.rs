@@ -28,6 +28,7 @@ pub struct DurablePlane {
     source: RwLock<Arc<RegisteredSource>>,
     config: IsolateConfig,
     shutdown: PollerShutdown,
+    wakeup: Arc<tokio::sync::Notify>,
     health: watch::Receiver<PollerHealth>,
     join: Mutex<Option<JoinHandle<Result<(), PollerError>>>>,
     hooks: Mutex<std::sync::Weak<DurableControl>>,
@@ -156,6 +157,7 @@ impl DurablePlane {
             Arc::new(DurableDispatcher::new(store.clone(), owner, lease_duration_ms, config)?);
         let poller =
             DurablePoller::new_persistent_modules(dispatcher.clone(), POLL_INTERVAL, POLL_BATCH)?;
+        let wakeup = poller.wakeup();
         let shutdown = PollerShutdown::default();
         let (health_tx, health) = watch::channel(PollerHealth::Healthy);
         let join = tokio::spawn({
@@ -190,6 +192,7 @@ impl DurablePlane {
             source: RwLock::new(source),
             config,
             shutdown,
+            wakeup,
             health,
             join: Mutex::new(Some(join)),
             hooks: Mutex::new(std::sync::Weak::new()),
@@ -309,8 +312,10 @@ impl DurablePlane {
             Some(key) => store.send_signal_once(task_id, name, &payload, key, now_ms),
             None => store.send_signal(task_id, name, &payload, now_ms),
         }
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+        // Wake only after commit; a lost hint is repaired by the periodic scan.
+        self.wakeup.notify_one();
+        Ok(())
     }
 
     pub fn health(&self) -> PollerHealth {

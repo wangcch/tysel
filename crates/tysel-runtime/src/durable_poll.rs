@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 use tokio::task::JoinSet;
 use tysel_durable::{
     DurableError, DurableProgramKind, DurableStore, MAX_DURABLE_PROGRAM_BYTES,
@@ -203,6 +203,7 @@ pub struct DurablePoller {
     interval: Duration,
     batch_size: usize,
     cursor: AtomicUsize,
+    wakeup: Arc<Notify>,
     execution: ProgramExecution,
 }
 
@@ -274,8 +275,14 @@ impl DurablePoller {
             interval,
             batch_size,
             cursor: AtomicUsize::new(0),
+            wakeup: Arc::new(Notify::new()),
             execution,
         })
+    }
+
+    // Notifications are coalesced hints. Persistent scans remain authoritative.
+    pub(crate) fn wakeup(&self) -> Arc<Notify> {
+        self.wakeup.clone()
     }
 
     pub async fn poll_once(&self) -> Result<Vec<DurableRun>, PollerError> {
@@ -424,7 +431,9 @@ impl DurablePoller {
             };
             tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
-                () = tokio::time::sleep(delay) => {}
+                () = tokio::time::sleep(delay) => {},
+                // Do not let producers bypass storage-error backoff.
+                () = self.wakeup.notified(), if attempt == 0 => {}
             }
         }
     }
@@ -452,7 +461,8 @@ impl DurablePoller {
             }
             tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
-                () = tokio::time::sleep(self.interval) => {}
+                () = tokio::time::sleep(self.interval) => {},
+                () = self.wakeup.notified() => {}
             }
         }
     }
@@ -904,6 +914,102 @@ mod tests {
         let run = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
         assert_eq!(run.task_id, id);
         tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn notification_does_not_bypass_storage_error_backoff() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-notify-backoff-{}-{}.db",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let store = Arc::new(SqliteStore::open(&path).unwrap());
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("ALTER TABLE durable_programs RENAME TO unavailable_programs").unwrap();
+        let poller = DurablePoller::new_persistent_modules(
+            dispatcher(store, "notify-backoff"),
+            Duration::from_millis(1),
+            8,
+        )
+        .unwrap();
+        let wakeup = poller.wakeup();
+        let stop = PollerShutdown::default();
+        let shutdown = stop.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            poller
+                .run_supervised(
+                    shutdown,
+                    |_| {},
+                    |health| {
+                        tx.send(health).unwrap();
+                    },
+                )
+                .await
+        });
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap(),
+            Some(PollerHealth::Recovering { attempt: 1 })
+        );
+        for _ in 0..100 {
+            wakeup.notify_one();
+        }
+        let early = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await;
+        stop.cancel();
+        task.await.unwrap().unwrap();
+        assert!(early.is_err(), "notification bypassed the minimum 200 ms storage backoff");
+        drop(db);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn committed_signal_notification_interrupts_long_poll_interval() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let dispatcher = dispatcher(store.clone(), "notify");
+        let programs = DurableProgramRegistry::default();
+        for id in [TaskId(801), TaskId(802)] {
+            store.put_program(id, WAIT_SCRIPT, unix_time_ms()).unwrap();
+            assert!(matches!(
+                dispatcher.start(id, WAIT_SCRIPT).result,
+                Ok(crate::DurableRunStatus::Suspended)
+            ));
+            programs.register(id, WAIT_SCRIPT).unwrap();
+        }
+        store
+            .send_signal(TaskId(801), "approval", &serde_json::json!(true), unix_time_ms())
+            .unwrap();
+        let poller = DurablePoller::new(dispatcher, programs, Duration::from_secs(60), 8).unwrap();
+        let wakeup = poller.wakeup();
+        let stop = PollerShutdown::default();
+        let shutdown = stop.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            poller
+                .run_supervised(
+                    shutdown,
+                    |run| {
+                        tx.send(run.task_id).unwrap();
+                    },
+                    |_| {},
+                )
+                .await
+        });
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap(),
+            Some(TaskId(801))
+        );
+        store
+            .send_signal(TaskId(802), "approval", &serde_json::json!(true), unix_time_ms())
+            .unwrap();
+        // notify_one retains a permit even if the loop has not entered select yet.
+        for _ in 0..100 {
+            wakeup.notify_one();
+        }
+        let received = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await;
+        stop.cancel();
+        task.await.unwrap().unwrap();
+        assert_eq!(received.unwrap(), Some(TaskId(802)));
+        assert!(store.completion(TaskId(802)).unwrap().is_some());
     }
 
     #[tokio::test]
