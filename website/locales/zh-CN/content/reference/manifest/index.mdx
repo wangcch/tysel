@@ -1,0 +1,308 @@
+---
+title: "清单参考"
+description: "每个应用都有一个 tysel.toml 或 tysel.json。两种格式使用相同的模式和验证规则。未知字段会被拒绝。"
+---
+
+每个应用都有一个 `tysel.toml` 或 `tysel.json`。两种格式使用相同的模式和验证规则。未知字段会被拒绝。
+
+清单是唯一的 Tysel 项目配置文件。`package.json` 是可选的依赖/脚本伴随文件，`tsconfig.json` 和 `tsconfig.tysel.json` 则配置可选的 TypeScript 编译器检查。这些文件都不能替代或覆盖清单。项目可以按需组合使用；请参阅[配置组合](/docs/concepts/projects-and-configuration#choose-the-files-you-need)。
+
+## 根对象
+
+| 字段 | 是否必需 | 默认值 | 参考 |
+| --- | --- | --- | --- |
+| `schema_version` | 否 | `1` | 清单模式版本。只接受版本 `1`。 |
+| `app` | 是 | — | [应用标识与入口](/reference/manifest/app-server#app)。 |
+| `server` | 否 | 应用默认值 | [入站服务器](/reference/manifest/app-server#server)。 |
+| `permissions` | 否 | 所有列表为空 | [宿主能力授权](/reference/manifest/permissions)。 |
+| `limits` | 否 | 应用默认值 | [应用限制](/reference/manifest/limits)。 |
+| `durable` | 否 | SQLite 默认值 | [持久存储](/reference/manifest/durable-observability#durable)。 |
+| `observability` | 否 | JSON 日志 | [遥测](/reference/manifest/durable-observability#observability)。 |
+| `tasks` | 否 | 空映射 | [项目工作流](/reference/manifest/tasks)。 |
+
+为兼容早期版本 1 清单，可以省略 `schema_version`。不受支持的新版本会失败，并给出升级诊断。
+
+## 完整字段索引
+
+下表是模式版本 1 的精简字段清单。“默认值”是字段或其父表被省略时，`tysel config show` 显示的有效值。字段通过模式验证并不一定表示所有运行时执行配置都可以使用它；请按照链接章节了解强制规则和部署详情。
+
+### 应用和服务器字段
+
+| 字段 | 类型 | 必需/默认值 | 含义 |
+| --- | --- | --- | --- |
+| `schema_version` | 整数 | `1` | 选择清单约定。版本 1 是唯一接受的值。 |
+| `app.name` | 字符串 | 必需 | 产物标识。以字母或数字开头；其余字符还可以包含 `.`、`_` 和 `-`。 |
+| `app.entry` | 字符串 | 必需 | 项目相对的 TypeScript、JavaScript 或 Component `.wasm` 入口。绝对路径、反斜杠和 `..` 路径穿越会被拒绝。 |
+| `app.profile` | 枚举 | `service` | 执行和信任边界：`service`、`isolated` 或 `component`。 |
+| `server.listen` | 字符串 | `127.0.0.1:3000` | 入站套接字地址。只有外部接口应接收流量时才使用 `0.0.0.0`。 |
+| `server.workers` | 整数 | `1` | QuickJS 隔离实例数量，范围为 1 至 64。多个工作线程要求使用 `service`。 |
+| `server.http1` | 布尔值 | `true` | 启用 HTTP/1.1。入站 WebSocket 升级需要启用它。 |
+| `server.http2` | 布尔值 | `false` | 启用明文 HTTP/2（h2c），并非面向公网的 TLS 终止。 |
+| `server.websocket` | 布尔值 | `false` | 允许入站 HTTP/1.1 WebSocket 升级。它不会授予出站网络访问权限。 |
+
+有关路径验证、协议行为、工作线程状态、Component 限制和部署指南，请参阅[应用与服务器](/reference/manifest/app-server)。
+
+### 权限字段
+
+每个权限列表的默认值都是 `[]`。权限取清单请求、执行配置和部署策略的交集；向清单添加值无法覆盖执行配置层面的拒绝。
+
+| 字段 | 类型 | 接受的值 | 启用的能力 |
+| --- | --- | --- | --- |
+| `permissions.fetch` | 唯一字符串数组 | `api.example.com` 等主机名 | 到匹配主机的出站 `fetch` 和出站 WebSocket 连接。 |
+| `permissions.secrets` | 唯一字符串数组 | 环境变量名 | `tysel.secrets.ref` 返回的不透明句柄；它不会暴露明文值。 |
+| `permissions.postgres` | 数组，最多一项 | `name`、`name:read-only` 或 `name:read-write` | 由部署注入 URL 的具名 Postgres 授权。 |
+| `permissions.redis` | 数组，最多一项 | `name`、`name:read-only` 或 `name:read-write` | 由部署注入 URL 的具名 Redis 授权。 |
+| `permissions.fs_read` | 唯一字符串数组，最多 64 项 | 目录根路径 | 在固定根路径下读取 UTF-8 普通文件。相对根路径以项目根目录为基准解析；绝对根路径保持不变。 |
+| `permissions.fs_write` | 唯一字符串数组，最多 64 项 | 目录根路径 | 在固定根路径下写入 UTF-8 普通文件。相对根路径以项目根目录为基准解析；绝对根路径保持不变。不会隐式授予读取权限。 |
+
+有关主机名语义、Postgres 和 Redis 环境变量映射、文件系统限制以及执行配置特有的拒绝行为，请参阅[权限](/reference/manifest/permissions)。
+
+### 限制字段
+
+所有限制字段都是非负整数。零是有效值，并按字面生效；例如，`max_in_flight = 0` 会拒绝所有 HTTP 请求，而不是表示“不限量”。
+
+| 字段 | 单位 | 默认值 | 运行时含义 |
+| --- | --- | ---: | --- |
+| `limits.memory_mb` | MiB | `128` | QuickJS 或隔离工作进程的内存预算。Component 上限为 64 MiB。 |
+| `limits.cpu_ms_per_turn` | 毫秒 | `50` | 一轮 JavaScript 执行的 CPU 预算。Component 改用 fuel 和 epoch 中断。 |
+| `limits.request_timeout_ms` | 毫秒 | `30000` | 调用截止时间，以及已配置 LLM 调用的时限。Component 上限为 60 秒。 |
+| `limits.max_in_flight` | 请求数 | `1000` | 已准入的 HTTP 请求，持续占用直至响应完成或 WebSocket 关闭。 |
+| `limits.max_response_mb` | MiB | `16` | HTTP 响应正文累计大小上限。 |
+| `limits.max_request_mb` | MiB | `16` | 入站请求正文限制；过大的请求会收到 HTTP 413。 |
+
+有关整数边界、过载行为、当前传递状态和固定能力限制，请参阅[应用限制](/reference/manifest/limits)。
+
+### 持久执行、可观测性和任务字段
+
+| 字段 | 类型 | 默认值 | 含义与当前状态 |
+| --- | --- | --- | --- |
+| `durable.store` | 字符串 | `sqlite` | 选择由清单配置的持久存储。目前只有 `sqlite` 能够配置存储。 |
+| `durable.path` | 字符串 | `./data/tysel.db` | 相对于运行时的应用 SQLite 路径。持久事件日志的位置还受宿主控制。 |
+| `observability.logs` | 字符串 | `json` | 不区分大小写的 `json` 会启用结构化运行时日志器；其他值会禁用它。 |
+| `observability.traces` | 字符串或 null | 未设置 | 通过模式验证的 OTLP 端点意图。目前尚未传递到打包后的运行时配置。 |
+| `observability.metrics` | 字符串或 null | 未设置 | 通过模式验证的 OTLP 端点意图。目前尚未传递到打包后的运行时配置。 |
+| <code>{"tasks.<name>.description"}</code> | 字符串或 null | 未设置 | 任务发现中显示的易读任务说明。 |
+| <code>{"tasks.<name>.depends"}</code> | 唯一字符串数组 | `[]` | 必须先完成的其他清单任务；未知名称和循环依赖会被拒绝。 |
+| <code>{"tasks.<name>.steps"}</code> | 参数数组的数组 | `[]` | 按顺序执行的 Tysel CLI 调用。不允许 shell 展开、管道、重定向或覆盖项目选择。 |
+
+有关有效的宿主配置、任务名称规则和允许使用的步骤命令，请参阅[持久存储与可观测性](/reference/manifest/durable-observability)和[清单任务](/reference/manifest/tasks)。
+
+## 跨字段规则
+
+除各字段类型外，还会验证以下关系：
+
+| 配置 | 要求 | 原因 |
+| --- | --- | --- |
+| `app.entry` 以 `.wasm` 结尾 | `app.profile = "component"` | Tysel 接受 Component Model 任务，而不是任意 Core Wasm。 |
+| `app.profile = "component"` | `app.entry` 必须以 `.wasm` 结尾 | Component 执行不会加载 JavaScript 或 TypeScript。 |
+| `server.websocket = true` | `server.http1 = true` | 协议升级使用 HTTP/1.1。 |
+| `server.http1 = false` | `server.http2 = true` | 模式要求至少保留一种入站 HTTP 协议。 |
+| `server.workers > 1` | `app.profile = "service"` | Isolated 和 Component 执行配置只接受 `workers = 1`。 |
+| 出站 `fetch` 或 WebSocket | 匹配的 `permissions.fetch` 主机名，以及允许它的执行配置 | 仅有清单授权并不构成权限。重定向目标会再次检查。 |
+| 使用 Postgres | 最多一个具名授权以及 <code>{"TYSEL_POSTGRES_<NAME>"}</code> | 连接 URL 和凭据保留在清单之外。 |
+| 使用 Redis | 最多一个具名授权以及 <code>{"TYSEL_REDIS_<NAME>"}</code> | 连接 URL 和凭据保留在清单之外。 |
+| Component 文件系统导入 | 匹配的 `fs_read` 或 `fs_write` 根路径以及部署能力 | Component 导入、清单请求和部署策略必须全部一致。 |
+| 清单任务 | 至少有一个非空 `depends` 或 `steps` 值 | 空工作流会被拒绝。 |
+
+编辑后运行 `tysel config validate`。如果问题不只是语法是否有效，而是所选执行配置实际会获得哪些能力，请使用 `tysel inspect`。
+
+## 选择起始配置
+
+请从能够表达工作负载的最小清单开始。省略的表会采用默认值；复制所有可能的字段会增加后续审查难度。
+
+### 最小 HTTP 服务
+
+```toml
+schema_version = 1
+
+[app]
+name = "hello"
+entry = "src/index.ts"
+```
+
+该配置使用 `service` 执行配置，通过 HTTP/1.1 监听 `127.0.0.1:3000`，且不请求任何宿主能力。
+
+### 可从外部访问且存储受限的服务
+
+```toml
+schema_version = 1
+
+[app]
+name = "orders-api"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "0.0.0.0:3000"
+workers = 2
+
+[permissions]
+postgres = ["main:read-write"]
+secrets = ["PAYMENTS_API_KEY"]
+
+[limits]
+memory_mb = 256
+request_timeout_ms = 15000
+max_in_flight = 200
+max_request_mb = 4
+```
+
+应用使用 Postgres 授权时，部署必须提供 `TYSEL_POSTGRES_MAIN`。如果应用代码调用 `tysel.secrets.ref("PAYMENTS_API_KEY")`，部署还必须提供该密钥；缺少已声明的值会在请求句柄时报告，而不是在加载清单时报告。请在入口或反向代理处终止 TLS。
+
+### 隔离 MCP 工具
+
+```toml
+schema_version = 1
+
+[app]
+name = "customer-lookup"
+entry = "src/index.ts"
+profile = "isolated"
+
+[permissions]
+secrets = ["CUSTOMER_API_KEY"]
+
+[limits]
+memory_mb = 32
+request_timeout_ms = 5000
+
+[tasks.verify]
+steps = [["check"], ["test"]]
+```
+
+清单选择执行配置并请求具名密钥；应用源码仍须导出 MCP 任务。在 isolated 执行配置中，`tysel.secrets.ref("CUSTOMER_API_KEY")` 只返回由代理提供的不透明句柄；即使权限中列出，直接网络和文件系统访问仍会被拒绝。请从 [MCP 工具示例](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool)开始，并查阅[应用模块](/reference/runtime/application#mcp-tasks)和[执行配置](/docs/concepts/execution-profiles)。
+
+### Wasm Component 任务
+
+```toml
+schema_version = 1
+
+[app]
+name = "rust-transform"
+entry = "target/transform.component.wasm"
+profile = "component"
+
+[permissions]
+fs_read = ["./input"]
+fs_write = ["./output"]
+```
+
+Component 只能导入已经实现的接口。打包后的可执行文件还需要显式部署授权，例如 `TYSEL_COMPONENT_CAPABILITIES=tysel:fs/read,tysel:fs/write`；请参阅 [Component 能力](/reference/component/capabilities)。
+
+## 完整示例
+
+```toml
+schema_version = 1
+
+[app]
+name = "orders"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:3000"
+http1 = true
+http2 = false
+websocket = false
+
+[permissions]
+fetch = ["api.example.com"]
+secrets = ["API_TOKEN"]
+postgres = ["main:read-write"]
+fs_read = ["./data/imports"]
+fs_write = ["./data/exports"]
+
+[limits]
+memory_mb = 128
+cpu_ms_per_turn = 50
+request_timeout_ms = 30000
+max_in_flight = 1000
+max_request_mb = 16
+
+[durable]
+store = "sqlite"
+path = "./data/tysel.db"
+
+[observability]
+logs = "json"
+
+[tasks.verify]
+description = "Check and test"
+steps = [["check"], ["test"]]
+```
+
+## JSON 形式
+
+JSON 表示使用相同的字段名和值：
+
+```json
+{
+  "schema_version": 1,
+  "app": {
+    "name": "orders",
+    "entry": "src/index.ts",
+    "profile": "service"
+  },
+  "server": {
+    "listen": "127.0.0.1:3000",
+    "http1": true,
+    "http2": false,
+    "websocket": false
+  }
+}
+```
+
+## 发现与路径解析
+
+未提供 `--manifest` 时，项目命令会从所选目录逐级向上搜索。同一目录中同时保留两种格式会导致错误。清单目录会成为项目根目录；`app.entry`、持久存储和相对文件系统根路径都以它为基准解析。绝对文件系统根路径保持不变。打包后的可执行文件没有外部清单根目录，因此相对运行时路径以其进程工作目录为基准解析。
+
+## 模式与编辑器集成
+
+已安装的 CLI 内置了与其验证器匹配的模式。编辑器或 CI 作业需要文件时，请将其保存到项目中：
+
+```sh
+mkdir -p .tysel
+tysel config schema > .tysel/tysel-manifest-v1.schema.json
+```
+
+对于 JSON 清单，VS Code 工作区可以在 `.vscode/settings.json` 中关联该本地模式：
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["/tysel.json"],
+      "url": "./.tysel/tysel-manifest-v1.schema.json"
+    }
+  ]
+}
+```
+
+TOML 模式关联方式取决于编辑器扩展。支持时，请将它指向同一份生成的 Draft 2020-12 模式。不要向 `tysel.json` 添加 `$schema` 成员：`$schema` 不是版本 1 清单字段，未知字段会被拒绝。升级 Tysel 后请重新生成该文件。
+
+JSON Schema 能发现字段名、类型、枚举、数值范围和若干跨字段规则。`tysel config validate` 仍是权威依据，因为它还会应用编辑器可能不执行的运行时验证。
+
+## 常见验证失败
+
+| 诊断形式 | 可能原因 | 修正方式 |
+| --- | --- | --- |
+| 未知字段 | 拼写错误、所在表错误，或使用了其他模式版本的字段 | 查阅[完整字段索引](#complete-field-index)；未知键绝不会被忽略。 |
+| 找到两份清单 | 同一项目根目录中存在 `tysel.toml` 和 `tysel.json` | 只保留一份根清单，或将转换结果写到根目录之外。 |
+| 入口必须相对于项目 | 使用绝对路径、反斜杠、驱动器前缀或 `..` 路径穿越 | 使用 `/` 分隔符以及清单目录下的路径。 |
+| WebSocket 要求 HTTP/1.1 | `server.websocket = true` 且 `server.http1 = false` | 启用 HTTP/1.1 或禁用 WebSocket 升级。 |
+| 多个工作线程要求 service | `isolated` 或 `component` 的 `workers` 大于 1 | 设置 `workers = 1`，或改用兼容的工作负载执行配置。 |
+| `.wasm` 与执行配置不一致 | Component 入口使用其他执行配置，或 Component 执行配置使用非 Wasm 入口 | 同时设置 Component 约定的两端。 |
+| 权限值必须唯一 | 列表成员重复或为空 | 删除重复项和空白项。 |
+| 任务依赖失败 | 未知依赖、循环、重复依赖或空任务 | 修复任务图，并保留至少一个依赖或步骤。 |
+
+如果无效清单导致常规项目命令无法显示发现了哪个文件，请先使用 `tysel config path`。
+
+使用已安装的二进制文件检查确切模式和展开后的值：
+
+```sh
+tysel config schema
+tysel config show --format json
+tysel config validate
+```
+
+有关转换，请参阅[项目与配置命令](/reference/cli/project)；有关发现流程，请参阅[项目与配置](/docs/concepts/projects-and-configuration)。

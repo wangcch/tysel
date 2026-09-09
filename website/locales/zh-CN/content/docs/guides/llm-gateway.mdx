@@ -1,0 +1,97 @@
+---
+title: "LLM 网关"
+description: "本指南将一个面向应用的模型别名路由到 OpenAI 兼容的 Responses 端点，同时将提供商凭据保留在宿主中。"
+---
+
+本指南将一个面向应用的模型别名路由到 OpenAI 兼容的 Responses 端点，同时将提供商凭据保留在宿主中。
+
+## 声明凭据名称
+
+```toml
+[app]
+name = "llm-service"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+secrets = ["OPENAI_API_KEY"]
+
+[limits]
+request_timeout_ms = 30000
+```
+
+清单只包含密钥名称。Tysel 在宿主内部解析其值，不会向 JavaScript 暴露明文凭据。
+
+## 配置一条提供商路由
+
+```sh
+export OPENAI_API_KEY='replace-in-your-secret-manager'
+export TYSEL_LLM_ENDPOINT='https://api.openai.com/v1/responses'
+export TYSEL_LLM_MODEL='provider-model-name'
+export TYSEL_LLM_ALIAS='default'
+export TYSEL_LLM_SECRET='OPENAI_API_KEY'
+```
+
+`TYSEL_LLM_ENDPOINT` 用于启用网关。设置后必须同时提供 `TYSEL_LLM_MODEL`。端点必须使用 HTTP 或 HTTPS，并指向 OpenAI 兼容的 Responses API。`TYSEL_LLM_ALIAS` 默认为 `default`，也是应用唯一可以使用的模型字符串。当前打包配置公开一条提供商路由。
+
+`TYSEL_LLM_SECRET` 默认为 `OPENAI_API_KEY`。其值必须同时是已声明的 `permissions.secrets` 条目和宿主提供的环境变量。不要把凭据写入 `tysel.toml`、端点 URL、源码或日志。
+
+## 生成响应
+
+```ts
+const result = await tysel.llm.generate({
+  model: "default",
+  system: "Return one concise sentence.",
+  input: "Summarize the deployment status.",
+  maxOutputTokens: 128,
+  temperature: 0.2,
+});
+
+console.log(result.output);
+console.log(result.usage.input_tokens, result.usage.output_tokens);
+console.log(result.provider_request_id);
+```
+
+运行完整的 [LLM 服务示例](https://github.com/wangcch/tysel/tree/main/examples/llm-service)：
+
+```sh
+cd examples/llm-service
+tysel check
+tysel run
+```
+
+在另一个终端运行：
+
+```sh
+curl -sS http://127.0.0.1:3000/generate \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Explain bounded capabilities in one sentence."}'
+```
+
+响应包含提供商输出、token 用量和可选的提供商请求标识符。应用的 `Input` 和 `Output` 泛型可以改善静态类型，但不会在运行时验证提供商 JSON。
+
+## 理解边界
+
+- `temperature` 必须是 `0` 至 `2` 之间的有限数值；
+- 提供 `maxOutputTokens` 时，其值必须为正数；
+- 序列化后的网关输入和输出各自限制为 1 MiB；
+- 模型、提供商和提供商请求标识符限制为 128 字节；
+- 网关默认允许 16 个并发提供商调用；
+- 实际超时使用 `limits.request_timeout_ms`，并被限制在 1 ms 至网关最大值 10 分钟之间；
+- 未知别名会被拒绝，不会发送到上游。
+
+运行时审计事件会记录请求 ID、别名、提供商名称、输入/输出字节数、耗时和结果，不会记录凭据或提示词内容。宿主保留的提供商错误文本限制为 4 KiB；不要向不受信任的客户端返回原始提供商错误。
+
+## 诊断故障
+
+| 故障 | 检查项 |
+| --- | --- |
+| 网关已禁用 | `TYSEL_LLM_ENDPOINT` 未设置或为空。 |
+| 启动时配置失败 | 端点无效或缺少 `TYSEL_LLM_MODEL`。 |
+| 模型被拒绝 | 应用 `model` 不等于 `TYSEL_LLM_ALIAS`。 |
+| 凭据不可用 | 密钥名称未声明、未提供，或与 `TYSEL_LLM_SECRET` 不同。 |
+| 超时 | 准入或提供商处理超过应用请求超时。 |
+| 提供商失败 | 端点、协议兼容性、身份验证或上游响应失败。 |
+| 输入/输出过大 | 减少或分块请求；使结果保持在固定边界内。 |
+
+对于持久智能体，应将提供商调用放在 `ctx.effect` 内，避免回放期间重复已完成的调用。请参阅[持久智能体示例](https://github.com/wangcch/tysel/tree/main/examples/durable-agent)、[LLM API](/reference/runtime/capabilities#llm-generation)和[环境变量](/reference/environment#llm-provider)。

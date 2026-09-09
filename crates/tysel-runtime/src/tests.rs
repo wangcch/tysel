@@ -760,3 +760,111 @@ async fn send(
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
+
+#[tokio::test]
+async fn graceful_shutdown_drains_http2_and_force_closes_stalled_body() {
+    use crate::{HttpShutdown, serve_with_shutdown};
+    use std::time::{Duration, Instant};
+    for stalled in [false, true] {
+        let source = if stalled {
+            "export default {fetch(){return new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('first'));}}));}}"
+        } else {
+            "export default {fetch(){return new Response(new ReadableStream({async start(c){c.enqueue(new TextEncoder().encode('first'));await new Promise(r=>setTimeout(r,100));c.enqueue(new TextEncoder().encode('last'));c.close();}}));}}"
+        };
+        let pool = Arc::new(IsolatePool::spawn(1, source, config()).unwrap());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = HttpShutdown::default();
+        let server = tokio::spawn(serve_with_shutdown(
+            listener,
+            SharedPool::with_http_limits(
+                pool.clone(),
+                HttpLimits {
+                    max_request_bytes: 16 * 1024 * 1024,
+                    max_response_bytes: 16 * 1024 * 1024,
+                    max_in_flight: 16,
+                },
+                false,
+                false,
+                true,
+                None,
+            ),
+            shutdown.clone(),
+            Duration::from_millis(300),
+        ));
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let (mut sender, connection) = hyper::client::conn::http2::handshake::<_, _, Empty<Bytes>>(
+            TokioExecutor::new(),
+            TokioIo::new(stream),
+        )
+        .await
+        .unwrap();
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let response = sender
+            .send_request(Request::builder().uri("http://localhost/").body(Empty::new()).unwrap())
+            .await
+            .unwrap();
+        let mut body = response.into_body();
+        assert_eq!(body.frame().await.unwrap().unwrap().into_data().unwrap(), "first");
+        let start = Instant::now();
+        shutdown.cancel();
+        if stalled {
+            assert!(
+                tokio::time::timeout(Duration::from_secs(1), body.collect())
+                    .await
+                    .unwrap()
+                    .is_err()
+            );
+            assert!(start.elapsed() >= Duration::from_millis(250));
+        } else {
+            assert_eq!(body.collect().await.unwrap().to_bytes(), "last");
+        }
+        tokio::time::timeout(Duration::from_secs(1), server).await.unwrap().unwrap().unwrap();
+        assert!(TcpStream::connect(addr).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn graceful_shutdown_sends_websocket_going_away() {
+    use crate::{HttpShutdown, serve_with_shutdown};
+    use futures_util::{SinkExt, StreamExt};
+    use std::time::Duration;
+    use tokio_tungstenite::tungstenite::{Message, protocol::frame::coding::CloseCode};
+    let pool = Arc::new(IsolatePool::spawn(1, WS_ECHO, config()).unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let shutdown = HttpShutdown::default();
+    let server = tokio::spawn(serve_with_shutdown(
+        listener,
+        SharedPool::with_http_limits(
+            pool,
+            HttpLimits {
+                max_request_bytes: 16 * 1024 * 1024,
+                max_response_bytes: 16 * 1024 * 1024,
+                max_in_flight: 16,
+            },
+            true,
+            true,
+            false,
+            None,
+        ),
+        shutdown.clone(),
+        Duration::from_millis(500),
+    ));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/")).await.unwrap();
+    socket.send(Message::Text("ready".into())).await.unwrap();
+    assert_eq!(socket.next().await.unwrap().unwrap().into_text().unwrap(), "ready");
+    shutdown.cancel();
+    match tokio::time::timeout(Duration::from_secs(1), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+    {
+        Message::Close(Some(frame)) => assert_eq!(frame.code, CloseCode::Away),
+        other => panic!("expected shutdown close frame, got {other:?}"),
+    }
+    tokio::time::timeout(Duration::from_secs(1), server).await.unwrap().unwrap().unwrap();
+}

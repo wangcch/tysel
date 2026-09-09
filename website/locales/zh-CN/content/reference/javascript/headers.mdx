@@ -1,0 +1,28 @@
+---
+title: "Headers"
+description: "Tysel JavaScript 运行时支持的 Headers 契约。"
+---
+
+状态： `partial`. 本页描述受支持的服务端子集，不涵盖完整浏览器规范。
+下列清单以外的行为不属于支持契约。
+
+权威来源： `runtime-js/web-api/compatibility.json`
+(`tysel-server-web-subset`, stable).
+
+## 支持
+
+- 使用对象、Headers 或键值对初始化
+- get/set/append/delete/has
+- 按排序顺序实时反映修改的迭代
+- 使用可迭代键值对初始化
+- HTTP token 和 CR/LF 校验
+- 独立的 Set-Cookie 值与 getSetCookie 快照
+
+- Response.redirect 和 Response.error 返回值的响应头不可变
+
+## 不支持
+
+- 浏览器请求头保护规则
+
+参阅 [JavaScript API 索引](/reference/javascript)和
+[npm 兼容性指南](/docs/compatibility)。

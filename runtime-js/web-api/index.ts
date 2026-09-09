@@ -1,5 +1,8 @@
+import type * as Streams from "./vendor/web-streams-polyfill/types.js";
+export type { ReadableStream, WritableStream, TransformStream, ReadableStreamDefaultReader, WritableStreamDefaultWriter, QueuingStrategy } from "./vendor/web-streams-polyfill/types.js";
+
 /** Versioned, server-side Web API subset installed into each isolate. */
-export const webApiVersion = "0.2.0";
+export const webApiVersion = "0.3.0";
 
 export type WebEventListener<E extends TyselEvent = TyselEvent> =
   | ((event: E) => void)
@@ -89,6 +92,7 @@ export interface TyselHeaders extends Iterable<[string, string]> {
   append(name: string, value: string): void;
   delete(name: string): void;
   get(name: string): string | null;
+  getSetCookie(): string[];
   has(name: string): boolean;
   set(name: string, value: string): void;
   entries(): IterableIterator<[string, string]>;
@@ -105,10 +109,12 @@ export type TyselHeadersInit =
   | Iterable<readonly [string, string]>
   | Record<string, string>;
 
+export type TyselBodyInit = string | ArrayBuffer | ArrayBufferView;
+
 export interface TyselRequestInit {
   method?: string;
   headers?: TyselHeadersInit;
-  body?: unknown;
+  body?: TyselBodyInit | null;
   signal?: TyselAbortSignal | null;
 }
 
@@ -122,10 +128,11 @@ export interface TyselBody {
   text(): Promise<string>;
   json(): Promise<unknown>;
   arrayBuffer(): Promise<ArrayBuffer>;
+  bytes(): Promise<Uint8Array>;
 }
 
 export interface TyselRequest extends TyselBody {
-  readonly body: unknown | null;
+  readonly body: Streams.ReadableStream<Uint8Array> | null;
   readonly url: string;
   readonly method: string;
   readonly headers: TyselHeaders;
@@ -134,8 +141,9 @@ export interface TyselRequest extends TyselBody {
 }
 
 export interface TyselResponse extends TyselBody {
-  readonly body: unknown | null;
+  readonly body: Streams.ReadableStream<Uint8Array> | null;
   readonly status: number;
+  readonly type: "default" | "error";
   readonly ok: boolean;
   readonly headers: TyselHeaders;
   clone(): TyselResponse;
@@ -191,6 +199,7 @@ export type TyselIntegerTypedArray =
   | BigUint64Array;
 
 export interface TyselCrypto {
+  randomUUID(): string;
   getRandomValues<T extends TyselIntegerTypedArray>(typedArray: T): T;
   readonly subtle: TyselSubtleCrypto;
 }
@@ -198,13 +207,14 @@ export interface TyselCrypto {
 export interface TyselTextEncoder {
   readonly encoding: "utf-8";
   encode(input?: string): Uint8Array;
+  encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
 }
 
 export interface TyselTextDecoder {
   readonly encoding: "utf-8";
   readonly fatal: boolean;
   readonly ignoreBOM: boolean;
-  decode(input?: BufferSource): string;
+  decode(input?: BufferSource, options?: { stream?: boolean }): string;
 }
 
 export type TyselFetch = (
@@ -226,19 +236,42 @@ export interface TyselWebApiGlobals {
   Headers: new (init?: TyselHeadersInit) => TyselHeaders;
   Request: new (input: string | TyselRequest, init?: TyselRequestInit) => TyselRequest;
   Response: {
-    new (body?: unknown, init?: TyselResponseInit): TyselResponse;
+    new (body?: TyselBodyInit | readonly TyselBodyInit[] | Streams.ReadableStream<Uint8Array> | null, init?: TyselResponseInit): TyselResponse;
     json(data: unknown, init?: TyselResponseInit): TyselResponse;
+    error(): TyselResponse;
+    redirect(url: string, status?: number): TyselResponse;
   };
   AbortController: new () => TyselAbortController;
   AbortSignal: {
     abort(reason?: unknown): TyselAbortSignal;
     timeout(milliseconds: number): TyselAbortSignal;
+    any(signals: Iterable<TyselAbortSignal>): TyselAbortSignal;
   };
   TextEncoder: new () => TyselTextEncoder;
   TextDecoder: new (
     label?: "utf-8" | "utf8",
     options?: { fatal?: boolean; ignoreBOM?: boolean },
   ) => TyselTextDecoder;
+  ReadableStream: typeof Streams.ReadableStream;
+  WritableStream: typeof Streams.WritableStream;
+  TransformStream: typeof Streams.TransformStream;
+  ByteLengthQueuingStrategy: typeof Streams.ByteLengthQueuingStrategy;
+  CountQueuingStrategy: typeof Streams.CountQueuingStrategy;
+  TextEncoderStream: new () => {
+    readonly encoding: "utf-8";
+    readonly readable: Streams.ReadableStream<Uint8Array>;
+    readonly writable: Streams.WritableStream<any>; // Chunks undergo string conversion.
+  };
+  TextDecoderStream: new (label?: "utf-8" | "utf8", options?: {fatal?: boolean; ignoreBOM?: boolean}) => {
+    readonly encoding: "utf-8";
+    readonly fatal: boolean;
+    readonly ignoreBOM: boolean;
+    readonly readable: Streams.ReadableStream<string>;
+    readonly writable: Streams.WritableStream<any>; // Runtime validates BufferSource; permits piping every byte-view stream.
+  };
+  queueMicrotask(callback: () => void): void;
+  atob(input: string): string;
+  btoa(input: string): string;
   crypto: TyselCrypto;
   fetch: TyselFetch;
   setTimeout(

@@ -18,8 +18,8 @@ use tysel_package::SourceMap;
 #[cfg(unix)]
 use tysel_runtime::ModuleTaskService;
 use tysel_runtime::{
-    AppIsolate, DurablePlane, HttpLimits, RuntimeDiagnostic, SharedPool, handle_stream,
-    spawn_app_isolate,
+    AppIsolate, DurablePlane, HttpLimits, HttpShutdown, RuntimeDiagnostic, SharedPool,
+    handle_stream, spawn_app_isolate,
 };
 use tysel_task_rpc::TaskOutcome;
 
@@ -214,17 +214,23 @@ async fn serve(
     reload: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
-    let loaded = load(&manifest_path, entry.as_deref())?;
-    let pool = SharedPool::with_server_limits(
+    let loaded = load_for_serve(&manifest_path, entry.as_deref(), reload)?;
+    let shutdown = HttpShutdown::default();
+    let mut grace = loaded.isolate.request_timeout().saturating_add(Duration::from_secs(1));
+    let pool = SharedPool::with_http_limits(
         loaded.isolate,
-        loaded.max_request_bytes,
-        loaded.max_in_flight,
+        HttpLimits {
+            max_request_bytes: loaded.max_request_bytes,
+            max_response_bytes: loaded.max_response_bytes,
+            max_in_flight: loaded.max_in_flight,
+        },
         loaded.websocket,
         loaded.http1,
         loaded.http2,
-        Some(loaded.source_map),
-    );
-    if error_format == ErrorFormat::Json {
+        reload.then_some(loaded.source_map),
+    )
+    .with_shutdown(shutdown.clone());
+    if reload && error_format == ErrorFormat::Json {
         attach_runtime_diagnostics(&pool)?;
     }
     let listener =
@@ -238,21 +244,22 @@ async fn serve(
     }
     print!("{}", listen_announcement(bound));
     io::stdout().flush()?;
-    if reload {
+    let result = if reload {
         report_diagnostics_clear(error_format, 0);
         let mut changes = watch(manifest_path.parent().unwrap_or(Path::new(".")))?;
         let mut diagnostic_generation = 0u64;
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => break,
+                signal = shutdown_signal() => break signal.map_err(Into::into),
+                error = durable_service_failure(durable.as_ref()) => {
+                    break Err(error);
+                }
                 error = task_service_failure(task_service.as_ref()) => {
-                    shutdown_durable(durable.take()).await?;
-                    shutdown_task_service(task_service).await?;
-                    return Err(error);
+                    break Err(error);
                 }
                 _ = wait_change(&mut changes.rx) => {
                     diagnostic_generation = diagnostic_generation.saturating_add(1);
-                    match load(&manifest_path, entry.as_deref()) {
+                    match load_for_serve(&manifest_path, entry.as_deref(), true) {
                     Ok(next) => {
                         task_generation = task_generation.saturating_add(1);
                         match start_task_service(next.task.clone(), task_generation).await {
@@ -263,6 +270,7 @@ async fn serve(
                                         if error_format == ErrorFormat::Human {
                                             eprintln!("tysel reload");
                                         }
+                                        grace = grace.max(next.isolate.request_timeout().saturating_add(Duration::from_secs(1)));
                                         pool.replace_with_server_limits(
                                             next.isolate,
                                             HttpLimits {
@@ -289,32 +297,53 @@ async fn serve(
                     Err(err) => report_dev_error(error_format, diagnostic_generation, &err),
                 }},
                 accepted = listener.accept() => {
-                    let (stream, _) = accepted.context("accept")?;
+                    let (stream, _) = match accepted { Ok(value) => value, Err(error) => break Err(error.into()) };
                     handle_stream(stream, pool.clone());
                 }
             }
         }
-        shutdown_durable(durable.take()).await?;
-        shutdown_task_service(task_service).await?;
-        return Ok(());
-    }
-    loop {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => break,
-            error = task_service_failure(task_service.as_ref()) => {
-                shutdown_durable(durable.take()).await?;
-                shutdown_task_service(task_service).await?;
-                return Err(error);
-            }
-            accepted = listener.accept() => {
-                let (stream, _) = accepted.context("accept")?;
-                handle_stream(stream, pool.clone());
+    } else {
+        loop {
+            tokio::select! {
+                signal = shutdown_signal() => break signal.map_err(Into::into),
+                error = durable_service_failure(durable.as_ref()) => {
+                        break Err(error);
+                    }
+                    error = task_service_failure(task_service.as_ref()) => {
+                    break Err(error);
+                }
+                accepted = listener.accept() => {
+                    let (stream, _) = match accepted { Ok(value) => value, Err(error) => break Err(error.into()) };
+                    handle_stream(stream, pool.clone());
+                }
             }
         }
+    };
+    drop(listener);
+    shutdown.cancel();
+    if let Some(plane) = &durable {
+        plane.stop_claiming();
     }
-    shutdown_durable(durable.take()).await?;
-    shutdown_task_service(task_service).await?;
-    Ok(())
+    shutdown.drain(grace).await;
+    let durable_result = shutdown_durable(durable.take()).await;
+    let task_result = shutdown_task_service(task_service).await;
+    result?;
+    durable_result?;
+    task_result
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> io::Result<()> {
+    tokio::signal::ctrl_c().await
 }
 
 fn attach_runtime_diagnostics(pool: &SharedPool) -> Result<()> {
@@ -456,9 +485,27 @@ fn listen_announcement(bound: std::net::SocketAddr) -> String {
     format!("tysel listen {bound}\ntysel url http://{bound}\n")
 }
 
+fn load_for_serve(manifest_path: &Path, entry: Option<&Path>, sync_types: bool) -> Result<Loaded> {
+    let manifest = Manifest::from_path(manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    if sync_types {
+        crate::typegen::sync(
+            manifest_path.parent().unwrap_or(Path::new(".")),
+            &manifest,
+            None,
+            false,
+        )?;
+    }
+    load_manifest(manifest_path, entry, manifest)
+}
+
 fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
     let manifest = Manifest::from_path(manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    load_manifest(manifest_path, entry, manifest)
+}
+
+fn load_manifest(manifest_path: &Path, entry: Option<&Path>, manifest: Manifest) -> Result<Loaded> {
     let root = manifest_path.parent().unwrap_or(Path::new("."));
     let entry = match entry {
         Some(path) => path.to_path_buf(),
@@ -608,28 +655,42 @@ async fn shutdown_task_service(_service: Option<()>) -> Result<()> {
 }
 
 async fn start_dev_durable(spec: Option<DurableSpec>) -> Result<Option<Arc<DurablePlane>>> {
-    let Some(spec) = spec else {
-        return Ok(None);
-    };
-    if spec.execution_profile.eq_ignore_ascii_case("isolated") {
-        return Ok(None);
+    tokio::task::spawn_blocking(move || {
+        let Some(spec) = spec else {
+            return Ok(None);
+        };
+        if spec.execution_profile.eq_ignore_ascii_case("isolated") {
+            return Ok(None);
+        }
+        if !DurablePlane::requested(&spec.sqlite_path, Some(&spec.root), &spec.source, spec.config)?
+        {
+            return Ok(None);
+        }
+        let Some(store) = DurablePlane::open_store(&spec.sqlite_path, Some(&spec.root))? else {
+            return Ok(None);
+        };
+        if !DurablePlane::should_start(store.as_ref(), &spec.source, spec.config)? {
+            return Ok(None);
+        }
+        let owner = format!("tysel-dev-{}", std::process::id());
+        Ok(Some(DurablePlane::start(store, spec.source, spec.config, owner)?))
+    })
+    .await?
+}
+
+async fn durable_service_failure(plane: Option<&Arc<DurablePlane>>) -> anyhow::Error {
+    match plane {
+        Some(plane) => plane.failed().await.into(),
+        None => std::future::pending().await,
     }
-    if !DurablePlane::requested(&spec.sqlite_path, Some(&spec.root), &spec.source, spec.config)? {
-        return Ok(None);
-    }
-    let Some(store) = DurablePlane::open_store(&spec.sqlite_path, Some(&spec.root))? else {
-        return Ok(None);
-    };
-    if !DurablePlane::should_start(store.as_ref(), &spec.source, spec.config)? {
-        return Ok(None);
-    }
-    let owner = format!("tysel-dev-{}", std::process::id());
-    Ok(Some(DurablePlane::start(store, spec.source, spec.config, owner)?))
 }
 
 async fn shutdown_durable(plane: Option<Arc<DurablePlane>>) -> Result<()> {
     if let Some(plane) = plane {
-        plane.shutdown().await?;
+        let result = plane.shutdown().await;
+        // The synchronous PostgreSQL client also drives its runtime on drop.
+        tokio::task::spawn_blocking(move || drop(plane)).await?;
+        result?;
     }
     Ok(())
 }
@@ -701,6 +762,9 @@ fn relevant(event: notify::Result<Event>) -> bool {
 }
 
 fn is_watched(path: &Path) -> bool {
+    if path.file_name().and_then(|name| name.to_str()) == Some("tysel-env.d.ts") {
+        return false;
+    }
     if ignored(path) {
         return false;
     }
@@ -743,6 +807,7 @@ mod tests {
     fn watches_dotenv_and_source_but_not_ignored_paths() {
         assert!(is_watched(Path::new("/app/.env")));
         assert!(is_watched(Path::new("/app/src/index.ts")));
+        assert!(!is_watched(Path::new("/app/tysel-env.d.ts")));
         assert!(is_watched(Path::new("/app/tysel.toml")));
         assert!(!is_watched(Path::new("/app/README.md")));
         assert!(!is_watched(Path::new("/app/node_modules/pkg/.env")));

@@ -6,22 +6,25 @@
   "additionalProperties": false,
   "required": ["app"],
   "properties": {
-    "schema_version": { "type": "integer", "const": 1, "default": 1 },
+    "schema_version": { "type": "integer", "const": 1, "default": 1, "description": "Manifest contract version supported by this toolchain." },
     "app": {
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "entry"],
       "properties": {
         "name": {
+          "description": "Application identity used in packaging and diagnostics.",
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
         },
         "entry": {
+          "description": "Application entry relative to the project root. Component profiles require a .wasm file.",
           "type": "string",
           "minLength": 1,
           "pattern": "^(?![A-Za-z]:)(?!/)(?!\\.(?:/\\.)*/?$)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000-\\u001F]+$"
         },
         "profile": {
+          "description": "Execution model: trusted service, isolated worker, or experimental Wasm Component.",
           "type": "string",
           "enum": ["service", "isolated", "component"],
           "default": "service"
@@ -81,6 +84,7 @@
       ]
     },
     "permissions": {
+      "description": "Explicit host-resource grants. Resources are denied unless granted; types do not replace runtime enforcement.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

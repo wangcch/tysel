@@ -10,7 +10,7 @@ are non-negative integers; omitted fields receive the values below.
 | --- | ---: | --- | --- |
 | `memory_mb` | `128` | MiB | QuickJS or isolated-worker memory budget. |
 | `cpu_ms_per_turn` | `50` | ms | CPU budget for one JavaScript turn. |
-| `request_timeout_ms` | `30000` | ms | Invocation deadline; also bounds configured LLM calls. |
+| `request_timeout_ms` | `30000` | ms | HTTP deadline includes admitted queue time and execution; also bounds configured LLM calls. |
 | `max_in_flight` | `1000` | requests | Maximum admitted HTTP requests, held through response-body completion. |
 | `max_response_mb` | `16` | MiB | Maximum cumulative HTTP response-body size. |
 | `max_request_mb` | `16` | MiB | Inbound request-body limit. |

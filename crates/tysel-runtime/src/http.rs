@@ -2,10 +2,10 @@ use std::convert::Infallible;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
@@ -15,13 +15,14 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use std::future::Future;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
-use tysel_engine::{EngineError, HttpHead, HttpRequest, IsolateConfig};
+use tysel_engine::{EngineError, HttpHead, HttpRequest, InterruptReason, IsolateConfig};
 use tysel_engine_qjs::{
     IncomingHttp, IsolatePool, ModuleMetadata, OutgoingHttpBody, STREAM_WINDOW,
 };
@@ -60,10 +61,23 @@ impl AppIsolate {
     async fn dispatch_incoming(
         &self,
         request: IncomingHttp,
+        deadline: Instant,
     ) -> Result<(tysel_engine::HttpHead, OutgoingHttpBody), EngineError> {
         match self {
-            Self::Trusted(pool) => pool.dispatch_response(request).await,
-            Self::Isolated(pool) => dispatch_isolated(pool.clone(), request).await,
+            Self::Trusted(pool) => pool.dispatch_response_until(request, deadline).await,
+            Self::Isolated(pool) => tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                dispatch_isolated(pool.clone(), request, deadline),
+            )
+            .await
+            .map_err(|_| EngineError::Interrupted(InterruptReason::Timeout))?,
+        }
+    }
+
+    pub fn request_timeout(&self) -> Duration {
+        match self {
+            Self::Trusted(pool) => pool.request_timeout(),
+            Self::Isolated(pool) => pool.request_timeout(),
         }
     }
 }
@@ -101,6 +115,7 @@ pub fn spawn_app_isolate_with_metadata(
 async fn dispatch_isolated(
     pool: Arc<IsolatedHttpPool>,
     request: IncomingHttp,
+    deadline: Instant,
 ) -> Result<(HttpHead, OutgoingHttpBody), EngineError> {
     if request.ws_in.is_some() || request.ws_out.is_some() {
         return Err(EngineError::Isolate(
@@ -122,24 +137,117 @@ async fn dispatch_isolated(
             return Err(EngineError::BodyTooLarge);
         }
     }
+    struct CancelOnDrop(Arc<AtomicBool>);
+    impl Drop for CancelOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _cancel_on_drop = CancelOnDrop(cancelled.clone());
     let result = tokio::task::spawn_blocking(move || {
-        pool.dispatch_sync(HttpRequest {
-            method: request.method,
-            url: request.url,
-            headers: request.headers,
-            body,
-            request_id: request.request_id,
-        })
+        pool.dispatch_sync_cancellable(
+            HttpRequest {
+                method: request.method,
+                url: request.url,
+                headers: request.headers,
+                body,
+                request_id: request.request_id,
+            },
+            deadline,
+            &cancelled,
+        )
     })
     .await
     .map_err(|err| EngineError::Isolate(err.to_string()))?;
-    let (head, bytes) = result.map_err(|err| EngineError::Isolate(err.to_string()))?;
+    let (head, bytes) = result.map_err(|err| match err {
+        tysel_isolate::IsolateError::Engine(error) => error,
+        other => EngineError::Isolate(other.to_string()),
+    })?;
     Ok((head, OutgoingHttpBody::Buffered(bytes)))
 }
 
 #[derive(Clone)]
 pub struct SharedPool {
     inner: Arc<RwLock<PoolState>>,
+    shutdown: Option<HttpShutdown>,
+}
+
+/// Cooperative connection draining. One watcher per connection, never per chunk.
+#[derive(Clone)]
+pub struct HttpShutdown(Arc<HttpShutdownState>);
+
+struct HttpShutdownState {
+    phase: watch::Sender<u8>,
+    active: AtomicUsize,
+    idle: Notify,
+}
+
+impl Default for HttpShutdown {
+    fn default() -> Self {
+        let (phase, _) = watch::channel(0);
+        Self(Arc::new(HttpShutdownState {
+            phase,
+            active: AtomicUsize::new(0),
+            idle: Notify::new(),
+        }))
+    }
+}
+
+impl HttpShutdown {
+    pub async fn drain(&self, grace: Duration) {
+        self.cancel();
+        if tokio::time::timeout(grace, self.idle()).await.is_err() {
+            self.0.phase.send_replace(2);
+            self.idle().await;
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.0.phase.send_if_modified(|phase| {
+            if *phase == 0 {
+                *phase = 1;
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    async fn notified(&self, phase: u8) {
+        let mut rx = self.0.phase.subscribe();
+        while *rx.borrow_and_update() < phase {
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    fn track(&self) -> ConnectionGuard {
+        self.0.active.fetch_add(1, Ordering::AcqRel);
+        ConnectionGuard(self.clone())
+    }
+
+    async fn idle(&self) {
+        loop {
+            let notified = self.0.idle.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.0.active.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+struct ConnectionGuard(HttpShutdown);
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        if self.0.0.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.0.idle.notify_waiters();
+        }
+    }
 }
 
 struct PoolState {
@@ -164,6 +272,7 @@ struct PoolSnapshot {
 }
 
 struct RuntimeDiagnostics {
+    shutdown: Option<HttpShutdown>,
     source_map: Option<Arc<SourceMap>>,
     sink: Option<RuntimeDiagnosticSink>,
 }
@@ -243,6 +352,11 @@ impl Drop for AdmissionPermit {
 }
 
 impl SharedPool {
+    pub fn with_shutdown(mut self, shutdown: HttpShutdown) -> Self {
+        self.shutdown = Some(shutdown);
+        self
+    }
+
     pub fn new(pool: impl Into<AppIsolate>, max_request_bytes: usize) -> Self {
         Self::with_websocket(pool, max_request_bytes, false)
     }
@@ -315,6 +429,7 @@ impl SharedPool {
         source_map: Option<Arc<SourceMap>>,
     ) -> Self {
         Self {
+            shutdown: None,
             inner: Arc::new(RwLock::new(PoolState {
                 isolate: pool.into(),
                 max_request_bytes: limits.max_request_bytes,
@@ -435,6 +550,7 @@ impl SharedPool {
             websocket: guard.websocket,
             admission: guard.admission.clone(),
             diagnostics: RuntimeDiagnostics {
+                shutdown: self.shutdown.clone(),
                 source_map: guard.source_map.clone(),
                 sink: guard.diagnostic_sink.clone(),
             },
@@ -543,12 +659,43 @@ pub async fn serve_with_http_limits(
     }
 }
 
+/// Serve until cancellation, then drain admitted responses and close idle sockets.
+/// The grace period is shared by every connection, including upgraded sockets.
+pub async fn serve_with_shutdown(
+    listener: TcpListener,
+    pool: SharedPool,
+    shutdown: HttpShutdown,
+    grace: Duration,
+) -> Result<(), HttpError> {
+    let (http1, http2) = pool.protocols();
+    if !http1 && !http2 {
+        return Err(HttpError::Hyper("at least one HTTP protocol must be enabled".into()));
+    }
+    let pool = pool.with_shutdown(shutdown.clone());
+    let result = loop {
+        tokio::select! {
+            biased;
+            () = shutdown.notified(1) => break Ok(()),
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _)) => handle_stream(stream, pool.clone()),
+                Err(error) => break Err(HttpError::Io(error)),
+            }
+        }
+    };
+    drop(listener);
+    shutdown.drain(grace).await;
+    result
+}
+
 pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
     // Small HTTP responses should not wait for Nagle/delayed-ACK interaction.
     // This applies to every accepted connection, independent of the handler or
     // workload, and mirrors the latency-oriented behavior of modern runtimes.
     let _ = stream.set_nodelay(true);
+    let shutdown = pool.shutdown.clone();
+    let guard = shutdown.as_ref().map(HttpShutdown::track);
     tokio::spawn(async move {
+        let _guard = guard;
         let (http1, http2) = pool.protocols();
         let io = TokioIo::new(stream);
         let service = service_fn(move |request| {
@@ -584,23 +731,37 @@ pub fn handle_stream(stream: tokio::net::TcpStream, pool: SharedPool) {
                 Ok::<_, Infallible>(response)
             }
         });
+        // Pin each protocol's native connection, retaining its existing fast path.
+        macro_rules! drive {
+            ($connection:expr) => {{
+                let connection = $connection;
+                tokio::pin!(connection);
+                if let Some(shutdown) = &shutdown {
+                    tokio::select! {
+                        result = &mut connection => { let _ = result; return; }
+                        () = shutdown.notified(1) => connection.as_mut().graceful_shutdown(),
+                    }
+                    tokio::select! {
+                        result = &mut connection => { let _ = result; }
+                        () = shutdown.notified(2) => {}
+                    }
+                } else {
+                    let _ = connection.await;
+                }
+            }};
+        }
         match (http1, http2) {
             (true, true) => {
-                let _ = auto::Builder::new(TokioExecutor::new())
-                    .serve_connection_with_upgrades(io, service)
-                    .await;
+                let builder = auto::Builder::new(TokioExecutor::new());
+                drive!(builder.serve_connection_with_upgrades(io, service));
             }
             (false, true) => {
-                let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
-                    .serve_connection(io, service)
-                    .await;
+                let builder = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+                drive!(builder.serve_connection(io, service));
             }
             (true, false) => {
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .keep_alive(true)
-                    .serve_connection(io, service)
-                    .with_upgrades()
-                    .await;
+                let mut builder = hyper::server::conn::http1::Builder::new();
+                drive!(builder.keep_alive(true).serve_connection(io, service).with_upgrades());
             }
             (false, false) => {}
         }
@@ -643,53 +804,74 @@ async fn dispatch(
     permit: AdmissionPermit,
 ) -> Response<HttpBody> {
     let mut permit = Some(permit);
-    let mut response =
-        match dispatch_inner(pool, request, limits, websocket, request_id, &mut permit).await {
-            Ok(response) => response,
-            Err(HttpError::BodyTooLarge(limit)) => json_error_response(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "BODY_TOO_LARGE",
-                &format!("request body exceeds {limit} bytes"),
+    let mut response = match dispatch_inner(
+        pool,
+        request,
+        limits,
+        websocket,
+        request_id,
+        &mut permit,
+        diagnostics.shutdown.clone(),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(HttpError::Engine(EngineError::Interrupted(InterruptReason::Timeout))) => {
+            json_error_response(
+                StatusCode::GATEWAY_TIMEOUT,
+                "REQUEST_TIMEOUT",
+                "request deadline exceeded",
                 request_id,
-            ),
-            Err(HttpError::ResponseTooLarge(limit)) => json_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "RESPONSE_TOO_LARGE",
-                &format!("response body exceeds {limit} bytes"),
-                request_id,
-            ),
-            Err(err) => {
-                let message = err.to_string();
-                let source = diagnostics
-                    .source_map
-                    .as_deref()
-                    .and_then(|source_map| source_map.first_original_position(&message))
-                    .map(|position| RuntimeDiagnosticSource {
-                        file: position.source,
-                        line: position.line,
-                        column: position.column,
-                    });
-                let message = diagnostics
-                    .source_map
-                    .as_deref()
-                    .map(|source_map| source_map.symbolicate_stack(&message))
-                    .unwrap_or(message);
-                if let Some(diagnostic_sink) = diagnostics.sink.as_ref() {
-                    diagnostic_sink(RuntimeDiagnostic {
-                        code: "RUNTIME_ERROR",
-                        message: message.clone(),
-                        request_id,
-                        source,
-                    });
-                }
-                json_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "RUNTIME_ERROR",
-                    &message,
+            )
+        }
+        Err(HttpError::BodyTooLarge(limit)) => json_error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "BODY_TOO_LARGE",
+            &format!("request body exceeds {limit} bytes"),
+            request_id,
+        ),
+        Err(HttpError::ResponseTooLarge(limit)) => json_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "RESPONSE_TOO_LARGE",
+            &format!("response body exceeds {limit} bytes"),
+            request_id,
+        ),
+        Err(err) => {
+            // Source maps are supplied only by the explicit development
+            // diagnostics path. Packaged services must never echo an
+            // arbitrary application or host exception to their clients.
+            let expose_details = diagnostics.source_map.is_some();
+            let message = err.to_string();
+            let source = diagnostics
+                .source_map
+                .as_deref()
+                .and_then(|source_map| source_map.first_original_position(&message))
+                .map(|position| RuntimeDiagnosticSource {
+                    file: position.source,
+                    line: position.line,
+                    column: position.column,
+                });
+            let message = diagnostics
+                .source_map
+                .as_deref()
+                .map(|source_map| source_map.symbolicate_stack(&message))
+                .unwrap_or(message);
+            if let Some(diagnostic_sink) = diagnostics.sink.as_ref() {
+                diagnostic_sink(RuntimeDiagnostic {
+                    code: "RUNTIME_ERROR",
+                    message: message.clone(),
                     request_id,
-                )
+                    source,
+                });
             }
-        };
+            json_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RUNTIME_ERROR",
+                if expose_details { &message } else { "request execution failed" },
+                request_id,
+            )
+        }
+    };
     if let Some(permit) = permit {
         response.body_mut().hold_permit(permit);
     }
@@ -737,7 +919,11 @@ async fn dispatch_inner(
     websocket_enabled: bool,
     request_id: u64,
     permit: &mut Option<AdmissionPermit>,
+    shutdown: Option<HttpShutdown>,
 ) -> Result<Response<HttpBody>, HttpError> {
+    let deadline = Instant::now()
+        .checked_add(pool.request_timeout())
+        .ok_or_else(|| EngineError::Isolate("request timeout is too large".into()))?;
     if let Some(len) = request
         .headers()
         .get(hyper::header::CONTENT_LENGTH)
@@ -794,15 +980,18 @@ async fn dispatch_inner(
     };
 
     let (head, body) = match pool
-        .dispatch_incoming(IncomingHttp {
-            method,
-            url,
-            headers,
-            body: rx,
-            ws_in: ws_to_js_rx,
-            ws_out: ws_from_js_tx,
-            request_id,
-        })
+        .dispatch_incoming(
+            IncomingHttp {
+                method,
+                url,
+                headers,
+                body: rx,
+                ws_in: ws_to_js_rx,
+                ws_out: ws_from_js_tx,
+                request_id,
+            },
+            deadline,
+        )
         .await
     {
         Ok(pair) => pair,
@@ -818,10 +1007,22 @@ async fn dispatch_inner(
         && head.status == 101
     {
         let websocket_permit = permit.take();
+        let guard = shutdown.as_ref().map(HttpShutdown::track);
         tokio::spawn(async move {
+            let _guard = guard;
             let _permit = websocket_permit;
-            if let Ok(upgraded) = hyper::upgrade::on(request).await {
-                pump_websocket(upgraded, ws_to_js_tx, ws_from_js_rx).await;
+            let pump = async {
+                if let Ok(upgraded) = hyper::upgrade::on(request).await {
+                    pump_websocket(upgraded, ws_to_js_tx, ws_from_js_rx, shutdown.clone()).await;
+                }
+            };
+            if let Some(shutdown) = &shutdown {
+                tokio::select! {
+                    () = pump => {}
+                    () = shutdown.notified(2) => {}
+                }
+            } else {
+                pump.await;
             }
         });
         let accept = derive_accept_key(key.as_bytes());
@@ -848,6 +1049,11 @@ async fn dispatch_inner(
             HttpBody::once(bytes)
         }
         OutgoingHttpBody::Stream(chunks) => HttpBody::stream(chunks, limits.max_response_bytes),
+        OutgoingHttpBody::CheckedStream { chunks, completion } => {
+            let mut body = HttpBody::stream(chunks, limits.max_response_bytes);
+            body.completion = Some(completion);
+            body
+        }
     };
     builder.body(body).map_err(|err| HttpError::Hyper(err.to_string()))
 }
@@ -879,43 +1085,67 @@ async fn pump_websocket(
     upgraded: hyper::upgrade::Upgraded,
     to_js: mpsc::Sender<Result<Vec<u8>, String>>,
     mut from_js: mpsc::Receiver<Vec<u8>>,
+    shutdown: Option<HttpShutdown>,
 ) {
     let mut ws = WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
-    loop {
-        tokio::select! {
-            incoming = ws.next() => {
-                match incoming {
-                    Some(Ok(Message::Text(text))) => {
-                        if to_js.send(Ok(text.as_bytes().to_vec())).await.is_err() {
-                            break;
+    let draining = {
+        let pump = async {
+            loop {
+                tokio::select! {
+                    incoming = ws.next() => {
+                        match incoming {
+                            Some(Ok(Message::Text(text))) => {
+                                if to_js.send(Ok(text.as_bytes().to_vec())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
+                            Some(Ok(Message::Binary(_))) => {}
+                            Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                         }
                     }
-                    Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
-                    Some(Ok(Message::Binary(_))) => {}
-                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                }
-            }
-            outgoing = from_js.recv() => {
-                match outgoing {
-                    Some(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes).into_owned();
-                        if ws.send(Message::Text(text.into())).await.is_err() {
-                            break;
+                    outgoing = from_js.recv() => {
+                        match outgoing {
+                            Some(bytes) => {
+                                let text = String::from_utf8_lossy(&bytes).into_owned();
+                                if ws.send(Message::Text(text.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            None => {
+                                let _ = ws.close(None).await;
+                                break;
+                            }
                         }
                     }
-                    None => {
-                        let _ = ws.close(None).await;
-                        break;
-                    }
                 }
             }
+        };
+        if let Some(shutdown) = &shutdown {
+            tokio::select! {
+                () = pump => false,
+                () = shutdown.notified(1) => true,
+            }
+        } else {
+            pump.await;
+            false
         }
+    };
+    if draining {
+        use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+        let _ = ws
+            .close(Some(CloseFrame { code: CloseCode::Away, reason: "server shutdown".into() }))
+            .await;
     }
 }
 
 async fn pump_request_body(mut body: Limited<Incoming>, tx: mpsc::Sender<Result<Vec<u8>, String>>) {
     loop {
-        match body.frame().await {
+        let frame = tokio::select! {
+            () = tx.closed() => return,
+            frame = body.frame() => frame,
+        };
+        match frame {
             Some(Ok(frame)) => {
                 if let Ok(data) = frame.into_data() {
                     if data.is_empty() {
@@ -946,21 +1176,22 @@ enum HttpBodyKind {
 }
 
 pub struct HttpBody {
+    completion: Option<oneshot::Receiver<Result<(), EngineError>>>,
     kind: HttpBodyKind,
     permit: Option<AdmissionPermit>,
 }
 
 impl HttpBody {
     fn once(bytes: Vec<u8>) -> Self {
-        Self { kind: HttpBodyKind::Once(Some(Bytes::from(bytes))), permit: None }
+        Self { completion: None, kind: HttpBodyKind::Once(Some(Bytes::from(bytes))), permit: None }
     }
 
     fn empty() -> Self {
-        Self { kind: HttpBodyKind::Once(None), permit: None }
+        Self { completion: None, kind: HttpBodyKind::Once(None), permit: None }
     }
 
     fn stream(rx: mpsc::Receiver<Vec<u8>>, limit: usize) -> Self {
-        Self { kind: HttpBodyKind::Stream { rx, remaining: limit }, permit: None }
+        Self { completion: None, kind: HttpBodyKind::Stream { rx, remaining: limit }, permit: None }
     }
 
     fn hold_permit(&mut self, permit: AdmissionPermit) {
@@ -996,6 +1227,25 @@ impl Body for HttpBody {
                     Poll::Ready(Some(Err(io::Error::other("response body limit exceeded"))))
                 }
                 Poll::Ready(None) => {
+                    if let Some(completion) = &mut this.completion {
+                        let result = match Pin::new(completion).poll(cx) {
+                            Poll::Pending => return Poll::Pending,
+                            Poll::Ready(result) => result,
+                        };
+                        this.completion = None;
+                        this.permit.take();
+                        match result {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                return Poll::Ready(Some(Err(io::Error::other(error.to_string()))));
+                            }
+                            Err(_) => {
+                                return Poll::Ready(Some(Err(io::Error::other(
+                                    "response stream interrupted",
+                                ))));
+                            }
+                        }
+                    }
                     this.permit.take();
                     Poll::Ready(None)
                 }
@@ -1062,5 +1312,28 @@ mod body_tests {
         assert!(admission.try_acquire().is_none());
         drop(second);
         assert_eq!(admission.available(), 1);
+    }
+}
+
+#[cfg(test)]
+mod stream_completion_tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    #[tokio::test]
+    async fn stream_error_is_not_reported_as_clean_eof() {
+        let (tx, rx) = mpsc::channel(1);
+        let (done, completion) = oneshot::channel();
+        let mut body = HttpBody::stream(rx, 1024);
+        body.completion = Some(completion);
+        tx.send(vec![65]).await.unwrap();
+        drop(tx);
+        done.send(Err(EngineError::Isolate("broken stream".into()))).unwrap();
+        assert_eq!(
+            body.frame().await.unwrap().unwrap().into_data().unwrap(),
+            Bytes::from_static(b"A")
+        );
+        assert!(body.frame().await.unwrap().unwrap_err().to_string().contains("broken stream"));
+        assert!(body.frame().await.is_none());
     }
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import { T, SourceText } from "@/components/locale-provider";
+import { SiteLink as Link } from "@/components/locale-provider";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useId, useRef, useState } from "react";
 import { CopyButton } from "@/components/copy-button";
@@ -351,7 +352,7 @@ const apiGroups: ApiGroup[] = [
       {
         name: "tysel inspect",
         description: "Effective authority and limits",
-        href: "/reference/cli/development#tysel-inspect",
+        href: "/reference/cli/development#static-validation",
       },
       {
         name: "@tysel/test",
@@ -402,13 +403,13 @@ function ExamplePanel({ example }: { example: Example }) {
           key={example.id}
           className="home-code-fade max-w-xl text-sm leading-6 text-white/65"
         >
-          {example.blurb}
+          <SourceText text={example.blurb} />
         </p>
         <Link
           href={example.docsHref}
           className="shrink-0 text-sm text-white/70 underline decoration-white/30 underline-offset-4 hover:text-white hover:decoration-white"
         >
-          Docs →
+          <T id="ui.docs" />
         </Link>
       </div>
 
@@ -429,8 +430,8 @@ function ExamplePanel({ example }: { example: Example }) {
 
       <div className="mt-auto flex flex-col justify-between gap-2 border-t border-white/10 px-5 py-3 text-xs text-white/45 sm:flex-row sm:items-center">
         <span>
-          <span className="text-white/30">Grant · </span>
-          {example.grant}
+          <span className="text-white/30"><T id="ui.grant" /> </span>
+          <SourceText text={example.grant} />
         </span>
         {example.exampleHref ? (
           <Link
@@ -442,7 +443,7 @@ function ExamplePanel({ example }: { example: Example }) {
               : "Open example →"}
           </Link>
         ) : (
-          <span className="shrink-0 text-white/35">Reference recipe</span>
+          <span className="shrink-0 text-white/35"><T id="ui.reference.recipe" /></span>
         )}
       </div>
     </div>
@@ -509,7 +510,7 @@ export function RuntimeCapabilities() {
                         selected ? "bg-tysel-blue" : "bg-fd-border"
                       }`}
                     />
-                    {item.label}
+                    <SourceText text={item.label} />
                   </button>
                 </li>
               );
@@ -530,18 +531,17 @@ export function RuntimeCapabilities() {
       <div className="mt-16 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h3 className="font-heading max-w-xl text-xl font-medium tracking-tight text-balance sm:text-2xl">
-            Lookup by contract
+            <T id="ui.lookup.by.contract" />
           </h3>
           <p className="mt-2 max-w-xl text-sm leading-6 text-fd-muted-foreground">
-            Each link is an exact interface page — accepted values, defaults,
-            and what the profile can still deny.
+            <T id="ui.each.link.is.an.exact.interface.page.accepted" />
           </p>
         </div>
         <Link
           href="/reference"
           className="inline-flex shrink-0 items-center border border-fd-border px-4 py-2 text-sm font-medium transition-colors hover:bg-fd-accent"
         >
-          API reference →
+          <T id="ui.api.reference" />
         </Link>
       </div>
 
@@ -549,17 +549,17 @@ export function RuntimeCapabilities() {
         {apiGroups.map((group) => (
           <div key={group.title} className="bg-fd-background p-5">
             <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-fd-muted-foreground">
-              {group.title}
+              <SourceText text={group.title} />
             </p>
             <ul className="mt-4 space-y-4">
               {group.items.map((item) => (
                 <li key={item.name}>
                   <Link href={item.href} className="group block">
                     <p className="font-mono text-sm text-tysel-blue group-hover:underline">
-                      {item.name}
+                      <SourceText text={item.name} />
                     </p>
                     <p className="mt-1 text-sm leading-5 text-fd-muted-foreground">
-                      {item.description}
+                      <SourceText text={item.description} />
                     </p>
                   </Link>
                 </li>
@@ -570,27 +570,26 @@ export function RuntimeCapabilities() {
       </div>
 
       <p className="mt-6 max-w-3xl text-sm leading-6 text-fd-muted-foreground">
-        Shell, child processes, FFI, and dynamic libraries are outside the
-        application contract — not missing features. See the{" "}
+        <T id="ui.shell.child.processes.ffi.and.dynamic.libraries.are" />{" "}
         <Link
           href="/docs/capabilities"
           className="text-fd-foreground underline-offset-4 hover:underline"
         >
-          capability matrix
+          <T id="ui.capability.matrix" />
         </Link>
         ,{" "}
         <Link
           href="/docs/concepts/execution-profiles"
           className="text-fd-foreground underline-offset-4 hover:underline"
         >
-          execution profiles
+          <T id="ui.execution.profiles" />
         </Link>
-        , and{" "}
+        <T id="ui.and" />{" "}
         <Link
           href="/docs/guides/examples"
           className="text-fd-foreground underline-offset-4 hover:underline"
         >
-          example gallery
+          <T id="ui.example.gallery" />
         </Link>
         .
       </p>

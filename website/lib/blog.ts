@@ -1,3 +1,6 @@
+import { estimateReadingMinutes } from "./reading-time.mjs";
+import { translatedBlog } from "@/lib/i18n/content";
+import { sourceLocale, type Locale } from "@/lib/i18n/config";
 import type { BlogPage } from "@/lib/source";
 import { blog } from "@/lib/source";
 
@@ -12,8 +15,8 @@ export function getBlogUpdatedAt(page: BlogPage): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
-export function formatBlogDate(page: BlogPage): string {
-  return new Intl.DateTimeFormat("en", {
+export function formatBlogDate(page: BlogPage, locale: Locale = sourceLocale): string {
+  return new Intl.DateTimeFormat(locale, {
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -21,33 +24,21 @@ export function formatBlogDate(page: BlogPage): string {
   }).format(getBlogDate(page));
 }
 
-export function getBlogPosts(): BlogPage[] {
-  return [...blog.getPages()].sort(
+export function getBlogPosts(locale: Locale = sourceLocale): BlogPage[] {
+  const pages = locale === sourceLocale ? blog.getPages() : blog.getPages().flatMap((original) => {
+    const translated = translatedBlog.getPage(original.slugs, locale);
+    return translated ? [{ ...original, ...translated, data: { ...original.data, ...translated.data } }] : [];
+  });
+  return pages.sort(
     (a, b) => getBlogDate(b).getTime() - getBlogDate(a).getTime(),
   );
 }
 
-export function getFeaturedBlogPost(): BlogPage | undefined {
-  return getBlogPosts()[0];
+export function getFeaturedBlogPost(locale: Locale = sourceLocale): BlogPage | undefined {
+  return getBlogPosts(locale)[0];
 }
-
-/** Words per minute for reading-time estimates. */
-const WORDS_PER_MINUTE = 220;
 
 export async function getReadingMinutes(page: BlogPage): Promise<number> {
   if (page.data.readingMinutes) return page.data.readingMinutes;
-
-  const raw = await page.data.getText("raw");
-  const body = raw.startsWith("---")
-    ? raw.slice(raw.indexOf("\n---", 3) + 4)
-    : raw;
-  const words = body
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/!\[[^\]]*]\([^)]+\)/g, " ")
-    .replace(/\[[^\]]*]\([^)]+\)/g, " ")
-    .replace(/[#>*`|_~\-={}]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean).length;
-
-  return Math.max(1, Math.round(words / WORDS_PER_MINUTE));
+  return estimateReadingMinutes(await page.data.getText("raw"));
 }

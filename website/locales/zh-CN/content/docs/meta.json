@@ -1,0 +1,20 @@
+{
+  "title": "Tysel",
+  "pages": [
+    "index",
+    "---开始---",
+    "install",
+    "getting-started",
+    "---指南---",
+    "guides",
+    "---概念---",
+    "concepts",
+    "---查阅---",
+    "capabilities",
+    "compatibility",
+    "---运维---",
+    "security",
+    "operations",
+    "performance"
+  ]
+}

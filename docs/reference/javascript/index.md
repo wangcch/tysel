@@ -9,9 +9,10 @@ partial, and intentionally excluded behavior for every global.
 | Group | Included globals |
 | --- | --- |
 | HTTP values | `Request`, `Response`, `Headers`, `fetch` |
-| URLs and encoding | `URL`, `URLSearchParams`, `TextEncoder`, `TextDecoder` |
-| Scheduling and events | timers, `Event`, `EventTarget`, `AbortController`, `AbortSignal` |
-| Security | `crypto.getRandomValues`, supported `crypto.subtle` digest and HMAC operations |
+| URLs and encoding | `URL`, `URLSearchParams`, `TextEncoder`, `TextDecoder`, `TextDecoderStream`, `atob`, `btoa` |
+| Streams | `ReadableStream`, `WritableStream`, `TransformStream`, queuing strategies |
+| Scheduling and events | timers, `queueMicrotask`, `Event`, `EventTarget`, `AbortController`, `AbortSignal` |
+| Security | `crypto.getRandomValues`, `crypto.randomUUID`, supported `crypto.subtle` digest and HMAC operations |
 | Realtime | inbound and outbound `WebSocket` subsets |
 
 Use the per-global pages in the

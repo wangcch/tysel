@@ -47,6 +47,25 @@ Fatal errors are one JSON object on stderr. Build failures also include a
 diagnostic, not as a stable programmatic discriminator. The process exits with
 status `1` for this fatal path.
 
+Individual static diagnostics use these stable codes:
+
+| Code | Meaning |
+| --- | --- |
+| `TYSEL_MANIFEST_PARSE_ERROR` | TOML/JSON syntax or deserialization failed. |
+| `TYSEL_MANIFEST_INVALID` | A manifest semantic rule failed. |
+| `TYSEL_NODE_BUILTIN_UNSUPPORTED` | A runtime import requests a Node builtin. |
+| `TYSEL_IMPORT_UNRESOLVED` | A runtime import cannot be resolved. |
+
+Manifest diagnostics use phase `manifest`; import diagnostics use `resolve`.
+Manifest validation reports the first failure, with its field range when
+available. Missing fields may have no range, and parser errors may point to an
+insertion point or enclosing table. Import diagnostics cover modules reached by
+the build resolver, including dependencies, and refer to original TypeScript
+source rather than emitted JavaScript. Erased type-only imports are excluded.
+TypeScript typecheck output itself remains compiler text, not this structured
+protocol.
+
+
 ## Development diagnostic stream
 
 `tysel --error-format json dev` writes one JSON object per diagnostic update to
@@ -87,7 +106,7 @@ Unhandled runtime failures return HTTP `500` with JSON:
 {
   "error": {
     "code": "RUNTIME_ERROR",
-    "message": "...",
+    "message": "request execution failed",
     "requestId": "000000000000002a"
   }
 }
@@ -98,12 +117,15 @@ An oversized inbound body returns HTTP `413` with the same shape and code
 An internal serialization fallback can return only
 `{"error":{"code":"INTERNAL_ERROR"}}`.
 
-`tysel dev` uses the generated source map to symbolicate application stack
-information. Although the map is embedded during packaging, the packaged HTTP
-dispatcher does not currently apply it, so production messages can contain
-bundle locations. Treat all runtime messages as operator diagnostics: map
-errors to an application-owned response before exposing sensitive internals to
-public clients.
+Packaged services and `tysel run` return the fixed message `request execution failed` for unhandled failures. Arbitrary exception text, source paths, and
+stacks are not included in that public response. `tysel dev` retains mapped
+source diagnostics and detailed error messages for local debugging.
+
+A request whose deadline expires before response headers returns HTTP `504`
+with code `REQUEST_TIMEOUT` and message `request deadline exceeded`. The
+budget includes admitted queue time and handler execution. If headers have
+already been sent, a streaming timeout terminates the body with an error;
+it cannot replace the existing status with `504`.
 
 ## Application errors
 

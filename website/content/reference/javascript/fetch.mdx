@@ -13,10 +13,12 @@ Source of truth: `runtime-js/web-api/compatibility.json`
 ## Supported
 
 - HTTP methods allowed by host policy
-- headers and buffered request bodies
+- headers and byte-preserving buffered request bodies
 - redirect policy
 - streamed response consumption
 - AbortSignal cancellation
+- response.body reader, async iteration and cancellation
+- multiple Set-Cookie headers preserved
 
 ## Not supported
 

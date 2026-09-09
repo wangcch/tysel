@@ -1,0 +1,92 @@
+---
+title: "构建 Go Wasm Component"
+description: "本指南使用已发布的 Tysel Component 起始项目为 Go 来宾生成绑定，构建 Wasm Component，验证其 ABI，并将其打包为原生 Tysel 可执行文件。"
+---
+
+本指南使用已发布的 Tysel Component 起始项目为 Go 来宾生成绑定，构建 Wasm Component，验证其 ABI，并将其打包为原生 Tysel 可执行文件。
+
+## 前置条件
+
+安装：
+
+- 已发布的 Tysel [工具链](/docs/install)；
+- 与固定样例模块匹配的 Go `1.25.5`；
+- Bytecode Alliance `componentize-go` `0.4.1`。
+
+```sh
+go install github.com/bytecodealliance/componentize-go@v0.4.1
+tysel doctor --install
+```
+
+确保 Go 安装的二进制目录也在 `PATH` 中，使 `componentize-go` 可用。
+
+## 下载起始项目
+
+每个 Tysel GitHub Release 都包含版本匹配的起始项目包。下载并验证后，进入 Go 项目：
+
+```sh
+version="$(tysel --version | awk '{print $2}')"
+release="https://github.com/wangcch/tysel/releases/download/v${version}"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz.sha256"
+curl -fsSLO "${release}/tysel-component-starters.tar.gz.sig.json"
+expected="$(tr -d '[:space:]' < tysel-component-starters.tar.gz.sha256)"
+actual="$(shasum -a 256 tysel-component-starters.tar.gz | awk '{print $1}')"
+test "$actual" = "$expected"
+tysel release verify-metadata \
+  tysel-component-starters.tar.gz \
+  tysel-component-starters.tar.gz.sig.json \
+  --trust "${TYSEL_HOME:-$HOME/.tysel}/trust.json"
+tar -xzf tysel-component-starters.tar.gz
+cd tysel-component-starters/go-echo
+```
+
+不可变标签来自已安装的 CLI，因此项目包与原生工具链保持在同一版本。项目包内置匹配的来宾 SDK 模块和 Component WIT 包，并固定经过测试的绑定生成器，无需检出 Tysel 仓库。如果 Tysel 安装在自定义托管前缀下且未设置 `TYSEL_HOME`，请将该前缀中的 `trust.json` 传给 `--trust`。
+
+## 生成并构建
+
+在 `tysel-component-starters/go-echo` 中运行：
+
+```sh
+componentize-go -d wit/component -w task bindings
+componentize-go -d wit/component -w task build \
+  -o echo.component.wasm
+```
+
+起始项目已包含 `wit_exports.go`，因此只有在验证固定工具链或修改 WIT 时才需要重新生成绑定。常规构建可直接使用附带的绑定。
+
+## 验证并运行
+
+```sh
+tysel check
+printf '{"language":"go","value":42}' | tysel run
+```
+
+预期 stdout：
+
+```json
+{"language":"go","value":42}
+```
+
+来宾通过 `tysel:component/task@0.4.0` 接收并返回 JSON。进程 stdin/stdout 由 Tysel 管理；来宾不会将其作为隐式 WASI 流继承。
+
+## 打包为单个可执行文件
+
+```sh
+tysel build --release
+printf '{"value":"packaged"}' | ./dist/go-echo-component
+```
+
+可执行文件会保留可移植 Component，并可包含兼容的宿主专用优化元数据。目标宿主无需 Go 或 `componentize-go` 即可运行；可移植性不依赖该可选元数据。
+
+## 故障排查
+
+| 现象 | 检查项 |
+| --- | --- |
+| 生成的包无法编译 | 将 `componentize-go` `0.4.1` 与起始项目的 `wit/component` 目录配合使用。 |
+| 输出 JSON 无效 | 返回可由 `encoding/json` 编码的值；不要手动构造 ABI 字符串。 |
+| 进程等待且没有输出 | 写入单个 JSON 输入后关闭 stdin。 |
+| WASI 套接字或 preopen 导入被拒绝 | Tysel 只公开其[受限 WASI 配置](/reference/component/runtime#restricted-wasi-02-profile)。 |
+| 文件系统导入被拒绝 | 满足 [Component 能力交集](/reference/component/capabilities)。 |
+
+接下来阅读 [Go SDK 参考](/reference/component/go-sdk)。

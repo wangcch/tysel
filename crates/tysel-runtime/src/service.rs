@@ -23,7 +23,8 @@ use tysel_engine_wasm::{
 use tysel_package::Tap;
 
 use crate::http::{
-    AppIsolate, HttpError, HttpLimits, serve_with_http_limits, spawn_app_isolate_with_metadata,
+    AppIsolate, HttpError, HttpLimits, HttpShutdown, serve_with_shutdown,
+    spawn_app_isolate_with_metadata,
 };
 use crate::{DurablePlane, DurablePlaneError};
 #[cfg(unix)]
@@ -278,14 +279,25 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
             Some(service)
         }
     };
-    let durable = start_durable_plane(
-        &tap.manifest.execution_profile,
-        &tap.manifest.sqlite_path,
-        None,
-        &bundle,
-        config,
-        metadata.as_ref().map(|metadata| !metadata.durable_exports.is_empty()),
-    )?;
+    let durable = {
+        let execution_profile = tap.manifest.execution_profile.clone();
+        let sqlite_path = tap.manifest.sqlite_path.clone();
+        let source = bundle.clone();
+        let has_durable_exports =
+            metadata.as_ref().map(|metadata| !metadata.durable_exports.is_empty());
+        tokio::task::spawn_blocking(move || {
+            start_durable_plane(
+                &execution_profile,
+                &sqlite_path,
+                None,
+                &source,
+                config,
+                has_durable_exports,
+            )
+        })
+        .await
+        .map_err(|error| io::Error::other(error.to_string()))??
+    };
     if durable.is_some() {
         println!("tysel durable on");
     }
@@ -296,52 +308,61 @@ pub async fn run_tap(tap: Tap) -> Result<(), StubError> {
         max_response_bytes: tap.manifest.max_response_bytes,
         max_in_flight: tap.manifest.max_in_flight,
     };
+    let shutdown = HttpShutdown::default();
+    let server = serve_with_shutdown(
+        listener,
+        crate::SharedPool::with_http_limits(
+            pool,
+            http_limits,
+            websocket,
+            tap.manifest.http1,
+            tap.manifest.http2,
+            None,
+        ),
+        shutdown.clone(),
+        Duration::from_millis(config.request_timeout_ms.saturating_add(1_000)),
+    );
+    tokio::pin!(server);
+    let mut server_finished = false;
     #[cfg(unix)]
-    if let Some(service) = task_service {
-        tokio::select! {
-            result = serve_with_http_limits(listener, pool, http_limits, websocket, tap.manifest.http1, tap.manifest.http2) => {
-                let durable_shutdown = shutdown_durable(durable.as_ref()).await;
-                service.shutdown().await?;
-                durable_shutdown?;
-                result?;
+    let outcome: Result<(), StubError> = tokio::select! {
+        result = &mut server => { server_finished = true; result.map_err(Into::into) }
+        error = async {
+            match &task_service {
+                Some(service) => service.failed().await,
+                None => std::future::pending().await,
             }
-            error = service.failed() => {
-                let durable_shutdown = shutdown_durable(durable.as_ref()).await;
-                service.shutdown().await?;
-                durable_shutdown?;
-                return Err(error.into());
-            }
-            signal = shutdown_signal() => {
-                let durable_shutdown = shutdown_durable(durable.as_ref()).await;
-                let shutdown = service.shutdown().await;
-                signal?;
-                durable_shutdown?;
-                shutdown?;
-            }
-        }
-    } else {
-        tokio::select! {
-            result = serve_with_http_limits(listener, pool, http_limits, websocket, tap.manifest.http1, tap.manifest.http2) => {
-                shutdown_durable(durable.as_ref()).await?;
-                result?;
-            }
-            signal = shutdown_signal() => {
-                shutdown_durable(durable.as_ref()).await?;
-                signal?;
-            }
-        }
-    }
+        } => Err(error.into()),
+        error = async {
+            match &durable { Some(plane) => plane.failed().await, None => std::future::pending().await }
+        } => Err(error.into()),
+        signal = shutdown_signal() => signal.map_err(Into::into),
+    };
     #[cfg(not(unix))]
-    tokio::select! {
-        result = serve_with_http_limits(listener, pool, http_limits, websocket, tap.manifest.http1, tap.manifest.http2) => {
-            shutdown_durable(durable.as_ref()).await?;
-            result?;
-        }
-        signal = shutdown_signal() => {
-            shutdown_durable(durable.as_ref()).await?;
-            signal?;
-        }
+    let outcome: Result<(), StubError> = tokio::select! {
+        result = &mut server => { server_finished = true; result.map_err(Into::into) }
+        error = async {
+            match &durable { Some(plane) => plane.failed().await, None => std::future::pending().await }
+        } => Err(error.into()),
+        signal = shutdown_signal() => signal.map_err(Into::into),
+    };
+    shutdown.cancel();
+    if let Some(plane) = &durable {
+        plane.stop_claiming();
     }
+    // Keep capability and durable hooks alive while admitted HTTP handlers finish.
+    let http_result = if server_finished { Ok(()) } else { server.await };
+    let durable_result = shutdown_durable(durable).await;
+    #[cfg(unix)]
+    let task_result = match task_service {
+        Some(service) => service.shutdown().await,
+        None => Ok(()),
+    };
+    outcome?;
+    http_result?;
+    durable_result?;
+    #[cfg(unix)]
+    task_result?;
     Ok(())
 }
 
@@ -390,9 +411,14 @@ fn start_durable_plane(
     Ok(Some(DurablePlane::start(store, bundle.to_owned(), config, owner)?))
 }
 
-async fn shutdown_durable(plane: Option<&std::sync::Arc<DurablePlane>>) -> Result<(), StubError> {
+async fn shutdown_durable(plane: Option<std::sync::Arc<DurablePlane>>) -> Result<(), StubError> {
     if let Some(plane) = plane {
-        plane.shutdown().await?;
+        let result = plane.shutdown().await;
+        // PostgreSQL pool destruction must not block an async runtime thread.
+        tokio::task::spawn_blocking(move || drop(plane))
+            .await
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        result?;
     }
     Ok(())
 }

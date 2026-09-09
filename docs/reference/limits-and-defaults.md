@@ -82,8 +82,16 @@ request limit. The smaller applicable bound wins.
 | History | 10,000 events and 16 MiB |
 | Pending signal inbox | 1,000 signals and 16 MiB |
 | One durable program | 1 MiB |
-| Program catalog | 10,000 programs and 64 MiB total |
+| Active program catalog | 10,000 programs and 64 MiB total source |
+| Retained completion result | 1 MiB per task |
+| Retention cleanup | At most 100 tasks; 16 MiB of retained payload per batch, or one larger task |
 | Concurrent durable polling | 16 |
+| Idempotency key | 1–256 UTF-8 bytes |
+| Retained keyed signal receipts | 10,000 per task; removed with completed-task cleanup |
+
+Completed programs and history remain stored until explicit cleanup, but do
+not consume the active catalog quota. Legacy records without an explicit
+completion remain active. See [Durable administration](cli/tasks.md#tysel-durable).
 
 ## LLM bounds
 

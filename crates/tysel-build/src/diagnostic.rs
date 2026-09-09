@@ -18,6 +18,35 @@ pub struct BuildDiagnostic {
     pub end: Option<DiagnosticPosition>,
 }
 
+impl BuildDiagnostic {
+    /// Create a diagnostic from an original-source byte range, if one exists.
+    pub fn at_source(
+        code: impl Into<String>,
+        phase: impl Into<String>,
+        message: impl Into<String>,
+        path: &Path,
+        source: &str,
+        range: Option<std::ops::Range<usize>>,
+    ) -> Self {
+        let index = LineIndex::new(source);
+        let positions = range.map(|range| {
+            (
+                index.position(source, range.start.min(source.len()) as u32),
+                index.position(source, range.end.min(source.len()) as u32),
+            )
+        });
+        Self {
+            code: code.into(),
+            message: message.into(),
+            severity: DiagnosticSeverity::Error,
+            phase: phase.into(),
+            file: path.to_string_lossy().into_owned(),
+            start: positions.map(|(start, _)| start),
+            end: positions.map(|(_, end)| end),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DiagnosticSeverity {

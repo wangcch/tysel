@@ -1,5 +1,6 @@
 "use client";
 
+import { T } from "@/components/locale-provider";
 import { CopyButton } from "@/components/copy-button";
 
 const installCommand = "curl -fsSL https://tysel.dev/install.sh | sh";
@@ -20,11 +21,11 @@ export function InstallPanel() {
         />
       </div>
       <p className="mt-2 text-xs leading-5 text-fd-muted-foreground">
-        Then run{" "}
+        <T id="ui.then.run" />{" "}
         <code className="font-mono text-[12px] text-fd-foreground/80">
           tysel doctor --install
         </code>
-        . No Rust, Node.js, or npm on the machine.
+        <T id="ui.no.rust.node.js.or.npm.on.the" />
       </p>
     </div>
   );

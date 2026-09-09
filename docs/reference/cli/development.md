@@ -88,6 +88,18 @@ successful rebuild. An explicit `ENTRY` overrides `app.entry` for this run.
 Development mode can read `.env`, but only declared secrets and named Postgres
 and Redis connections become visible through their host capabilities.
 
+At startup and on reload, dev validates the manifest and synchronizes the default
+`tysel-env.d.ts` before building the application. Identical output is not written,
+and generated declaration changes do not trigger another reload. A rejected
+manifest preserves the previous declaration and running application. A valid
+manifest can update types even if the subsequent source build fails.
+
+Dev refuses to overwrite a user-owned declaration or follow an output symlink.
+Custom `tysel types --output` destinations remain manually managed. Use
+`tysel types --check` in CI; it never updates files. `tysel run` and `tysel check`
+also leave generated types unchanged.
+
+
 `tysel dev` rejects a `.wasm` Component entry. Components are one-shot tasks;
 use `tysel run` and provide one JSON value on stdin.
 

@@ -1,0 +1,60 @@
+---
+title: "Wasm Component"
+description: "Tysel 通过 WebAssembly Component Model 运行与语言无关的一次性任务。它不执行任意 Core WebAssembly 模块，也不提供通用 WASI 应用宿主。"
+---
+
+状态：**实验性**。Tysel 通过 WebAssembly Component Model 运行与语言无关的一次性任务。它不执行任意 Core WebAssembly 模块，也不提供通用 WASI 应用宿主。
+
+## 产品约定
+
+Component 应用具有三个决定性特征：
+
+1. 清单使用 `profile = "component"`，入口为 `.wasm` 文件；
+2. 入口实现 `tysel:component/task@0.4.0`；
+3. 从 stdin 输入一个 JSON 值，并向 stdout 输出一个 JSON 值。
+
+```toml
+[app]
+name = "echo-component"
+entry = "echo.component.wasm"
+profile = "component"
+```
+
+Component 执行配置适合使用 Rust、Go 或其他具备 Component Model 工具链的语言编写有边界的函数。其范围有意小于 Tysel 的 TypeScript 服务运行时。
+
+## 命令行为
+
+| 命令 | Component 行为 |
+| --- | --- |
+| `tysel check` | 验证 Component 二进制文件、任务 ABI、WASI 导入、能力导入和清单授权。不执行 TypeScript 检查和 Node 扫描。 |
+| `tysel dev` | 失败。Component 是一次性任务，不能作为支持重新加载的 HTTP 服务运行。 |
+| `tysel run` | 从 stdin 读取一个 JSON 值，调用 Component 一次，向 stdout 写入一个 JSON 值和换行符，然后退出。 |
+| `tysel build` | 将可移植 Component 打包为一个原生可执行文件，并可包含兼容的宿主专用优化元数据。 |
+| 构建后的可执行文件 | 使用相同的一次性 stdin/stdout 约定。部署能力策略默认拒绝访问。 |
+
+```sh
+printf '{"value":42}' | tysel run
+tysel build
+printf '{"value":42}' | ./dist/echo-component
+```
+
+## 不提供的功能
+
+- 不提供 HTTP 监听器、Fetch 处理程序、Cron、Queue、MCP 或持久处理程序；
+- 不提供 `tysel init` Component 模板，请从 Rust 或 Go SDK 固定样例开始；
+- 不提供 `tysel dev` 监视模式；
+- 不提供 JavaScript 全局对象或 `globalThis.tysel` 对象；
+- 不通过 WASI 提供隐式参数、环境变量、继承的标准输入输出、预打开目录或网络访问；
+- 不普遍支持 Core Wasm、WASI CLI 应用或任意 WIT world。
+
+## 参考索引
+
+| 需求 | 参考 |
+| --- | --- |
+| 确切的任务 world 和 JSON 边界 | [Component ABI](/reference/component/abi) |
+| 可移植执行、受限 WASI、优化元数据和限额 | [运行时与 WASI](/reference/component/runtime) |
+| 文件系统导入和三层授权 | [Component 能力](/reference/component/capabilities) |
+| Rust 来宾类型和分派器 | [Rust SDK](/reference/component/rust-sdk) |
+| Go 来宾分派器和生成的绑定 | [Go SDK](/reference/component/go-sdk) |
+
+可运行流程请参阅[构建 Rust Component](/docs/guides/wasm-component-rust)或[构建 Go Component](/docs/guides/wasm-component-go)。已安装的二进制文件及其源码版本附带的 WIT 文件是最终依据。

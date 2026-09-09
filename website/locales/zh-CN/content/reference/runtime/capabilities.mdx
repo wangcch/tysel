@@ -1,0 +1,107 @@
+---
+title: "宿主能力"
+description: "HTTP 处理程序通过 runtime 参数接收宿主方法。为保持兼容性，并供任务或持久处理程序使用，同一对象仍可通过 globalThis.tysel 访问。"
+---
+
+HTTP 处理程序通过 `runtime` 参数接收宿主方法。为保持兼容性，并供任务或持久处理程序使用，同一对象仍可通过 `globalThis.tysel` 访问。类型可用并不等于获得权限：执行配置、清单权限和宿主配置都必须允许该调用。
+
+## 能力摘要
+
+| 成员 | 主要操作 | 所需权限 |
+| --- | --- | --- |
+| `tysel.secrets` | `ref(name)` | `permissions.secrets` 中声明的名称。 |
+| `tysel.sqlite` | `exec(sql, params?)`、`query(sql, params?)` | 受信任执行配置。 |
+| `tysel.postgres` | `exec(sql, params?)`、`query(sql, params?)` | 具名 `permissions.postgres` 授权和连接 URL。 |
+| `tysel.redis` | `get`、`set`、`del`、`exists`、`expire` | 具名 `permissions.redis` 授权和连接 URL。 |
+| `tysel.fs` | `read(path)`、`write(path, contents)` | 匹配的 `fs_read` 或 `fs_write` 根目录。 |
+| `tysel.llm` | `generate(options)` | 提供商配置和已声明的提供商密钥。 |
+| `tysel.acceptWebSocket()` | 接受当前入站升级 | 已启用 HTTP/1.1 WebSocket，且使用受信任执行配置。 |
+| `new WebSocket(url)` | 出站连接 | 受信任执行配置和匹配的 `permissions.fetch` 主机。 |
+
+## 运行时工具
+
+```ts
+interface TyselRuntime {
+  readonly isolateId: number;
+  sleep(milliseconds: number): Promise<void>;
+  echo(value: string): Promise<string>;
+  httpGet(url: string): Promise<Response>;
+  // capability clients are listed below
+}
+```
+
+`isolateId` 标识当前原生隔离实例。`sleep` 是临时定时器，不属于持久暂停。应用 HTTP 应优先使用标准 `fetch`；`httpGet` 是范围有限的宿主辅助方法。`echo` 主要用于验证宿主桥接。
+
+各执行配置的完整矩阵请参阅[能力](/docs/capabilities)。
+
+## 机密信息
+
+```ts
+const token = await tysel.secrets.ref("API_TOKEN");
+```
+
+`ref` 返回类似 `secret:API_TOKEN` 的不透明标记类型 `SecretReference`，绝不会返回明文环境变量值。该引用只能传给明确接受它的宿主 API。
+
+## SQL
+
+两个 SQL 客户端都接受位置参数数组。`exec` 解析为受影响行数；`query` 解析为行对象数组。
+
+```ts
+await tysel.sqlite.exec(
+  "create table if not exists jobs (id text primary key, state text)",
+);
+await tysel.sqlite.exec(
+  "insert into jobs (id, state) values (?, ?)",
+  ["job_1", "ready"],
+);
+const jobs = await tysel.sqlite.query("select id, state from jobs");
+
+const remote = await tysel.postgres.query(
+  "select id, state from jobs where id = $1",
+  ["job_1"],
+);
+```
+
+只读 Postgres 授权会拒绝写入。SQL 文本、参数数、行数和结果字节数均有边界；请参阅[限额与默认值](/reference/limits-and-defaults)。端到端部署流程见 [SQLite](/docs/guides/sqlite) 或 [PostgreSQL](/docs/guides/postgresql) 指南。
+
+## Redis
+
+```ts
+await tysel.redis.set("session:123", "active", { ttlSeconds: 300 });
+const state = await tysel.redis.get("session:123");
+```
+
+值为 UTF-8 字符串。键、值、TTL、批量删除数和并发连接数均有边界。请参阅 [Redis 指南](/docs/guides/redis)。
+
+## 文件系统
+
+```ts
+const source = await tysel.fs.read("./fixtures/input.json");
+await tysel.fs.write("./data/output/result.json", source);
+```
+
+操作使用 UTF-8 字符串，并且只处理固定根目录下的普通文件。路径无法通过目录穿越或符号链接替换逃逸已声明根目录。根目录准备以及允许和拒绝路径的验证方法请参阅[文件系统指南](/docs/guides/filesystem)。
+
+## LLM 生成
+
+```ts
+const response = await tysel.llm.generate({
+  model: "default",
+  system: "Answer with one sentence.",
+  input: "Summarize the queued job.",
+  maxOutputTokens: 128,
+  temperature: 0.2,
+});
+
+console.log(response.output, response.usage, response.provider_request_id);
+```
+
+`model` 和 `input` 为必填项。`system`、`maxOutputTokens` 和 `temperature` 可选。响应包含 `output`、必需的 token 用量元数据，以及可选的提供商请求标识符。提供商端点、模型别名和密钥选择来自[环境变量](/reference/environment)。
+
+## WebSocket
+
+只有在处理符合条件的入站升级时才能调用 `tysel.acceptWebSocket()`。对于出站连接，`WebSocket.opened` 是连接 Promise。当前运行时支持文本帧和二进制帧，但不支持浏览器子协议、扩展、`Blob` 或 `bufferedAmount`；每个隔离实例请求最多可以有一个活动出站套接字。
+
+已接受的入站套接字具有 `readyState`、`onmessage`、`onclose`、`onerror`、`send(string)`、`close()`，以及针对 `message`、`close` 和 `error` 的 `addEventListener` / `removeEventListener`。`send` 和 `close` 返回 Promise。已接受套接字类型与出站 Web `WebSocket` 全局对象相互独立。
+
+确切支持范围请参阅 [WebSocket 约定](https://tysel.dev/reference/javascript/websocket/)和 [fetch 约定](https://tysel.dev/reference/javascript/fetch/)。

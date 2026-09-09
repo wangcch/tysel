@@ -1,0 +1,98 @@
+---
+title: "示例库"
+description: "使用已安装 CLI 附带的模板创建新应用。模板会先创建项目，然后再进行验证或运行。"
+---
+
+使用已安装 CLI 附带的模板创建新应用。模板会先创建项目，然后再进行验证或运行：
+
+| 模板 | 用途 |
+| --- | --- |
+| `http` | Fetch 风格 HTTP 服务；推荐的默认选项。 |
+| `worker` | 包含一个具名 Queue 处理程序的服务。 |
+| `mcp` | 具有输入验证的隔离 MCP stdio 工具。 |
+| `minimal` | 用于自定义应用结构的最小 Fetch 处理程序。 |
+
+```sh
+tysel init my-service --template http --yes
+cd my-service
+tysel task verify
+tysel dev
+```
+
+可将 `http` 替换为 `worker`、`mcp` 或 `minimal`。使用 `tysel run` 运行 Worker；使用 `tysel mcp` 启动 MCP stdio 传输。包、清单格式、测试和现有项目选项请参阅 [`tysel init` 参考](/reference/cli/project#tysel-init)。
+
+下面是起始模板以外各项能力的完整参考应用。下载与已安装 Tysel 版本匹配的源码归档，然后进入所需示例：
+
+```sh
+version="$(tysel --version | awk '{print $2}')"
+curl -fsSL "https://github.com/wangcch/tysel/archive/refs/tags/v${version}.tar.gz" | tar -xz
+cd "tysel-${version}/examples/hello-service"
+```
+
+将 `hello-service` 替换为本页列出的其他示例目录。该命令下载版本匹配的应用源码，无需 fork、克隆仓库、构建 Tysel 或覆盖工作进程路径。Wasm Component 使用版本匹配的起始项目包。Postgres、LLM 和 MCP 示例需要 README 中说明的额外环境配置。
+
+## 按能力浏览
+
+标记为**可运行**的条目会链接到完整源码树。**参考配方**记录尚无独立仓库示例的受支持 API；不能把配方视为端到端验收路径。
+
+受信任的 `service` 执行配置目前公开 SQLite，其清单默认值为 `durable.store = "sqlite"` 和 `./data/tysel.db`。下表只列出各示例实际使用的能力，不重复未使用的执行配置默认值。将示例用于生产前，请使用 `tysel inspect` 审查完整的实际部署权限。
+
+| 能力 | 从这里开始 | 完整示例 | 覆盖范围 |
+| --- | --- | --- | --- |
+| HTTP 与 Fetch | [应用模块](/reference/runtime/application#http-handler) | [Hello service](https://github.com/wangcch/tysel/tree/main/examples/hello-service) | 可运行 |
+| Web API npm 路由器 | [npm 兼容性](/docs/compatibility) | [Hono API](https://github.com/wangcch/tysel/tree/main/examples/hono-api) | 可运行；扫描每项依赖 |
+| WebSocket | [服务网络](/docs/guides/service-networking) | [WebSocket service](https://github.com/wangcch/tysel/tree/main/examples/websocket-service) | 可运行 |
+| SQLite | [SQLite 指南](/docs/guides/sqlite) | [SQLite worker](https://github.com/wangcch/tysel/tree/main/examples/sqlite-worker) | 可运行 |
+| PostgreSQL | [PostgreSQL 指南](/docs/guides/postgresql) | [Postgres service](https://github.com/wangcch/tysel/tree/main/examples/postgres-service) | 可运行 |
+| Redis | [Redis 指南](/docs/guides/redis) | [Redis service](https://github.com/wangcch/tysel/tree/main/examples/redis-service) | 可运行 |
+| 文件系统 | [文件系统指南](/docs/guides/filesystem) | [Filesystem transform](https://github.com/wangcch/tysel/tree/main/examples/filesystem-transform) | 可运行 |
+| 密钥 | [宿主能力](/reference/runtime/capabilities#secrets) | [MCP tool](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool) | 以代理句柄形式可运行 |
+| LLM | [LLM 网关](/docs/guides/llm-gateway) | [LLM service](https://github.com/wangcch/tysel/tree/main/examples/llm-service) / [Durable agent](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) | 配置提供商后可运行 |
+| 测试 | [测试 API](/reference/runtime/testing) | — | 参考配方 |
+| Cron 与 Queue | [Cron 与 Queue 指南](/docs/guides/cron-queue) | [Task worker](https://github.com/wangcch/tysel/tree/main/examples/task-worker) | 可运行 |
+| MCP | [应用模块](/reference/runtime/application#mcp-tasks) | [MCP tool](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool) | 可运行 |
+| 持久执行 | [持久 API](/reference/runtime/durable) | [Durable agent](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) | 可运行 |
+| Wasm Component | [Component 参考](/reference/component) | [Rust echo](/docs/guides/wasm-component-rust) / [Go echo](/docs/guides/wasm-component-go) | 实验性可运行路径 |
+
+shell 执行、子进程、FFI 和动态库并不是缺失的示例，而是有意排除在 Tysel 应用约定之外。[能力矩阵](/docs/capabilities)记录了这些被拒绝的接口。
+
+## 从这里开始
+
+| 示例 | 演示内容 | 尝试 | 执行配置与实际使用的能力 |
+| --- | --- | --- | --- |
+| [Hello service](https://github.com/wangcch/tysel/tree/main/examples/hello-service) | Fetch 处理程序与单可执行文件构建 | 运行 `tysel run`，再执行 `curl http://127.0.0.1:3000/hello` | `service`；HTTP 与 Fetch |
+| [Hono API](https://github.com/wangcch/tysel/tree/main/examples/hono-api) | Web API 优先的 npm 路由器 | 安装 Hono 依赖，再运行 `tysel run` | `service`；HTTP 与 Hono；运行 `tysel compat` |
+| [WebSocket service](https://github.com/wangcch/tysel/tree/main/examples/websocket-service) | HTTP/1.1 升级与有边界的文本回显 | 运行 `tysel run`，再连接 `ws://127.0.0.1:3000/ws` | `service`；HTTP 与入站 WebSocket |
+
+## 任务
+
+| 示例 | 演示内容 | 尝试 | 执行配置与实际使用的能力 |
+| --- | --- | --- | --- |
+| [Task worker](https://github.com/wangcch/tysel/tree/main/examples/task-worker) | UTC Cron 注册与具名 Queue 消费者 | `tysel queue jobs --input '{"id":"job_123","action":"reindex"}'` | `service`；Cron 与 Queue |
+
+## 存储
+
+| 示例 | 演示内容 | 尝试 | 执行配置与实际使用的能力 |
+| --- | --- | --- | --- |
+| [SQLite worker](https://github.com/wangcch/tysel/tree/main/examples/sqlite-worker) | 持久计数器、相对于运行时的文件 | 运行 `tysel run`，再执行 `curl 'http://127.0.0.1:3000/?key=visits'` | `service`；SQLite |
+| [Postgres service](https://github.com/wangcch/tysel/tree/main/examples/postgres-service) | 具名授权；URL 保留在宿主中 | 设置 `TYSEL_POSTGRES_MAIN`，再运行 `tysel run` | `service`；PostgreSQL `main:read-write` |
+| [Redis service](https://github.com/wangcch/tysel/tree/main/examples/redis-service) | 具有有界操作的具名缓存授权 | 设置 `TYSEL_REDIS_CACHE`，再运行 `tysel run` | `service`；Redis `cache:read-write` |
+| [Filesystem transform](https://github.com/wangcch/tysel/tree/main/examples/filesystem-transform) | 独立固定根目录与有边界的 UTF-8 文件转换 | 运行 `tysel run`，请求 `/transform`，再检查 `output/result.json` | `service`；文件系统读写根目录 |
+
+## 智能体
+
+| 示例 | 演示内容 | 尝试 | 执行配置与实际使用的能力 |
+| --- | --- | --- | --- |
+| [Durable agent](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) | LLM 副作用、暂停、重启、批准、单次保存 | 设置 LLM 端点后，在示例目录运行 `./demo.sh` | `service`；LLM、密钥、SQLite、持久执行 |
+| [MCP tool](https://github.com/wangcch/tysel/tree/main/examples/mcp-tool) | NDJSON MCP、验证、不透明机密信息句柄 | 在示例目录运行 `tysel mcp` | `isolated`；仅通过代理使用机密信息 |
+| [LLM service](https://github.com/wangcch/tysel/tree/main/examples/llm-service) | 宿主配置的提供商别名、token 用量、有边界 HTTP 适配器 | 设置提供商环境，再运行 `tysel run` | `service`；LLM 与提供商密钥 |
+
+## 隔离与 Wasm
+
+| 示例 | 演示内容 | 尝试 | 执行配置与实际使用的能力 |
+| --- | --- | --- | --- |
+| [Isolated plugin](https://github.com/wangcch/tysel/tree/main/examples/isolated-plugin) | 被拒绝的 fetch/fs 探测与工作进程替换 | 在示例目录运行 `tysel run` | `isolated`；面向宿主的能力保持拒绝 |
+| [Rust Component starter](/docs/guides/wasm-component-rust) | 一次性 JSON 任务，无隐式 WASI | `printf '{"value":42}' \| tysel run` | `component`；JSON 任务；无隐式 WASI；实验性 |
+| [Go Component starter](/docs/guides/wasm-component-go) | 使用已提交 Go 绑定的相同 world | `printf '{"value":42}' \| tysel run` | `component`；JSON 任务；无隐式 WASI；实验性 |
+
+将示例用于生产前，请审查[执行配置](/docs/concepts/execution-profiles)和[能力矩阵](/docs/capabilities)。

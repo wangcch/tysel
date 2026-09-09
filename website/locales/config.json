@@ -1,0 +1,7 @@
+{
+  "sourceLocale": "en",
+  "locales": {
+    "en": { "name": "English", "short": "EN", "ogLocale": "en_US", "published": true },
+    "zh-CN": { "name": "简体中文", "short": "中", "ogLocale": "zh_CN", "published": true }
+  }
+}

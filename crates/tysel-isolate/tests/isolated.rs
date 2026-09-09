@@ -129,7 +129,10 @@ fn kill_worker_recovers_on_next_http() {
             .expect("kill worker")
             .success()
     );
-    let (head, body) = supervisor.http(&request).expect("http after kill");
+    // If EOF races process exit detection, the first request has an uncertain
+    // outcome and must fail without transparent replay. A new request recovers.
+    let response = supervisor.http(&request);
+    let (head, body) = response.or_else(|_| supervisor.http(&request)).expect("http after kill");
     assert_eq!(head.status, 200);
     assert_eq!(body, b"ok");
 }
@@ -388,4 +391,112 @@ fn worker_exe() -> PathBuf {
     }
     assert!(candidate.is_file(), "missing tysel-worker at {}", candidate.display());
     candidate
+}
+
+#[test]
+fn isolated_http_deadline_and_cancelled_queue_do_not_execute_late_work() {
+    use std::sync::atomic::AtomicBool;
+    use tysel_engine::{EngineError, InterruptReason};
+    use tysel_isolate::IsolateError;
+    let pool = IsolatedHttpPool::spawn(
+        worker_exe(),
+        r#"
+        let count = 0;
+        export default {async fetch(req) {
+            const path = new URL(req.url).pathname;
+            if (path === '/hang') await new Promise(() => {});
+            if (path === '/mutate') count++;
+            return new Response(String(count));
+        }};
+    "#,
+        spec(),
+        Vec::new(),
+    )
+    .unwrap();
+    let request = |path: &str| HttpRequest {
+        method: "GET".into(),
+        url: format!("http://local{path}"),
+        ..Default::default()
+    };
+    assert!(matches!(
+        pool.dispatch_sync_until(request("/mutate"), Instant::now()),
+        Err(IsolateError::Engine(EngineError::Interrupted(InterruptReason::Timeout)))
+    ));
+    let cancelled = std::sync::Arc::new(AtomicBool::new(true));
+    assert!(matches!(
+        pool.dispatch_sync_cancellable(
+            request("/mutate"),
+            Instant::now() + Duration::from_secs(1),
+            &cancelled
+        ),
+        Err(IsolateError::Engine(EngineError::Interrupted(InterruptReason::Cancelled)))
+    ));
+    assert!(matches!(
+        pool.dispatch_sync_until(request("/hang"), Instant::now() + Duration::from_millis(100)),
+        Err(IsolateError::Engine(EngineError::Interrupted(InterruptReason::Timeout)))
+    ));
+    assert_eq!(pool.dispatch_sync(request("/count")).unwrap().1, b"0");
+}
+
+#[cfg(unix)]
+#[test]
+fn stopped_worker_is_killed_at_deadline_and_replaced() {
+    use tysel_engine::{EngineError, InterruptReason};
+    use tysel_isolate::IsolateError;
+    let mut supervisor = Supervisor::spawn(worker_exe(), spec(), HashMap::new()).unwrap();
+    supervisor.load_handler("export default {fetch(){return new Response('ok')}}", vec![]).unwrap();
+    let pid = supervisor.worker_pid().unwrap();
+    assert!(
+        std::process::Command::new("kill")
+            .args(["-STOP", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let started = Instant::now();
+    let request = HttpRequest { url: "http://local/".into(), ..Default::default() };
+    assert!(matches!(
+        supervisor.http_until(&request, started + Duration::from_millis(100)),
+        Err(IsolateError::Engine(EngineError::Interrupted(InterruptReason::Timeout)))
+    ));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(supervisor.worker_pid().is_none(), "timed-out worker must be reaped before returning");
+    assert_eq!(supervisor.http(&request).unwrap().1, b"ok");
+    assert_ne!(supervisor.worker_pid(), Some(pid));
+}
+
+#[cfg(unix)]
+#[test]
+fn active_cancellation_interrupts_blocking_ipc() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use tysel_engine::{EngineError, InterruptReason};
+    use tysel_isolate::IsolateError;
+    let mut supervisor = Supervisor::spawn(worker_exe(), spec(), HashMap::new()).unwrap();
+    supervisor.load_handler("export default {fetch(){return new Response('ok')}}", vec![]).unwrap();
+    let pid = supervisor.worker_pid().unwrap();
+    assert!(
+        std::process::Command::new("kill")
+            .args(["-STOP", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let trigger = cancelled.clone();
+    let cancel = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        trigger.store(true, Ordering::Release);
+    });
+    let started = Instant::now();
+    let request = HttpRequest { url: "http://local/".into(), ..Default::default() };
+    assert!(matches!(
+        supervisor.http_cancellable(&request, started + Duration::from_secs(5), Some(cancelled)),
+        Err(IsolateError::Engine(EngineError::Interrupted(InterruptReason::Cancelled)))
+    ));
+    cancel.join().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(supervisor.worker_pid().is_none());
 }

@@ -39,6 +39,8 @@ fn install_inner(
     let io_echo = io.clone();
     let io_secret = io.clone();
     let io_body = io.clone();
+    let io_body_op = io.clone();
+    let io_cancel_request_body = io.clone();
     let io_http_start = io.clone();
     let io_http_read = io.clone();
     let io_http_cancel_body = io.clone();
@@ -62,6 +64,12 @@ fn install_inner(
     let io_fs_read = io.clone();
     let io_fs_write = io.clone();
     let io_llm = io.clone();
+    // Keep the fixed vendor source in native storage until an API is used.
+    tysel.set("_loadStreams", Function::new(ctx.clone(), load_streams)?)?;
+    tysel.set(
+        "_queueMicrotask",
+        Function::new(ctx.clone(), |callback: Function| callback.defer(()))?,
+    )?;
     tysel.set(
         "sleep",
         Function::new(ctx.clone(), move |ctx, millis: f64| {
@@ -87,10 +95,26 @@ fn install_inner(
         })?,
     )?;
     tysel.set(
+        "_readBodyOp",
+        Function::new(ctx.clone(), move |ctx| {
+            submit_cancellable(ctx, &io_body_op, |id| IoRequest::ReadBody { id })
+        })?,
+    )?;
+    tysel.set(
+        "_cancelRequestBody",
+        Function::new(ctx.clone(), move || {
+            io_cancel_request_body.inbound.clear();
+        })?,
+    )?;
+    tysel.set(
         "_httpStart",
         Function::new(
             ctx.clone(),
-            move |ctx, url: String, method: String, headers_json: String, body: String| {
+            move |ctx, url: String, method: String, headers_json: String, body: TypedArray<u8>| {
+                let body = bytes::Bytes::copy_from_slice(
+                    body.as_bytes()
+                        .ok_or_else(|| Exception::throw_type(&ctx, "request body is detached"))?,
+                );
                 submit_cancellable(ctx, &io_http_start, |id| IoRequest::HttpGet {
                     id,
                     url,
@@ -127,17 +151,20 @@ fn install_inner(
             TypedArray::<u8>::new(ctx, text.into_bytes())
         })?,
     )?;
+    tysel.set("_utf8EncodeInto", Function::new(ctx.clone(), encode_into)?)?;
     tysel.set(
         "_utf8Decode",
         Function::new(ctx.clone(), |ctx, bytes: TypedArray<u8>, fatal: bool| {
-            let Some(raw) = bytes.as_bytes() else {
-                return Ok(String::new());
-            };
+            let raw = bytes.as_bytes().unwrap_or_default();
+            // QuickJS copies the UTF-8 input into its own string storage. Borrow
+            // valid input here instead of allocating an intermediate Rust String.
             if fatal {
-                String::from_utf8(raw.to_vec())
-                    .map_err(|_| Exception::throw_type(&ctx, "UTF-8 decode failed"))
+                let text = std::str::from_utf8(raw)
+                    .map_err(|_| Exception::throw_type(&ctx, "UTF-8 decode failed"))?;
+                rquickjs::String::from_str(ctx, text)
             } else {
-                Ok(String::from_utf8_lossy(raw).into_owned())
+                let text = String::from_utf8_lossy(raw);
+                rquickjs::String::from_str(ctx, &text)
             }
         })?,
     )?;
@@ -189,17 +216,23 @@ fn install_inner(
     )?;
     tysel.set(
         "_durableStart",
-        Function::new(ctx.clone(), |ctx, name: String, input_json: String| {
-            crate::control::start_named(&name, &input_json)
-                .map_err(|err| Exception::throw_type(&ctx, &err))
-        })?,
+        Function::new(
+            ctx.clone(),
+            |ctx, name: String, input_json: String, key: Option<String>| {
+                crate::control::start_named(&name, &input_json, key.as_deref())
+                    .map_err(|err| Exception::throw_type(&ctx, &err))
+            },
+        )?,
     )?;
     tysel.set(
         "_durableSendSignal",
-        Function::new(ctx.clone(), |ctx, task_id: String, name: String, payload_json: String| {
-            crate::control::send_signal(&task_id, &name, &payload_json)
-                .map_err(|err| Exception::throw_type(&ctx, &err))
-        })?,
+        Function::new(
+            ctx.clone(),
+            |ctx, task_id: String, name: String, payload_json: String, key: Option<String>| {
+                crate::control::send_signal(&task_id, &name, &payload_json, key.as_deref())
+                    .map_err(|err| Exception::throw_type(&ctx, &err))
+            },
+        )?,
     )?;
     tysel.set(
         "_wsRead",
@@ -420,7 +453,7 @@ fn durable_millis(ctx: &Ctx<'_>, value: f64, label: &str) -> rquickjs::Result<u6
     Ok(value as u64)
 }
 
-fn submit<'js>(
+pub(crate) fn submit<'js>(
     ctx: Ctx<'js>,
     io: &IoHandle,
     request: impl FnOnce(OpId) -> IoRequest,
@@ -428,7 +461,7 @@ fn submit<'js>(
     submit_operation(ctx, io, request).map(|(promise, _)| promise)
 }
 
-fn submit_cancellable<'js>(
+pub(crate) fn submit_cancellable<'js>(
     ctx: Ctx<'js>,
     io: &IoHandle,
     request: impl FnOnce(OpId) -> IoRequest,
@@ -464,7 +497,16 @@ pub fn settle(ctx: &Ctx<'_>, id: OpId, result: Result<Value, String>) -> rquickj
     match result {
         Ok(value) => {
             let resolve: Function = entry.get("resolve")?;
-            resolve.call::<(rquickjs::Value<'_>,), ()>((value_to_js(ctx, value)?,))?;
+            // HTTP bytes must use the QuickJS allocator so retained chunks count
+            // against the isolate heap limit. External Vec-backed buffers bypass
+            // that limit. Nested capability values keep their array representation.
+            let value = match value {
+                Value::Bytes(bytes) => {
+                    TypedArray::<u8>::new_copy(ctx.clone(), &bytes)?.into_js(ctx)?
+                }
+                value => value_to_js(ctx, value)?,
+            };
+            resolve.call::<(rquickjs::Value<'_>,), ()>((value,))?;
         }
         Err(error) => {
             if let Ok(reject) = entry.get::<_, Function>("reject") {
@@ -605,4 +647,99 @@ fn value_to_js<'js>(ctx: &Ctx<'js>, value: Value) -> rquickjs::Result<rquickjs::
             object.into_js(ctx)
         }
     }
+}
+
+// The facade inherits platform globals (notably DOMException) while vendor
+// constructors are installed as its own properties, never on the real global.
+fn load_streams(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
+    ctx.eval(concat!(
+        "(function(globalThis) {\n",
+        include_str!("../../../runtime-js/web-api/vendor/web-streams-polyfill/polyfill.js"),
+        "\nreturn globalThis; })(Object.create(globalThis))"
+    ))
+}
+
+// Keep conversion scratch bounded to one JS chunk, not the full source.
+// Use the UTF-8 API: the pinned engine's UTF-16 API cannot safely release
+// wide string slices. UTF-8 conversion always returns releasable storage.
+#[allow(unsafe_code)]
+fn encode_into<'js>(
+    ctx: Ctx<'js>,
+    text: rquickjs::String<'js>,
+    destination: TypedArray<'js, u8>,
+    offset: usize,
+) -> rquickjs::Result<Object<'js>> {
+    let raw =
+        destination.as_raw().ok_or_else(|| Exception::throw_type(&ctx, "detached destination"))?;
+    if offset > raw.len {
+        return Err(Exception::throw_range(&ctx, "invalid destination offset"));
+    }
+    let mut length = 0;
+    // SAFETY: the string and destination stay rooted; no JS callback can run
+    // while these pointers are used. The matching release occurs before allocation.
+    let ptr = unsafe {
+        rquickjs::qjs::JS_ToCStringLen2(ctx.as_raw().as_ptr(), &mut length, text.as_raw(), false)
+    };
+    if ptr.is_null() {
+        return Err(rquickjs::Error::Exception);
+    }
+    let (mut read, mut written, mut index) = (0, 0, 0);
+    unsafe {
+        let bytes = std::slice::from_raw_parts(ptr.cast::<u8>(), length as usize);
+        if bytes.is_ascii() {
+            written = bytes.len().min(raw.len - offset);
+            read = written;
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw.ptr.as_ptr().add(offset), written);
+            index = bytes.len();
+        }
+        // Scan complete code points, then copy each unchanged run once. WTF-8
+        // surrogate sequences and their U+FFFD replacements are both three bytes,
+        // so input and output byte offsets stay aligned within the accepted prefix.
+        let mut run_start = index;
+        while index < bytes.len() {
+            let first = bytes[index];
+            let size = if first < 128 {
+                1
+            } else if first < 224 {
+                2
+            } else if first < 240 {
+                3
+            } else {
+                4
+            };
+            if size > raw.len - offset - written {
+                break;
+            }
+            // QuickJS preserves lone surrogate code points in its UTF-8 API.
+            if first == 0xed && bytes[index + 1] >= 0xa0 {
+                let run = index - run_start;
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr().add(run_start),
+                    raw.ptr.as_ptr().add(offset + written - run),
+                    run,
+                );
+                let replacement = [0xef, 0xbf, 0xbd];
+                std::ptr::copy_nonoverlapping(
+                    replacement.as_ptr(),
+                    raw.ptr.as_ptr().add(offset + written),
+                    replacement.len(),
+                );
+                run_start = index + size;
+            }
+            index += size;
+            written += size;
+            read += if size == 4 { 2 } else { 1 };
+        }
+        let run = index - run_start;
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr().add(run_start),
+            raw.ptr.as_ptr().add(offset + written - run),
+            run,
+        );
+        rquickjs::qjs::JS_FreeCString(ctx.as_raw().as_ptr(), ptr);
+    }
+    let result = Object::new(ctx)?;
+    result.set("read", read)?;
+    result.set("written", written)?;
+    Ok(result)
 }

@@ -1,0 +1,162 @@
+---
+title: "可复现发布"
+description: "面向生产环境的操作系统和架构进行构建。"
+---
+
+## 构建产物集
+
+面向生产环境的操作系统和架构进行构建：
+
+```sh
+tysel doctor --install
+tysel task verify
+tysel inspect
+tysel build --release --target linux-arm64 --output dist/orders
+```
+
+当请求的目标平台与宿主不同时，Tysel 会先对同版本的官方运行时存根进行身份验证并缓存，然后再打包。只有在该目标运行时已经验证并缓存后，才应使用 `--offline`。
+
+| 文件 | 准入用途 |
+| --- | --- |
+| `orders` | 嵌入了应用和清单的原生可执行文件。 |
+| `orders.sha256` | 可执行文件的 SHA-256。 |
+| `orders.compat.json` | 运行时与包的兼容性判定。 |
+| `orders.sbom.cdx.json` | CycloneDX 1.5 SBOM。 |
+| `orders.licenses.json` | 运行时组件许可证清单。 |
+| `orders.evidence.json` | 将产物、目标平台、应用、兼容性、SBOM、许可证和运行时清单关联起来的索引。 |
+
+将全部六个文件存放在以可执行文件摘要标识的位置。不要重命名或编辑其中任何文件，也不要单独重新生成某个伴随文件。
+
+## 签名
+
+在离线签名主机上创建新的私钥。以下命令会拒绝替换已有密钥：
+
+```sh
+set -eu
+key_path=/secure/offline-release.key
+test ! -e "$key_path"
+umask 077
+openssl rand -hex 32 > "$key_path"
+```
+
+私钥文件必须满足以下约定：
+
+| 属性 | 必需值 |
+| --- | --- |
+| 编码 | UTF-8 文本，恰好包含 64 个十六进制字符。 |
+| 密钥材料 | 32 个由密码学安全随机数生成器产生的字节。 |
+| 文件类型 | 普通文件，包含空白字符在内不超过 256 字节。 |
+| Unix 权限 | 组和其他用户的权限位必须全部取消；接受 `0600`。 |
+
+查看其公开身份信息：
+
+```sh
+tysel release key-info --key /secure/offline-release.key
+```
+
+JSON 输出包含 `key_id`、`algorithm` 和 `public_key`。将这些值加入发布授权方的信任策略，然后签名：
+
+```sh
+tysel release sign dist/orders \
+  --key /secure/offline-release.key
+```
+
+该命令会先验证产物集，再写入 `orders.evidence.sig.json`。私钥不得进入仓库、构建目录、命令日志或运行时主机。
+
+## 信任策略
+
+`deploy/trust.json` 是由部署方管理的输入，并非 `tysel build` 生成的文件。其结构如下：
+
+```json
+{
+  "policy_version": 1,
+  "issued_at_unix": 1788278400,
+  "expires_at_unix": 1790870400,
+  "keys": [
+    {
+      "key_id": "64_HEX_CHARACTERS_FROM_KEY_INFO",
+      "algorithm": "ed25519",
+      "public_key": "64_HEX_CHARACTERS_FROM_KEY_INFO",
+      "status": "active",
+      "valid_from_unix": 1788278400
+    }
+  ]
+}
+```
+
+请替换所有示例值。`key_id` 从公钥派生；请从 `tysel release key-info` 复制这两个值。
+
+| 字段 | 规则 |
+| --- | --- |
+| `policy_version` | 必须为 `1`。 |
+| `issued_at_unix` | 以 Unix 秒表示的策略签发时间。 |
+| `expires_at_unix` | 必须晚于签发时间，且与签发时间相差不超过 90 天。 |
+| `keys` | 不得为空，并按 `key_id` 排序。 |
+| `algorithm` | 必须为 `ed25519`。 |
+| `status` | `active`、`retired` 或 `revoked`。 |
+| `valid_from_unix` | 接受该密钥签名的最早时间。 |
+| `valid_until_unix` | 已停用密钥必须设置；活跃密钥可省略。 |
+
+将信任策略视为经过身份验证的部署配置。保留已撤销密钥的墓碑记录，并将密钥轮换作为只能向前推进的策略变更进行审查。
+
+## 验证
+
+```sh
+tysel release verify dist/orders \
+  --trust deploy/trust.json
+```
+
+验证内容包括：
+
+- 可执行文件及每个发布伴随文件；
+- 验证材料与签名的摘要；
+- 签名算法和密钥 ID；
+- 密钥状态及有效期；
+- 策略有效期和签名时间；
+- SBOM 与许可证清单的一致性。
+
+只要出现字节变更、伴随文件缺失、密钥已撤销、策略已过期、签名时间来自未来或清单不一致，验证就会以拒绝告终。
+
+## 验证部署目标
+
+`release verify` 会验证验证材料中的目标平台，但部署流程必须提供预期的目标平台：
+
+```sh
+expected_target=linux-x64
+test "$(jq -r '.artifact.target' dist/orders.evidence.json)" = "$expected_target"
+```
+
+arm64 部署请使用 `linux-arm64`。在复制可执行文件或构建镜像前，拒绝空值、未知值或不匹配的值。
+
+OCI 镜像签名是独立环节。构建镜像后，应用镜像仓库策略，并记录镜像摘要与可执行文件摘要之间的映射。
+
+## 发布记录
+
+记录以下信息：
+
+| 输入 | 值 |
+| --- | --- |
+| 源码 | 提交和清单修订版本 |
+| 依赖 | 锁文件摘要 |
+| 工具链 | 已安装的 Tysel 版本 |
+| 构建 | 规范目标平台和命令 |
+| 产物 | 可执行文件与验证材料索引的摘要 |
+| 容器 | 使用容器时，记录基础镜像和最终镜像的摘要 |
+| 签名 | 密钥 ID、信任策略摘要和验证时间 |
+
+不要记录私钥、密钥值、数据库 URL、OTLP 标头或提供方凭据。
+
+验证材料能够证明一个可执行文件及其伴随文件属于同一集合。它并不承诺任意构建主机生成的应用二进制文件逐字节相同。
+
+## 验证错误
+
+| 错误 | 必需响应 |
+| --- | --- |
+| 可执行文件或伴随文件摘要不匹配 | 隔离完整文件集并重新构建。 |
+| 兼容性报告不匹配 | 使用一个通过准入的 Tysel 版本重新构建。 |
+| 缺少 SBOM 或许可证清单 | 拒绝准入，并恢复不可变的完整文件集。 |
+| 已签名目标与部署目标不同 | 面向预期平台和架构重新构建。 |
+| 信任策略已过期 | 发布一份新的、经过身份验证且自当前时间起有效的策略。 |
+| 签名密钥已撤销 | 停止部署，离线轮换密钥，然后按策略重新构建，或为留存且已验证的产物重新签名。 |
+
+另请参阅[发布验证材料命令](/reference/cli/evidence)、[构建命令](/reference/cli/delivery#tysel-build)和[生产构建准入](/docs/operations/production#build-admission)。

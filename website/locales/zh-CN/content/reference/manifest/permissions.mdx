@@ -1,0 +1,55 @@
+---
+title: "权限"
+description: "可选的 [permissions] 表授予宿主能力。所有列表默认为空，因此未声明时拒绝访问。"
+---
+
+可选的 `[permissions]` 表授予宿主能力。所有列表默认为空，因此未声明时拒绝访问。
+
+| 字段 | 值形式 | 当前 schema 边界 | 启用的能力 |
+| --- | --- | --- | --- |
+| `fetch` | 唯一主机名 | — | 到匹配主机的出站 `fetch` 和 WebSocket 连接。 |
+| `secrets` | 唯一环境变量名 | — | 通过 `tysel.secrets` 使用不透明机密信息引用。 |
+| `postgres` | 一个唯一具名授权 | 1 项 | 具名 Postgres 连接及访问模式。 |
+| `redis` | 一个唯一具名授权 | 1 项 | 具名 Redis 连接及访问模式。 |
+| `fs_read` | 唯一目录根 | 64 项 | 读取固定根目录下的 UTF-8 普通文件。 |
+| `fs_write` | 唯一目录根 | 64 项 | 写入固定根目录下的 UTF-8 普通文件。 |
+
+空条目和重复条目会被拒绝。存在授权也不能覆盖执行配置对相应能力的禁止。
+
+```toml
+[permissions]
+fetch = ["api.example.com"]
+secrets = ["API_TOKEN"]
+postgres = ["main:read-only"]
+redis = ["cache:read-write"]
+fs_read = ["./fixtures"]
+fs_write = ["./data/output"]
+```
+
+## 出站网络
+
+`fetch` 条目是主机白名单值，不是任意 URL 前缀。授权中不能包含协议、路径、查询参数或凭据。重定向目标会单独根据白名单检查。
+
+## 机密信息
+
+每一项指定宿主可以公开为不透明引用的环境变量。`tysel.secrets.ref("API_TOKEN")` 返回 `secret:API_TOKEN` 句柄；应用 JavaScript 不会获得明文环境变量值。声明名称不会创建或填充该变量。
+
+## Postgres
+
+授权格式为 `name:read-write` 或 `name:read-only`；省略模式时默认为 `read-write`。名称以小写字母开头，后续可包含小写字母、数字、`_` 或 `-`。目前最多接受一个授权。
+
+连接 URL 不应写入清单。对于 `main`，请设置 `TYSEL_POSTGRES_MAIN`；授权名称中的连字符会映射为环境变量中的下划线。
+
+参数类型、只读验证、连接池、TLS 和部署检查请参阅 [PostgreSQL 指南](/docs/guides/postgresql)。
+
+## Redis
+
+Redis 授权采用相同的具名 `read-write` 或 `read-only` 格式。名为 `cache` 的授权只从 `TYSEL_REDIS_CACHE` 解析；连接 URL 不应写入清单。只读模式允许 `get` 和 `exists`，并在建立连接前拒绝修改操作。请参阅 [Redis 指南](/docs/guides/redis)。
+
+## 文件系统
+
+根目录从项目根目录解析，并在访问前固定。读写仅限对应根目录下的 UTF-8 普通文件；声明 `fs_read` 并不隐含写入权限。
+
+根目录准备、路径限制、执行配置差异、拒绝检查和可运行转换示例请参阅[文件系统指南](/docs/guides/filesystem)。
+
+方法签名请参阅[宿主能力](/reference/runtime/capabilities)，宿主配置请参阅[环境变量](/reference/environment)，强制实施边界请参阅[安全模型](/docs/security)。

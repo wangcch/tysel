@@ -222,7 +222,8 @@ function escapeMdx(content) {
   const chunks = content.split(/(```[\s\S]*?```)/g);
   return chunks
     .map((chunk, index) => {
-      if (index % 2 === 1) return chunk;
+      // The current highlighter has no gitignore grammar.
+      if (index % 2 === 1) return chunk.replace(/^```gitignore(?=\r?\n)/, "```text");
       return chunk
         .split("\n")
         .map((line) => {

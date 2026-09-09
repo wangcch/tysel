@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "runtimeJsVersion": "0.2.0",
+  "runtimeJsVersion": "0.3.0",
   "tap": {
     "minimumSupportedVersion": 1,
     "maximumSupportedVersion": 5

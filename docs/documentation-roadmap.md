@@ -352,6 +352,13 @@ The reader-facing P0 adoption backlog is now complete. The next tranche should
 proceed to the P1 image, observability, debugging, and reproducible-release
 walkthroughs while continuing to extend contract-derived reference checks.
 
+The website now also has a build-time localization pipeline. English remains the
+canonical source under `docs/`; reviewed translations live independently under
+`website/locales/<locale>/content/` and are invalidated when their source hash
+changes. The initial Simplified Chinese release set covers all UI messages and
+public content units and has completed technical review. See `website/README.md`
+for terminology, review, incremental import/export and publication rules.
+
 ## P1 operations-path update — 2026-08-26
 
 The first P1 operations tranche is implemented:

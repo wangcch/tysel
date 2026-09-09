@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tysel_engine::{HttpRequest, InterruptReason, IsolateConfig, Value};
+use tysel_engine::{EngineError, HttpRequest, InterruptReason, IsolateConfig, Value};
 use tysel_engine_qjs::{
     IoCompletion, IoRequest, IsolateCancel, IsolatePool, OpId, eval_with_reactor_deadline,
     inspect_task_module, invoke_task_module, open_bridge,
@@ -65,15 +65,17 @@ pub fn run() -> Result<(), IsolateError> {
                 };
                 write_locked(&stdout, &reply)?;
             }
-            Message::Http { id, method, url, headers, body, request_id } => {
+            Message::Http { id, method, url, headers, body, request_id, timeout_ms } => {
                 let reply = match handler.as_ref() {
-                    Some(pool) => match pool.dispatch_sync(HttpRequest {
-                        method,
-                        url,
-                        headers,
-                        body: body.into_bytes(),
-                        request_id,
-                    }) {
+                    Some(pool) => match pool.dispatch_sync_until(
+                        HttpRequest { method, url, headers, body: body.into_bytes(), request_id },
+                        Instant::now()
+                            + Duration::from_millis(
+                                timeout_ms
+                                    .unwrap_or(config.request_timeout_ms)
+                                    .min(config.request_timeout_ms),
+                            ),
+                    ) {
                         Ok((head, bytes)) => Message::HttpOk {
                             id,
                             status: head.status,
@@ -81,9 +83,20 @@ pub fn run() -> Result<(), IsolateError> {
                             body: String::from_utf8_lossy(&bytes).into_owned(),
                             websocket: head.websocket,
                         },
-                        Err(err) => Message::HttpErr { id, error: err.to_string() },
+                        Err(err) => Message::HttpErr {
+                            id,
+                            timed_out: matches!(
+                                err,
+                                EngineError::Interrupted(InterruptReason::Timeout)
+                            ),
+                            error: err.to_string(),
+                        },
                     },
-                    None => Message::HttpErr { id, error: "handler not loaded".into() },
+                    None => Message::HttpErr {
+                        id,
+                        error: "handler not loaded".into(),
+                        timed_out: false,
+                    },
                 };
                 write_locked(&stdout, &reply)?;
             }

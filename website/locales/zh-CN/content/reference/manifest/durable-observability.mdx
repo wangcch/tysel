@@ -1,0 +1,44 @@
+---
+title: "持久存储与可观测性"
+description: "可选的 durable 表选择持久处理程序使用的事件存储。"
+---
+
+## `[durable]`
+
+可选的 `durable` 表选择持久处理程序使用的事件存储。
+
+| 字段 | 默认值 | 当前实现 |
+| --- | --- | --- |
+| `store` | `sqlite` | `sqlite` 启用应用 SQLite 能力。其他字符串可以通过 schema 验证，但不会配置由清单支持的存储。 |
+| `path` | `./data/tysel.db` | 相对于运行时的应用 SQLite 数据库路径。 |
+
+```toml
+[durable]
+store = "sqlite"
+path = "./data/workflows.db"
+```
+
+在项目命令中，相对路径从清单目录解析。在打包后的可执行文件中，相对路径从进程工作目录解析。模块导出持久处理程序时，默认持久事件日志位于该应用数据库旁，名称为 `durable-events.db`。设置 `TYSEL_DURABLE_SQLITE_PATH` 可以明确选择持久事件日志文件。
+
+宿主通过 `TYSEL_DURABLE_POSTGRES_URL` 配置时，运行时也可使用由 Postgres 支持的持久存储。这属于宿主配置，不是版本 1 清单中的 `store` 值。
+
+回放和备份要求请参阅[持久 API](/reference/runtime/durable)、[持久执行](/docs/concepts/durable-execution)和[生产运维](/docs/operations/production)。
+
+## `[observability]`
+
+| 字段 | 默认值 | 当前实现 |
+| --- | --- | --- |
+| `logs` | `json` | 不区分大小写的 `json` 启用结构化运行时日志；其他字符串会禁用该 JSON 日志记录器。 |
+| `traces` | 未设置 | 清单 schema 记录的可空端点意图。 |
+| `metrics` | 未设置 | 清单 schema 记录的可空端点意图。 |
+
+```toml
+[observability]
+logs = "json"
+traces = "http://otel-collector:4318/v1/traces"
+metrics = "http://otel-collector:4318/v1/metrics"
+```
+
+当前包清单会携带 `logs`，但尚未将 `traces` 或 `metrics` 传递给打包后的运行时。请使用标准 OpenTelemetry 环境变量配置实际导出。参考文档有意区分这两点：这些字段可以通过 schema 验证，但当前运维控制仍是环境配置。不要把身份验证令牌放入清单；请使用包含密钥的部署配置。
+
+支持的 OpenTelemetry 控制请参阅[环境变量](/reference/environment)，采集器和监控指南请参阅[生产运维](/docs/operations/production)。

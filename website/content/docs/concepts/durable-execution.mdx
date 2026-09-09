@@ -40,8 +40,9 @@ export default {
 Typed projects created by `tysel init` already contain `tysel-env.d.ts`. Run
 `tysel types` after changing the durable store or other manifest capabilities.
 
-`tysel.durable.start` returns a task ID and either a completed or suspended
-status. Send an external event with
+`tysel.durable.start` returns a task ID and a completed, suspended, or accepted
+status. Use a stable `idempotencyKey` option to repair lost acknowledgements; see
+the [control contract](/reference/runtime/durable#control-api). Send an external event with
 `tysel.durable.sendSignal(taskId, "approval", payload)`.
 
 ## Durable boundaries

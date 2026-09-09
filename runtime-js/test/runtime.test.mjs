@@ -18,7 +18,7 @@ test("bootstrap completes without replacing host globals", () => {
 
 test("web API version is a stable semantic version", () => {
   assert.match(webApiVersion, /^\d+\.\d+\.\d+$/);
-  assert.equal(webApiVersion, "0.2.0");
+  assert.equal(webApiVersion, "0.3.0");
   assert.equal(runtimeJsVersion, webApiVersion);
   assert.deepEqual(runtimeLayers, ["web-api", "capability-client", "durable"]);
 });
@@ -162,4 +162,16 @@ test("@tysel/types is a standalone public contract for the runtime surface", () 
   assert.match(publicTypes, /interface WebSocket/);
   assert.match(capabilities, /export interface TyselRuntime/);
   assert.match(webApi, /export interface TyselWebApiGlobals/);
+});
+
+test("vendored Streams snapshot matches its recorded checksum", async () => {
+  const { createHash } = await import('node:crypto');
+  const root = new URL('../web-api/vendor/web-streams-polyfill/', import.meta.url);
+  const bytes = readFileSync(new URL('polyfill.js', root));
+  const readme = readFileSync(new URL('README.md', root), 'utf8');
+  const checksum = readme.match(/^polyfill\.js SHA-256: `([a-f0-9]{64})`$/m);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), checksum?.[1]);
+  assert.match(readFileSync(new URL('LICENSE', root), 'utf8'), /Permission is hereby granted/);
+  assert.match(bytes.toString(), /web-streams-polyfill v4\.3\.0/);
+  assert.ok(readFileSync(new URL('../web-api/runtime.js', import.meta.url), 'utf8').includes(readFileSync(new URL('LICENSE', root), 'utf8').trimEnd()));
 });

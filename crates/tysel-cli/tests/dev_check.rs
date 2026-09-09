@@ -352,6 +352,15 @@ fn init_writes_a_hello_service_skeleton() {
     assert!(source.contains("import type { TyselEnv } from \"../tysel-env.js\""));
     assert!(source.contains("} satisfies TyselApp<TyselEnv>;"));
     assert!(dir.join("tysel-env.d.ts").is_file());
+    assert_eq!(
+        fs::read_to_string(dir.join(".tysel/manifest.schema.json")).unwrap(),
+        tysel_manifest::JSON_SCHEMA
+    );
+    assert!(
+        fs::read_to_string(dir.join("tysel.toml"))
+            .unwrap()
+            .starts_with("#:schema .tysel/manifest.schema.json\n")
+    );
     let tsconfig: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("tsconfig.json")).unwrap()).unwrap();
     assert_eq!(
@@ -424,6 +433,169 @@ fn init_can_create_a_package_free_json_project() {
         .unwrap();
     assert!(task.status.success(), "{}", String::from_utf8_lossy(&task.stderr));
     assert!(String::from_utf8_lossy(&task.stdout).contains("task verify completed"));
+}
+
+#[test]
+fn init_rejects_a_javascript_extension_for_a_generated_typescript_entry() {
+    let dir = temp_app("init-js-extension");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--entry", "src/app.js", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("must use a TypeScript extension"));
+    assert!(!dir.exists(), "init must fail before creating the project directory");
+}
+
+#[test]
+fn init_dry_run_prints_a_reviewable_project_summary() {
+    let dir = temp_app("init-plan-summary");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Mode      Create"), "{stdout}");
+    assert!(stdout.contains("Template  HTTP service"), "{stdout}");
+    assert!(stdout.contains("Entry     src/index.ts (create)"), "{stdout}");
+    assert!(stdout.contains("Package   create package.json"), "{stdout}");
+    assert!(stdout.contains("Install   npm install (skip)"), "{stdout}");
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_dry_run_json_contains_machine_readable_file_contents() {
+    let dir = temp_app("init-plan-json");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(plan["schemaVersion"], 1);
+    assert_eq!(plan["mode"], "create");
+    assert_eq!(plan["package"]["manager"], "npm");
+    assert!(
+        plan["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["path"] == "package.json" && change["after"].is_string())
+    );
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_dry_run_install_does_not_require_the_package_manager_on_path() {
+    let dir = temp_app("init-plan-missing-manager");
+    let _ = fs::remove_dir_all(&dir);
+    let empty_path = temp_app("init-empty-path");
+    let output = Command::new(cli_exe())
+        .env("PATH", &empty_path)
+        .args(["init", dir.to_str().unwrap(), "--package-manager", "npm", "--install", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("npm install (run)"));
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_rejects_install_without_a_generated_package() {
+    let dir = temp_app("init-install-without-package");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--install", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--install requires"));
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_rejects_verify_for_an_uninstalled_generated_package() {
+    let dir = temp_app("init-verify-without-install");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--verify", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--verify requires --install"));
+    assert!(!dir.exists());
+}
+
+#[test]
+fn init_can_verify_a_package_free_project_after_creation() {
+    let dir = temp_app("init-package-free-verify");
+    let _ = fs::remove_dir_all(&dir);
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--verify", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("validating generated project"));
+    assert!(dir.join("tysel.toml").is_file());
+}
+
+#[test]
+fn init_dry_run_summarizes_existing_file_updates() {
+    let dir = temp_app("init-update-summary");
+    fs::write(dir.join("package.json"), r#"{"name":"existing"}"#).unwrap();
+    fs::write(dir.join(".gitignore"), "custom/\nnode_modules/\n").unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--add-scripts", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("update package.json"), "{stdout}");
+    assert!(stdout.contains("+ scripts.tysel:dev = \"tysel dev\""), "{stdout}");
+    assert!(stdout.contains("update .gitignore"), "{stdout}");
+    assert!(stdout.contains("+ .tysel/"), "{stdout}");
+    assert_eq!(fs::read_to_string(dir.join("package.json")).unwrap(), r#"{"name":"existing"}"#);
+}
+
+#[test]
+fn init_dry_run_diff_exposes_complete_existing_file_changes() {
+    let dir = temp_app("init-update-diff");
+    fs::write(
+        dir.join("package.json"),
+        "{\n    \"name\": \"existing\",\n    \"private\": true\n}\n",
+    )
+    .unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--add-scripts", "--dry-run", "--diff"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--- a/package.json"), "{stdout}");
+    assert!(stdout.contains("-    \"name\": \"existing\""), "{stdout}");
+    assert!(stdout.contains("+  \"name\": \"existing\""), "{stdout}");
+    assert!(stdout.contains("+    \"tysel:dev\": \"tysel dev\""), "{stdout}");
+}
+
+#[test]
+fn init_rejects_a_stale_existing_tysel_tsconfig_before_writing() {
+    let dir = temp_app("init-stale-tsconfig");
+    fs::write(
+        dir.join("package.json"),
+        r#"{"devDependencies":{"@tysel/types":"0.3.0","@tysel/test":"0.3.0"}}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("tsconfig.tysel.json"), r#"{"files":["src/old.ts"]}"#).unwrap();
+    let output =
+        Command::new(cli_exe()).args(["init", dir.to_str().unwrap(), "--yes"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("does not include src/tysel.ts"));
+    assert!(!dir.join("tysel.toml").exists());
+    assert!(!dir.join("src").exists());
 }
 
 #[test]
@@ -612,6 +784,53 @@ fn init_can_add_namespaced_scripts_without_replacing_node_scripts() {
     assert_eq!(updated["scripts"]["dev"], "node server.js");
     assert_eq!(updated["scripts"]["tysel:check"], "tysel check");
     assert_eq!(updated["scripts"]["tysel:build"], "tysel build --release");
+}
+
+#[test]
+fn init_merges_tysel_entries_into_an_existing_gitignore() {
+    let dir = temp_app("init-existing-gitignore");
+    fs::write(dir.join(".gitignore"), "custom/\nnode_modules/\n").unwrap();
+    let output = Command::new(cli_exe())
+        .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let gitignore = fs::read_to_string(dir.join(".gitignore")).unwrap();
+    assert!(gitignore.starts_with("custom/\nnode_modules/\n"));
+    assert_eq!(gitignore.matches("node_modules/").count(), 1);
+    assert!(gitignore.contains("# Tysel\n"));
+    assert!(gitignore.contains(".tysel/\n"));
+}
+
+#[test]
+fn init_keeps_the_schema_trackable_but_ignores_runtime_state() {
+    for (index, existing) in
+        ["", ".tysel/\n", "!.tysel/\n!.tysel/manifest.schema.json\n.tysel/\n"].iter().enumerate()
+    {
+        let dir = temp_app(&format!("init-schema-git-{index}"));
+        fs::write(dir.join(".gitignore"), existing).unwrap();
+        let output = Command::new(cli_exe())
+            .args(["init", dir.to_str().unwrap(), "--package-json", "none", "--yes"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(Command::new("git").args(["init", "-q"]).arg(&dir).status().unwrap().success());
+        fs::write(dir.join(".tysel/local-cache"), "local state").unwrap();
+        let ignored = |path: &str| {
+            Command::new("git")
+                .current_dir(&dir)
+                .args(["check-ignore", "-q", path])
+                .status()
+                .unwrap()
+        };
+        assert_eq!(
+            ignored(".tysel/manifest.schema.json").code(),
+            Some(1),
+            "schema hidden for {existing:?}"
+        );
+        assert_eq!(ignored(".tysel/local-cache").code(), Some(0));
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 #[test]
@@ -1384,6 +1603,91 @@ fn dev_reloads_source_but_ignores_node_modules() {
 }
 
 #[test]
+fn check_ignores_erased_imports_and_locates_nested_runtime_imports() {
+    let dir = temp_app("check-import-diagnostics");
+    write_js_app(&dir, "export { default } from './nested.js';\n");
+    // write_js_app uses src/index.js; .js specifiers resolve to .ts sources.
+    let nested = dir.join("src/nested.ts");
+    fs::write(&nested, "import { type Stats } from 'node:fs';\nexport default {};\n").unwrap();
+    let invoke = || {
+        Command::new(cli_exe())
+            .args(["--error-format", "json", "check", "--manifest"])
+            .arg(dir.join("tysel.toml"))
+            .output()
+            .unwrap()
+    };
+    let output = invoke();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    fs::write(&nested, "import 'node:fs';\nexport default {};\n").unwrap();
+    let output = invoke();
+    assert!(!output.status.success());
+    let output: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(output["diagnostics"][0]["code"], "TYSEL_NODE_BUILTIN_UNSUPPORTED");
+    assert!(output["diagnostics"][0]["file"].as_str().unwrap().ends_with("src/nested.ts"));
+    assert_eq!(output["diagnostics"][0]["start"]["line"], 1);
+}
+
+#[test]
+fn dev_syncs_types_preserves_them_on_manifest_errors_and_recovers() {
+    let dir = temp_app("dev-type-sync");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    let manifest_path = dir.join("tysel.toml");
+    let valid =
+        "[app]\nname = 'type-sync'\nentry = 'src/index.ts'\n[server]\nlisten = '127.0.0.1:0'\n";
+    fs::write(&manifest_path, valid).unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "export default { fetch() { return new Response('ok'); } };\n",
+    )
+    .unwrap();
+    let mut child = ManagedChild::spawn(
+        Command::new(cli_exe())
+            .args(["--error-format", "json", "dev", "--manifest"])
+            .arg(&manifest_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        "dev type sync",
+    );
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(8));
+    wait_log(&log, "\"generation\":0", Duration::from_secs(5));
+    let path = dir.join("tysel-env.d.ts");
+    let original = fs::read_to_string(&path).unwrap();
+    assert!(!original.contains("TOKEN"));
+    fs::write(&manifest_path, format!("{valid}\n[permissions]\nsecrets = ['TOKEN']\n")).unwrap();
+    wait_log(&log, "\"generation\":1", Duration::from_secs(5));
+    let generated = fs::read_to_string(&path).unwrap();
+    assert!(generated.contains("TOKEN"));
+    let invalid = valid.replace("listen =", "workers = 0\nlisten =");
+    fs::write(&manifest_path, &invalid).unwrap();
+    wait_log(&log, "TYSEL_MANIFEST_INVALID", Duration::from_secs(5));
+    assert_eq!(fs::read_to_string(&path).unwrap(), generated);
+    assert!(http_get(&addr).contains("ok"));
+    let cli = Command::new(cli_exe())
+        .args(["--error-format", "json", "check", "--manifest"])
+        .arg(&manifest_path)
+        .output()
+        .unwrap();
+    assert!(!cli.status.success());
+    let cli: serde_json::Value = serde_json::from_slice(&cli.stderr).unwrap();
+    let event: serde_json::Value = log
+        .lock()
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|event| event["diagnostics"][0]["code"] == "TYSEL_MANIFEST_INVALID")
+        .unwrap();
+    assert_eq!(cli["diagnostics"], event["diagnostics"]);
+    assert_eq!(event["diagnostics"][0]["start"]["line"], 5);
+    fs::write(&manifest_path, valid).unwrap();
+    wait_log(&log, "\"generation\":3", Duration::from_secs(5));
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    // Generated output must not cause a second reload or overwrite editor changes.
+    thread::sleep(Duration::from_millis(300));
+    assert!(!log.lock().unwrap().contains("\"generation\":4"));
+    assert!(http_get(&addr).contains("ok"));
+}
+
+#[test]
 fn dev_json_diagnostics_are_replaced_after_a_successful_reload() {
     let dir = temp_app("dev-json-diagnostics");
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -1619,8 +1923,9 @@ export default {
     let error: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(error["error"]["code"], "RUNTIME_ERROR");
     let message = error["error"]["message"].as_str().unwrap();
-    assert!(message.contains("intentional failure"), "{message}");
-    assert!(message.contains("src/index.ts:5"), "{message}");
+    assert_eq!(message, "request execution failed");
+    assert!(!message.contains("intentional failure"), "{message}");
+    assert!(!message.contains("src/index.ts:5"), "{message}");
     assert!(!message.contains("app.js:"), "{message}");
     assert!(error["error"]["requestId"].as_str().is_some_and(|id| id.len() == 16));
 }

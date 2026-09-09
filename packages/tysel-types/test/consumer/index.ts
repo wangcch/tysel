@@ -142,3 +142,14 @@ await socket.opened;
 tysel._sqliteExec("SELECT 1", "[]");
 // @ts-expect-error model is required by the public LLM contract
 await tysel.llm.generate({ input: "hello" });
+
+const durableRun = tysel.durable.start<{ approved: boolean }>("approvalFlow", null, {
+  idempotencyKey: "tenant:approval:request-1",
+});
+if (durableRun.status === "completed") durableRun.value.approved.valueOf();
+if (durableRun.status === "accepted") durableRun.taskId.toUpperCase();
+tysel.durable.sendSignal(durableRun.taskId, "approval", false, {
+  idempotencyKey: "decision-1",
+});
+// @ts-expect-error idempotency keys must be strings
+tysel.durable.start("approvalFlow", null, { idempotencyKey: 1 });

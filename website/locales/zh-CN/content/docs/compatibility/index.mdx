@@ -1,0 +1,51 @@
+---
+title: "npm 兼容性"
+description: "Tysel 以 Web API 为先。它不追求普遍的 Node.js 兼容性；只有当 npm 包的运行时假设符合 Tysel 支持的 Web 与 ECMAScript 界面时，该包才能使用。"
+---
+
+Tysel 以 Web API 为先。它不追求普遍的 Node.js 兼容性；只有当 npm 包的运行时假设符合 Tysel 支持的 Web 与 ECMAScript 界面时，该包才能使用。
+
+## 检查项目
+
+```sh
+tysel compat
+tysel compat --json
+tysel compat --strict
+tysel compat --strict --deny-unknown
+```
+
+报告会扫描应用入口可见的直接包依赖和 Node 内置模块导入。
+
+| 状态 | 含义 |
+| --- | --- |
+| `compatible` | 已根据当前 Tysel 约定审查。 |
+| `shim` | 需要显式的 Web/Tysel 适配器。 |
+| `unsupported` | 依赖不可用的内置模块、原生插件或运行时模型。 |
+| `unknown` | 尚未审查，绝不会自动视为兼容。 |
+
+`--strict` 会拒绝不支持的依赖。`--deny-unknown` 还会拒绝未经审查的包。`--json` 输出 schema 版本 1，其中包含数量和原因。
+
+## 通常可以工作的包
+
+使用 ESM、标准 JavaScript 和 Web API，且不会检查或修改宿主环境的包，通常是合适的候选。路由器、schema 验证器、纯数据转换和协议库往往符合这一模型。
+
+## 无法工作的包
+
+- `fs`、`net`、`child_process` 和 `worker_threads` 等 `node:*` 内置模块；
+- Node 原生插件；
+- 子进程和 shell 执行；
+- 动态库加载；
+- CommonJS 加载器钩子和 Node 特有的模块解析行为；
+- 需要隐式访问文件系统、网络、进程或环境的依赖。
+
+Tysel 通过显式宿主能力提供存储、网络、密钥和文件系统操作，而不是使用 Node API。
+
+分类是一种早期预警，并非证明。接入门槛是：
+
+```sh
+tysel compat --strict
+tysel check
+tysel test
+```
+
+另请查看 [JavaScript API 参考](https://tysel.dev/reference/javascript/)，了解确切支持的 Web API 子集。

@@ -1,6 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import { SiteLink as Link, T, useLocale } from "@/components/locale-provider";
+import { LanguageSwitcher, type LanguageChoice } from "@/components/language-switcher";
+import { splitLocale } from "@/lib/i18n/routing";
 import { usePathname } from "next/navigation";
 import { useEffect, useId, useState } from "react";
 import {
@@ -12,19 +14,21 @@ import { cn } from "@/lib/cn";
 import { githubUrl } from "@/lib/shared";
 import { Wordmark } from "@/components/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { headerIconButtonClass, headerIconClass } from "@/components/header-chrome";
 
 const links = [
-  { href: "/", label: "Home" },
-  { href: "/docs", label: "Docs" },
-  { href: "/blog", label: "Blog" },
-  { href: "/reference", label: "Reference" },
-  { href: "/examples", label: "Examples" },
-  { href: "/benchmarks", label: "Benchmarks" },
-];
+  { href: "/", label: "nav.home" },
+  { href: "/docs", label: "nav.docs" },
+  { href: "/blog", label: "nav.blog" },
+  { href: "/reference", label: "nav.reference" },
+  { href: "/examples", label: "nav.examples" },
+  { href: "/benchmarks", label: "nav.benchmarks" },
+] as const;
 
 function GitHubIcon() {
+  // Filled Simple Icons path reads heavier than Lucide strokes at the same box size.
   return (
-    <svg role="img" viewBox="0 0 24 24" fill="currentColor" className="size-4">
+    <svg role="img" viewBox="0 0 24 24" fill="currentColor" className={cn(headerIconClass, "scale-90")}>
       <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
     </svg>
   );
@@ -35,8 +39,9 @@ function isActive(pathname: string, href: string) {
 }
 
 /** Shared top nav — padding matches fumadocs docs sidebar (`p-4`). */
-export function SiteHeader() {
-  const pathname = usePathname();
+export function SiteHeader({ languages }: { languages: LanguageChoice[] }) {
+  const { t } = useLocale();
+  const pathname = splitLocale(usePathname()).pathname;
   const [open, setOpen] = useState(false);
   const menuId = useId();
 
@@ -76,7 +81,7 @@ export function SiteHeader() {
                   : undefined,
               )}
             >
-              {link.label}
+              <T id={link.label} />
             </Link>
           ))}
         </nav>
@@ -88,13 +93,14 @@ export function SiteHeader() {
           />
           <div className="flex shrink-0 items-center gap-1.5">
             <SearchTrigger hideIfDisabled className="shrink-0 rounded-none p-2 md:hidden" />
+            <LanguageSwitcher choices={languages} />
             <ThemeToggle />
             <Link
               href={githubUrl}
               target="_blank"
               rel="noreferrer"
               aria-label="GitHub"
-              className="inline-flex size-8 shrink-0 items-center justify-center text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+              className={headerIconButtonClass}
             >
               <GitHubIcon />
             </Link>
@@ -102,17 +108,17 @@ export function SiteHeader() {
               href="/docs/getting-started"
               className="hidden shrink-0 items-center whitespace-nowrap bg-fd-foreground px-3 py-1.5 text-sm font-medium text-fd-background lg:inline-flex"
             >
-              Get started
+              <T id="common.getStarted" />
             </Link>
             <button
               type="button"
-              className="inline-flex size-8 items-center justify-center text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground lg:hidden"
+              className={cn(headerIconButtonClass, "lg:hidden")}
               aria-expanded={open}
               aria-controls={menuId}
-              aria-label={open ? "Close menu" : "Open menu"}
+              aria-label={t(open ? "nav.closeMenu" : "nav.openMenu")}
               onClick={() => setOpen((value) => !value)}
             >
-              {open ? <X className="size-4" /> : <Menu className="size-4" />}
+              {open ? <X className={headerIconClass} /> : <Menu className={headerIconClass} />}
             </button>
           </div>
         </div>
@@ -138,7 +144,7 @@ export function SiteHeader() {
                       : undefined,
                   )}
                 >
-                  {link.label}
+                  <T id={link.label} />
                 </Link>
               </li>
             ))}
@@ -147,7 +153,7 @@ export function SiteHeader() {
                 href="/docs/getting-started"
                 className="mt-2 block bg-fd-foreground px-3 py-2 text-center text-sm font-medium text-fd-background"
               >
-                Get started
+                <T id="common.getStarted" />
               </Link>
             </li>
           </ul>

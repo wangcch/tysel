@@ -1,0 +1,59 @@
+---
+title: "执行配置"
+description: "执行配置决定应用代码在哪里运行，以及 Tysel 强制实施哪种信任边界。可通过 tysel.toml 或 tysel.json 中的 [app].profile 选择。"
+---
+
+执行配置决定应用代码在哪里运行，以及 Tysel 强制实施哪种信任边界。可通过 `tysel.toml` 或 `tysel.json` 中的 `[app].profile` 选择。
+
+## `service`
+
+第一方应用代码应使用 `service`。JavaScript 在服务进程内的隔离实例中运行。宿主资源仍然默认拒绝访问，必须在清单中获得授权，但应用代码与原生宿主共享进程。
+
+该配置支持完整的宿主能力，包括白名单控制的网络访问、SQLite、Postgres、Redis、文件系统根目录、LLM 提供商、入站和出站 WebSocket，以及持久处理程序。
+
+```toml
+[app]
+name = "orders"
+entry = "src/index.ts"
+profile = "service"
+```
+
+## `isolated`
+
+插件、生成的代码，以及其他不应与宿主共享进程的代码，应使用 `isolated`。应用 JavaScript 在单独的 `tysel-worker` 进程中运行。即使清单列出了面向宿主的网络、数据库、文件系统、LLM 和 WebSocket 能力，这些能力仍会被拒绝。
+
+```toml
+[app]
+name = "plugin"
+entry = "src/index.ts"
+profile = "isolated"
+```
+
+在 Linux 上，工作进程还会应用 Landlock 文件系统规则、seccomp 系统调用过滤、资源限额，以及尽力而为的 cgroup 内存限制。工作进程崩溃后，监督器会将其替换。macOS 支持开发阶段检查，但不作为生产隔离的安全边界。
+
+`isolated` 配置会收紧权限，但无法保证任意恶意原生代码的安全。Tysel 应用代码是由托管引擎执行的 JavaScript。原生插件、子进程、动态库和隐式操作系统访问不属于应用模型。
+
+## `component`
+
+实现 `tysel:component/task@0.4.0` 的 Wasm 组件应使用 `component`。清单入口指向一个 `.wasm` 组件，运行时通过有边界的 JSON 任务接口调用它。
+
+```toml
+[app]
+name = "echo-component"
+entry = "echo.component.wasm"
+profile = "component"
+```
+
+Component ABI 仍处于实验阶段，其范围有意小于 TypeScript 服务 API。组件是一次性 JSON 任务：`tysel run` 从 stdin 读取一次并向 stdout 写入一次；不支持 `tysel dev`。核心 Wasm 模块和通用 WASI 应用不属于该配置的支持范围。
+
+请从 [Wasm Component 参考](/reference/component)开始，再阅读 [Rust](/docs/guides/wasm-component-rust) 或 [Go](/docs/guides/wasm-component-go) 指南。
+
+## 选择执行配置
+
+| 需求 | 执行配置 |
+| --- | --- |
+| 第一方 HTTP 服务或持久智能体 | `service` |
+| AI 生成的函数或第三方 JavaScript 插件 | `isolated` |
+| 编译为 Wasm 组件、与语言无关的任务 | `component` |
+
+有关生产隔离要求，请阅读[安全模型](/docs/security)和[运维手册](/docs/operations/production)。

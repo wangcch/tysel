@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-09-05T05:47:03.036Z",
+  "vscode": "1.136.1",
+  "cases": [
+    {
+      "name": "TOML schema supplies profile completion without online catalogs",
+      "passed": true,
+      "milliseconds": 309
+    },
+    {
+      "name": "TypeScript offers declared capabilities and resolves generated types",
+      "passed": true,
+      "milliseconds": 297
+    },
+    {
+      "name": "Saved permission grants refresh TypeScript completion without restarting the service",
+      "passed": true,
+      "milliseconds": 485
+    },
+    {
+      "name": "Invalid manifest is shown by both TOML and Tysel providers and preserves types",
+      "passed": true,
+      "milliseconds": 161
+    },
+    {
+      "name": "Repairing and revoking grants clears manifest diagnostics and removes capabilities",
+      "passed": true,
+      "milliseconds": 485
+    },
+    {
+      "name": "Nested import errors convert UTF-8 offsets into correct editor UTF-16 ranges",
+      "passed": true,
+      "milliseconds": 188
+    },
+    {
+      "name": "Snapshots replace old-file errors and stale generations cannot restore them",
+      "passed": true,
+      "milliseconds": 386
+    }
+  ],
+  "scope": "Real VS Code providers and a test-only saved-document diagnostic adapter; no production extension installed.",
+  "typescriptExtension": "10.0.0",
+  "bundledTypeScript": "6.0.3",
+  "tomlExtension": "0.21.2",
+  "passed": true,
+  "generations": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "editorWarnings": []
+}

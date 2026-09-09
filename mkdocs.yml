@@ -14,6 +14,7 @@ validation:
 exclude_docs: |
   website-plan.md
   documentation-roadmap.md
+  editor-iteration-plan.md
 theme:
   name: readthedocs
 plugins:

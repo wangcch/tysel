@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use rquickjs::{Context, Function, Runtime};
 use tokio::sync::{mpsc, oneshot};
-use tysel_engine::{EngineError, HttpHead, HttpRequest, IsolateConfig};
+use tysel_engine::{EngineError, HttpHead, HttpRequest, InterruptReason, IsolateConfig};
 
 use crate::cpu::CpuBudget;
 use crate::fetch;
@@ -40,9 +40,20 @@ impl From<HttpRequest> for IncomingHttp {
 }
 
 struct Job {
+    deadline: Instant,
+    cancel: IsolateCancel,
     request: IncomingHttp,
     response_tx: ResponseSender,
     _pending: PendingJob,
+}
+
+struct CancelPending(Option<IsolateCancel>);
+impl Drop for CancelPending {
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.0 {
+            cancel.cancel();
+        }
+    }
 }
 
 struct ActiveJob {
@@ -71,14 +82,20 @@ pub(crate) type ResponseSender = oneshot::Sender<Result<PreparedHttpResponse, En
 pub enum OutgoingHttpBody {
     Buffered(Vec<u8>),
     Stream(mpsc::Receiver<Vec<u8>>),
+    CheckedStream {
+        chunks: mpsc::Receiver<Vec<u8>>,
+        completion: oneshot::Receiver<Result<(), EngineError>>,
+    },
 }
 
 struct Budgets {
+    cancel: IsolateCancel,
     cpu: Arc<CpuBudget>,
     request: Instant,
 }
 
 pub struct IsolatePool {
+    request_timeout: Duration,
     workers: Vec<WorkerSlot>,
     pending: Arc<[AtomicUsize]>,
     next: Arc<AtomicUsize>,
@@ -126,7 +143,13 @@ impl IsolatePool {
                 metadata = Some(worker_metadata);
             }
         }
-        let pool = Self { workers: senders, pending, next: Arc::new(AtomicUsize::new(0)), threads };
+        let pool = Self {
+            request_timeout: Duration::from_millis(config.request_timeout_ms.max(1)),
+            workers: senders,
+            pending,
+            next: Arc::new(AtomicUsize::new(0)),
+            threads,
+        };
         Ok((pool, metadata.expect("at least one isolate worker")))
     }
 
@@ -145,6 +168,8 @@ impl IsolatePool {
         let body = match body {
             OutgoingHttpBody::Buffered(bytes) => sealed_response_body(bytes),
             OutgoingHttpBody::Stream(body) => body,
+            // Legacy chunk-only API cannot surface errors after the head.
+            OutgoingHttpBody::CheckedStream { chunks, .. } => chunks,
         };
         Ok((head, body))
     }
@@ -153,38 +178,67 @@ impl IsolatePool {
         &self,
         request: IncomingHttp,
     ) -> Result<(HttpHead, OutgoingHttpBody), EngineError> {
-        let (response_tx, response_rx) = oneshot::channel();
-        let mut request = Some(request);
-        let mut response_tx = Some(response_tx);
-        loop {
-            let (index, pending) = self
-                .reserve_worker()
-                .ok_or_else(|| EngineError::Isolate("all isolate workers stopped".into()))?;
-            let job = Job {
-                request: request.take().expect("request is retained until dispatch"),
-                response_tx: response_tx
-                    .take()
-                    .expect("response sender is retained until dispatch"),
-                _pending: pending,
-            };
-            match self.workers[index].jobs.send(job).await {
-                Ok(()) => break,
-                Err(error) => {
-                    let Job {
-                        request: returned_request,
-                        response_tx: returned_response_tx,
-                        _pending: _,
-                    } = error.0;
-                    request = Some(returned_request);
-                    response_tx = Some(returned_response_tx);
+        let deadline = Instant::now()
+            .checked_add(self.request_timeout)
+            .ok_or_else(|| EngineError::Isolate("request timeout is too large".into()))?;
+        self.dispatch_response_until(request, deadline).await
+    }
+
+    pub fn request_timeout(&self) -> Duration {
+        self.request_timeout
+    }
+
+    /// Preserve an ingress deadline through worker queueing and execution.
+    pub async fn dispatch_response_until(
+        &self,
+        request: IncomingHttp,
+        deadline: Instant,
+    ) -> Result<(HttpHead, OutgoingHttpBody), EngineError> {
+        if Instant::now() >= deadline {
+            return Err(EngineError::Interrupted(InterruptReason::Timeout));
+        }
+        let cancel = IsolateCancel::new();
+        let mut cancellation = CancelPending(Some(cancel.clone()));
+        let result = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), async {
+            let (response_tx, response_rx) = oneshot::channel();
+            let mut request = Some(request);
+            let mut response_tx = Some(response_tx);
+            loop {
+                let (index, pending) = self
+                    .reserve_worker()
+                    .ok_or_else(|| EngineError::Isolate("all isolate workers stopped".into()))?;
+                let job = Job {
+                    deadline,
+                    cancel: cancel.clone(),
+                    request: request.take().expect("request is retained until dispatch"),
+                    response_tx: response_tx
+                        .take()
+                        .expect("response sender is retained until dispatch"),
+                    _pending: pending,
+                };
+                match self.workers[index].jobs.send(job).await {
+                    Ok(()) => break,
+                    Err(error) => {
+                        let Job {
+                            request: returned_request,
+                            response_tx: returned_response_tx,
+                            ..
+                        } = error.0;
+                        request = Some(returned_request);
+                        response_tx = Some(returned_response_tx);
+                    }
                 }
             }
-        }
-        match response_rx.await {
-            Ok(Ok(PreparedHttpResponse { head, body })) => Ok((head, body)),
-            Ok(Err(err)) => Err(err),
-            Err(_) => Err(EngineError::Isolate("isolate dropped the response head".into())),
-        }
+            match response_rx.await {
+                Ok(Ok(PreparedHttpResponse { head, body })) => Ok((head, body)),
+                Ok(Err(err)) => Err(err),
+                Err(_) => Err(EngineError::Isolate("isolate dropped the response head".into())),
+            }
+        })
+        .await
+        .map_err(|_| EngineError::Interrupted(InterruptReason::Timeout))?;
+        cancellation.0.take();
+        result
     }
 
     fn reserve_worker(&self) -> Option<(usize, PendingJob)> {
@@ -205,11 +259,35 @@ impl IsolatePool {
     /// Run one request to completion on the process I/O runtime. Isolated
     /// workers use this from a blocking IPC thread.
     pub fn dispatch_sync(&self, request: HttpRequest) -> Result<(HttpHead, Vec<u8>), EngineError> {
+        let deadline = Instant::now()
+            .checked_add(self.request_timeout)
+            .ok_or_else(|| EngineError::Isolate("request timeout is too large".into()))?;
+        self.dispatch_sync_until(request, deadline)
+    }
+
+    pub fn dispatch_sync_until(
+        &self,
+        request: HttpRequest,
+        deadline: Instant,
+    ) -> Result<(HttpHead, Vec<u8>), EngineError> {
         crate::queue::io_handle().block_on(async {
-            let (head, mut chunks) = self.dispatch(request).await?;
+            let (head, response) =
+                self.dispatch_response_until(IncomingHttp::from(request), deadline).await?;
             let mut body = Vec::new();
+            let (mut chunks, completion) = match response {
+                OutgoingHttpBody::Buffered(bytes) => return Ok((head, bytes)),
+                OutgoingHttpBody::Stream(chunks) => (chunks, None),
+                OutgoingHttpBody::CheckedStream { chunks, completion } => {
+                    (chunks, Some(completion))
+                }
+            };
             while let Some(chunk) = chunks.recv().await {
                 body.extend(chunk);
+            }
+            if let Some(completion) = completion {
+                completion
+                    .await
+                    .map_err(|_| EngineError::Isolate("response stream interrupted".into()))??;
             }
             Ok((head, body))
         })
@@ -250,6 +328,7 @@ fn run_worker(
     ready: &std::sync::mpsc::Sender<Result<ModuleMetadata, EngineError>>,
 ) -> Result<(), EngineError> {
     let budgets = Arc::new(Mutex::new(Budgets {
+        cancel: cancel.clone(),
         cpu: CpuBudget::new(Duration::from_secs(60)),
         request: Instant::now() + Duration::from_secs(60),
     }));
@@ -263,7 +342,9 @@ fn run_worker(
                 return true;
             }
             let budgets = budgets.lock().expect("budgets");
-            budgets.cpu.exhausted() || Instant::now() >= budgets.request
+            budgets.cancel.is_cancelled()
+                || budgets.cpu.exhausted()
+                || Instant::now() >= budgets.request
         })));
     }
 
@@ -294,17 +375,29 @@ fn run_worker(
     let _ = ready.send(Ok(metadata));
 
     while let Some(job) = jobs.blocking_recv() {
-        let Job { request, response_tx, _pending: pending } = job;
+        let Job {
+            request,
+            response_tx,
+            _pending: pending,
+            deadline: request_deadline,
+            cancel: request_cancel,
+        } = job;
+        if response_tx.is_closed() || request_cancel.is_cancelled() {
+            continue;
+        }
+        if Instant::now() >= request_deadline {
+            let _ = response_tx.send(Err(EngineError::Interrupted(InterruptReason::Timeout)));
+            continue;
+        }
         let request_id = request.request_id;
         let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
-        let request_deadline =
-            Instant::now() + Duration::from_millis(config.request_timeout_ms.max(1));
-        *budgets.lock().expect("budgets") = Budgets { cpu: cpu.clone(), request: request_deadline };
+        *budgets.lock().expect("budgets") =
+            Budgets { cancel: request_cancel.clone(), cpu: cpu.clone(), request: request_deadline };
         let job_result = handle_job(
             &runtime,
             &context,
             &reactor,
-            &cancel,
+            &request_cancel,
             ActiveJob { request, response_tx },
             request_deadline,
             &cpu,
@@ -315,7 +408,11 @@ fn run_worker(
             request_id,
             Duration::from_millis(config.request_timeout_ms.max(100)),
         )?;
-        let _ = job_result;
+        // Failed body reads can leave promise/stream cycles holding buffers.
+        // Reclaim them after native operations and request roots are cleared.
+        if job_result.is_err() {
+            runtime.run_gc();
+        }
         drop(pending);
     }
 
@@ -438,6 +535,12 @@ fn handle_job(
             return Err(err);
         }
     };
+    // Synchronous handlers also create microtasks (including weak-reference
+    // finalizers). Drain them within this request's budgets before returning.
+    if !pending && let Err(err) = isolate::drain_jobs(runtime, cancel, request_deadline, cpu) {
+        let _ = response_tx.send(Err(err.clone()));
+        return Err(err);
+    }
     if pending {
         if let Err(err) = isolate::wait_until_settled(
             runtime,
@@ -456,7 +559,21 @@ fn handle_job(
             return Err(err);
         }
     }
-    context.with(|ctx| fetch::emit_response(ctx, response_tx))?;
+    if let Some(completion) =
+        context.with(|ctx| fetch::emit_response(ctx, response_tx, &reactor.io))?
+    {
+        let result = isolate::wait_until_settled(
+            runtime,
+            context,
+            reactor,
+            cancel,
+            request_deadline,
+            cpu,
+            None,
+        );
+        completion.finish(result.clone());
+        result?;
+    }
     if context.with(fetch::arm_websocket)? {
         isolate::wait_until_settled(
             runtime,
@@ -475,9 +592,103 @@ fn handle_job(
 mod tests {
     use super::*;
 
+    fn request(path: &str) -> IncomingHttp {
+        HttpRequest {
+            method: "GET".into(),
+            url: format!("http://local{path}"),
+            ..Default::default()
+        }
+        .into()
+    }
+
+    #[tokio::test]
+    async fn queued_deadline_and_cancellation_skip_side_effects() {
+        let pool = Arc::new(
+            IsolatePool::spawn(
+                1,
+                r#"
+            let calls = 0;
+            export default {fetch(request) {
+                const path = new URL(request.url).pathname;
+                if (path === '/hold') return new Response(new ReadableStream({
+                    start(c) { c.enqueue(new Uint8Array([1])); },
+                    pull() { return new Promise(() => {}); }
+                }));
+                if (path === '/mutate') calls++;
+                return new Response(String(calls));
+            }};
+        "#,
+                IsolateConfig {
+                    request_timeout_ms: 2_000,
+                    cpu_ms_per_turn: 500,
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+        let (_, held) = pool.dispatch_response(request("/hold")).await.unwrap();
+        let result = pool
+            .dispatch_response_until(request("/mutate"), Instant::now() + Duration::from_millis(20))
+            .await;
+        assert!(matches!(result, Err(EngineError::Interrupted(InterruptReason::Timeout))));
+        let queued = tokio::spawn({
+            let pool = pool.clone();
+            async move { pool.dispatch_response(request("/mutate")).await }
+        });
+        while pool.pending_jobs()[0] < 3 {
+            tokio::task::yield_now().await;
+        }
+        queued.abort();
+        assert!(matches!(queued.await, Err(error) if error.is_cancelled()));
+        drop(held);
+        let (_, body) = pool.dispatch_response(request("/count")).await.unwrap();
+        assert!(matches!(body, OutgoingHttpBody::Buffered(bytes) if bytes == b"0"));
+    }
+
+    #[tokio::test]
+    async fn active_timeout_and_cancellation_do_not_poison_worker() {
+        let pool = Arc::new(
+            IsolatePool::spawn(
+                1,
+                r#"
+            export default {async fetch(request) {
+                if (new URL(request.url).pathname === '/hold') await new Promise(() => {});
+                return new Response('healthy');
+            }};
+        "#,
+                IsolateConfig {
+                    request_timeout_ms: 2_000,
+                    cpu_ms_per_turn: 500,
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+        let result = pool
+            .dispatch_response_until(request("/hold"), Instant::now() + Duration::from_millis(20))
+            .await;
+        assert!(matches!(result, Err(EngineError::Interrupted(InterruptReason::Timeout))));
+        let active = tokio::spawn({
+            let pool = pool.clone();
+            async move { pool.dispatch_response(request("/hold")).await }
+        });
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        active.abort();
+        assert!(matches!(active.await, Err(error) if error.is_cancelled()));
+        let (_, body) = tokio::time::timeout(
+            Duration::from_millis(500),
+            pool.dispatch_response(request("/healthy")),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(matches!(body, OutgoingHttpBody::Buffered(bytes) if bytes == b"healthy"));
+    }
+
     fn test_pool(senders: Vec<mpsc::Sender<Job>>) -> IsolatePool {
         let pending = (0..senders.len()).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>().into();
         IsolatePool {
+            request_timeout: Duration::from_secs(30),
             workers: senders.into_iter().map(|jobs| WorkerSlot { jobs }).collect(),
             pending,
             next: Arc::new(AtomicUsize::new(0)),

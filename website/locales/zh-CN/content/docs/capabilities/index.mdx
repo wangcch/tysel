@@ -1,0 +1,25 @@
+---
+title: "能力矩阵"
+description: "Tysel 拒绝访问未声明的资源。声明只代表请求，并非保证：执行配置和部署策略还可以进一步收紧权限。"
+---
+
+Tysel 拒绝访问未声明的资源。声明只代表请求，并非保证：执行配置和部署策略还可以进一步收紧权限。即使清单列出了面向宿主的能力，`isolated` 执行配置仍会拒绝这些能力。
+
+| 能力 | Service | Isolated | Component | 配置 |
+| --- | --- | --- | --- | --- |
+| HTTP 处理程序 | 支持 | 工作进程 IPC | 不支持；一次性任务 | `[server]` |
+| 出站 `fetch` | 白名单控制 | 不支持 | 不支持 | `permissions.fetch` |
+| 不透明机密信息句柄 | 支持 | 仅限代理句柄 | 不支持 | `permissions.secrets` |
+| SQLite / Postgres / Redis | 受授权约束 | 不支持 | 不支持 | 对应的权限/存储配置 |
+| 文件系统 | 受授权约束 | 不支持 | 读/写 WIT 导入 | 清单根目录 + Component 部署策略 |
+| 入站 WebSocket | 支持 | 不支持 | 不支持 | `server.websocket = true` |
+| 出站 WebSocket | 白名单控制 | 不支持 | 不支持 | `permissions.fetch` |
+| LLM 生成 | 支持 | 不支持 | 不支持 | 提供商环境变量 + 密钥 |
+| 持久处理程序 | 支持 | 由监督器执行 | 不支持 | `[durable]` |
+| 定时器、编码、随机数 | 支持 | 支持 | 受限的 WASI 时钟/随机数 | 仅受限额约束 |
+
+`service` 执行配置在进程层面受信任，但能力受到限制。Linux 隔离工作进程还会应用 Landlock、seccomp、资源限额和尽力而为的 cgroup 内存限制；macOS 隔离不是生产环境的安全边界。
+
+实验性的 Component 执行配置使用 `isolated-task` 信任模式。目前实现的应用能力只有 [`tysel:fs/read@0.4.0` 和 `tysel:fs/write@0.4.0`](/reference/component/capabilities)。实际导入、清单根目录和部署策略必须全部一致。
+
+使用 `tysel inspect` 查看生效的权限和限额。另请参阅[执行配置](/docs/concepts/execution-profiles)、[清单参考](/reference/manifest)和[生产运维](/docs/operations/production)。

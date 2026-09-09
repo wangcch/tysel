@@ -435,6 +435,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fe5f465a4f6fee88fad41b85d990f84c835335e85b5d9e6e63e0d06d28cba7c"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "unicode-width",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -704,6 +716,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
+name = "dialoguer"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
+dependencies = [
+ "console",
+ "shell-words",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -784,6 +806,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -805,7 +833,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2931,7 +2959,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3028,7 +3056,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3138,6 +3166,12 @@ dependencies = [
  "cpufeatures 0.3.0",
  "digest 0.11.3",
 ]
+
+[[package]]
+name = "shell-words"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shlex"
@@ -3331,7 +3365,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3639,7 +3673,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "tysel-bench-compare"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3655,7 +3689,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-build"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -3674,14 +3708,14 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-fs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "tysel-cap-llm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -3697,7 +3731,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-mcp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3706,7 +3740,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-postgres"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3720,7 +3754,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-redis"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "redis",
  "tokio",
@@ -3729,7 +3763,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-cap-sqlite"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -3738,7 +3772,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-capability"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "semver",
  "serde",
@@ -3747,10 +3781,12 @@ dependencies = [
 
 [[package]]
 name = "tysel-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dialoguer",
+ "json-strip-comments",
  "libc",
  "notify",
  "reqwest",
@@ -3763,12 +3799,14 @@ dependencies = [
  "tysel-cap-mcp",
  "tysel-capability",
  "tysel-distribution",
+ "tysel-durable",
  "tysel-engine",
  "tysel-engine-qjs",
  "tysel-manifest",
  "tysel-observability",
  "tysel-package",
  "tysel-runtime",
+ "tysel-task",
  "tysel-task-rpc",
  "tysel-testkit",
  "wat",
@@ -3776,7 +3814,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-component-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3784,7 +3822,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-distribution"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "semver",
  "serde",
@@ -3794,8 +3832,9 @@ dependencies = [
 
 [[package]]
 name = "tysel-durable"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
+ "getrandom 0.4.3",
  "native-tls",
  "postgres",
  "postgres-native-tls",
@@ -3810,14 +3849,14 @@ dependencies = [
 
 [[package]]
 name = "tysel-engine"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "tysel-engine-qjs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3851,7 +3890,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-engine-wasm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -3866,7 +3905,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-ipc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3876,7 +3915,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-isolate"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
  "serde_json",
@@ -3891,17 +3930,18 @@ dependencies = [
 
 [[package]]
 name = "tysel-manifest"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
  "thiserror",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]
 name = "tysel-observability"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
@@ -3913,7 +3953,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-package"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "semver",
  "serde",
@@ -3924,14 +3964,14 @@ dependencies = [
 
 [[package]]
 name = "tysel-policy"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "tysel-capability",
 ]
 
 [[package]]
 name = "tysel-release-signing"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -3943,7 +3983,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3951,6 +3991,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "rusqlite",
  "serde_json",
  "thiserror",
  "tokio",
@@ -3977,7 +4018,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-scheduler"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "thiserror",
  "tysel-task",
@@ -3985,7 +4026,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-task"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -3993,7 +4034,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-task-rpc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4003,7 +4044,7 @@ dependencies = [
 
 [[package]]
 name = "tysel-testkit"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4637,7 +4678,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

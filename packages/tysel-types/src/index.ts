@@ -203,6 +203,16 @@ export interface LlmClient {
   ): Promise<LlmResponse<Output>>;
 }
 
+export interface DurableRequestOptions {
+  /** Store-wide key bound to this exact request until explicit retention cleanup. */
+  readonly idempotencyKey: string;
+}
+
+export interface DurableAcceptedResult {
+  readonly status: "accepted";
+  readonly taskId: string;
+}
+
 export interface DurableSuspendedResult {
   readonly status: "suspended";
   readonly taskId: string;
@@ -215,6 +225,7 @@ export interface DurableCompletedResult<Output = JsonValue> {
 }
 
 export type DurableStartResult<Output = JsonValue> =
+  | DurableAcceptedResult
   | DurableSuspendedResult
   | DurableCompletedResult<Output>;
 
@@ -222,11 +233,13 @@ export interface DurableControlClient {
   start<Output = JsonValue, Input = JsonValue>(
     name: string,
     input?: Input,
+    options?: DurableRequestOptions,
   ): DurableStartResult<Output>;
   sendSignal<Payload = JsonValue>(
     taskId: string,
     name: string,
     payload?: Payload,
+    options?: DurableRequestOptions,
   ): void;
 }
 

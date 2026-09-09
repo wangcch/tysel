@@ -19,6 +19,7 @@
   <a href="docs/getting-started.md">Get started</a> ·
   <a href="docs/guides/examples.md">Examples</a> ·
   <a href="docs/index.md">Documentation</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
   <a href="docs/security/README.md">Security</a>
 </p>
 
@@ -117,7 +118,7 @@ command.
 | Toolchain | Linux and macOS, x64 and arm64 |
 | Windows | WSL; no native Windows archive yet |
 | `service` profile | Trusted first-party application code |
-| `isolated` profile | Separate worker process; Linux is the production security gate |
+| `isolated` profile | Packaged apps also require matching `tysel-worker`; Linux is the production security gate |
 | `component` profile | Experimental Wasm Component tasks with restricted WASI |
 | Native runtime cross-compilation | Not provided; `build --target` instead packages with a verified same-version official runtime |
 

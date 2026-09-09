@@ -1,18 +1,22 @@
+mod execution;
+mod lifecycle;
+use super::ExecutionClaim;
 use native_tls::TlsConnector;
 use postgres::{Client, GenericClient, NoTls, Transaction};
 use postgres_native_tls::MakeTlsConnector;
 use r2d2_postgres::PostgresConnectionManager;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use tysel_task::TaskId;
 
 use super::{
     DURABLE_LOG_VERSION, DurableError, DurableProgram, DurableProgramKind, DurableStore, EventKind,
     History, MAX_DURABLE_PROGRAM_TOTAL_BYTES, MAX_DURABLE_PROGRAMS, MAX_EVENT_PAYLOAD_BYTES,
-    MAX_HISTORY_BYTES, MAX_HISTORY_EVENTS, MAX_PENDING_SIGNALS, NewEvent, SignalWait, TaskEvent,
-    Wakeup, WakeupClaim, from_sql_integer, raw_event, stored_event, task_id_bytes,
-    task_id_from_bytes, to_sql_integer, validate_lease_owner, validate_program_source,
-    validate_signal_name,
+    MAX_HISTORY_BYTES, MAX_HISTORY_EVENTS, MAX_PENDING_SIGNALS, NewEvent, SignalWait,
+    TaskCompletion, TaskEvent, Wakeup, WakeupClaim, from_sql_integer, raw_event, stored_event,
+    task_id_bytes, task_id_from_bytes, to_sql_integer, validate_lease_owner,
+    validate_program_source, validate_signal_name,
 };
 
 const MAX_WAKEUP_BATCH: usize = 10_000;
@@ -20,6 +24,7 @@ const DEFAULT_POOL_SIZE: u32 = 16;
 const MAX_POOL_SIZE: u32 = 128;
 pub const POSTGRES_URL_ENV: &str = "TYSEL_DURABLE_POSTGRES_URL";
 
+#[derive(Clone)]
 enum Pool {
     Plain(r2d2::Pool<PostgresConnectionManager<NoTls>>),
     Tls(r2d2::Pool<PostgresConnectionManager<MakeTlsConnector>>),
@@ -33,6 +38,7 @@ enum Pool {
 /// share one store.
 pub struct PostgresStore {
     pool: Pool,
+    execution: Option<ExecutionClaim>,
 }
 
 impl PostgresStore {
@@ -71,9 +77,82 @@ impl PostgresStore {
                 r2d2::Pool::builder().max_size(pool_size).build(manager).map_err(pool_error)?,
             )
         };
-        let store = Self { pool };
+        let store = Self { pool, execution: None };
         store.with_client(initialize_schema)?;
         Ok(store)
+    }
+
+    fn send_signal_inner(
+        &self,
+        task_id: TaskId,
+        signal_name: &str,
+        payload: &Value,
+        sent_at_ms: u64,
+        key: Option<&str>,
+    ) -> Result<u64, DurableError> {
+        validate_signal_name(signal_name)?;
+        let payload = serde_json::to_string(payload)?;
+        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
+            return Err(DurableError::EventPayloadTooLarge);
+        }
+        let sent_at_ms = to_sql_integer(sent_at_ms, "sent_at_ms")?;
+        self.with_client(|client| {
+            let mut tx = client.transaction()?;
+            let id = task_id_bytes(task_id);
+            tx.execute("INSERT INTO durable_task_locks(task_id) VALUES ($1) ON CONFLICT DO NOTHING", &[&&id[..]])?;
+            tx.query_one("SELECT task_id FROM durable_task_locks WHERE task_id=$1 FOR UPDATE", &[&&id[..]])?;
+            if let Some(key) = key {
+                crate::execution::validate_key(key)?;
+                let hash = format!("{:x}",Sha256::digest(payload.as_bytes()));
+                if let Some(row) = tx.query_opt("SELECT signal_name,payload,signal_id FROM durable_signal_receipts WHERE task_id=$1 AND request_key=$2",&[&&id[..],&key])? {
+                    if row.get::<_,&str>(0)!=signal_name || row.get::<_,&str>(1)!=hash {return Err(DurableError::AdmissionConflict);}
+                    return from_sql_integer(row.get(2),"signal_id");
+                }
+                let count:i64=tx.query_one("SELECT COUNT(*) FROM durable_signal_receipts WHERE task_id=$1",&[&&id[..]])?.get(0);
+                if count>=MAX_HISTORY_EVENTS as i64 {return Err(DurableError::SignalInboxLimit);}
+                if !tx.query_one("SELECT EXISTS(SELECT 1 FROM durable_programs WHERE task_id=$1)",&[&&id[..]])?.get::<_,bool>(0) {return Err(DurableError::AdmissionConflict);}
+            }
+            lock_task(&mut tx, task_id)?;
+            let row = tx.query_one(
+                "SELECT COUNT(*), COALESCE(SUM(octet_length(signal_name) + octet_length(payload)), 0)
+                 FROM durable_signal_inbox WHERE task_id = $1",
+                &[&&id[..]],
+            )?;
+            let count: i64 = row.get(0);
+            let bytes: i64 = row.get(1);
+            let signal_bytes = signal_name.len().checked_add(payload.len()).ok_or(DurableError::SignalInboxLimit)?;
+            if count >= MAX_PENDING_SIGNALS as i64
+                || bytes
+                    .checked_add(i64::try_from(signal_bytes).map_err(|_| DurableError::SignalInboxLimit)?)
+                    .is_none_or(|value| value > MAX_HISTORY_BYTES as i64)
+            {
+                return Err(DurableError::SignalInboxLimit);
+            }
+            let signal_id: i64 = tx
+                .query_one(
+                    "INSERT INTO durable_signal_inbox (task_id, signal_name, payload, sent_at_ms)
+                     VALUES ($1, $2, $3, $4) RETURNING id",
+                    &[&&id[..], &signal_name, &payload, &sent_at_ms],
+                )?
+                .get(0);
+            if let Some(row) = tx.query_opt(
+                "SELECT sequence FROM durable_signal_waits WHERE task_id = $1 AND signal_name = $2",
+                &[&&id[..], &signal_name],
+            )? {
+                let sequence: i64 = row.get(0);
+                tx.execute(
+                    "INSERT INTO durable_wakeups
+                     (task_id, sequence, wake_at_ms, lease_owner, lease_until_ms)
+                     VALUES ($1, $2, $3, NULL, NULL) ON CONFLICT (task_id) DO NOTHING",
+                    &[&&id[..], &sequence, &sent_at_ms],
+                )?;
+            }
+            if let Some(key) = key {
+                tx.execute("INSERT INTO durable_signal_receipts(task_id,request_key,signal_name,payload,signal_id) VALUES ($1,$2,$3,$4,$5)",&[&&id[..],&key,&signal_name,&format!("{:x}",Sha256::digest(payload.as_bytes())),&signal_id])?;
+            }
+            tx.commit()?;
+            from_sql_integer(signal_id, "signal_id")
+        })
     }
 
     fn with_client<T>(
@@ -99,6 +178,9 @@ fn pool_error(error: impl std::fmt::Display) -> DurableError {
 
 fn initialize_schema(client: &mut Client) -> Result<(), DurableError> {
     let mut tx = client.transaction()?;
+    // Serialize bootstrap and migrations before touching even the metadata table.
+    // Transaction-scoped, so failed initialization cannot strand the lock.
+    tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&0x747973656c64626di64])?;
     tx.batch_execute(
         "CREATE TABLE IF NOT EXISTS tysel_durable_metadata (
              key TEXT PRIMARY KEY,
@@ -164,6 +246,8 @@ fn initialize_schema(client: &mut Client) -> Result<(), DurableError> {
             });
         }
     }
+    lifecycle::initialize(&mut tx)?;
+    execution::initialize(&mut tx)?;
     tx.execute(
         "INSERT INTO tysel_durable_metadata (key, value) VALUES ('schema_version', $1)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
@@ -183,6 +267,15 @@ fn lock_task(tx: &mut Transaction<'_>, task_id: TaskId) -> Result<[u8; 16], Dura
         "SELECT task_id FROM durable_task_locks WHERE task_id = $1 FOR UPDATE",
         &[&&id[..]],
     )?;
+    if tx
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM durable_completions WHERE task_id = $1)",
+            &[&&id[..]],
+        )?
+        .get::<_, bool>(0)
+    {
+        return Err(DurableError::TaskCompleted { task_id });
+    }
     Ok(id)
 }
 
@@ -315,13 +408,8 @@ impl PostgresStore {
                 tx.commit()?;
                 return Ok(Some(existing));
             }
-            tx.query_one(
-                "SELECT value FROM tysel_durable_metadata WHERE key = 'schema_version' FOR UPDATE",
-                &[],
-            )?;
             let row = tx.query_one(
-                "SELECT COUNT(*), COALESCE(SUM(octet_length(source)), 0) FROM durable_programs",
-                &[],
+                "SELECT active_count, active_bytes FROM durable_program_stats WHERE singleton = 1 FOR UPDATE", &[],
             )?;
             let count: i64 = row.get(0);
             let total_bytes: i64 = row.get(1);
@@ -342,6 +430,7 @@ impl PostgresStore {
                  VALUES ($1, $2, $3, $4, $5)",
                 &[&&id[..], &kind.as_str(), &source, &&digest[..], &registered_at_ms],
             )?;
+            tx.execute("UPDATE durable_program_stats SET active_count = active_count + 1, active_bytes = active_bytes + $1 WHERE singleton = 1", &[&source_bytes])?;
             tx.commit()?;
             Ok(None)
         })
@@ -359,6 +448,7 @@ impl PostgresStore {
         let wake_sql = wake_at_ms.map(|value| to_sql_integer(value, "wake_at_ms")).transpose()?;
         self.with_client(|client| {
             let mut tx = client.transaction()?;
+            self.guard_execution(&mut tx, task_id)?;
             let sequence = insert_event(
                 &mut tx,
                 task_id,
@@ -370,6 +460,7 @@ impl PostgresStore {
             if let Some(wake_at_ms) = wake_sql {
                 upsert_wakeup(&mut tx, task_id, sequence, wake_at_ms)?;
             }
+            self.guard_execution(&mut tx, task_id)?;
             tx.commit()?;
             stored_event(task_id, sequence, event, payload_json.into())
         })
@@ -377,6 +468,72 @@ impl PostgresStore {
 }
 
 impl DurableStore for PostgresStore {
+    fn admit_module(
+        &self,
+        id: TaskId,
+        key: &str,
+        source: &str,
+        input: &str,
+        now: u64,
+    ) -> Result<(), DurableError> {
+        self.admit(id, key, source, input, now)
+    }
+    fn claim_execution(
+        &self,
+        id: TaskId,
+        owner: &str,
+        duration: u64,
+    ) -> Result<Option<ExecutionClaim>, DurableError> {
+        self.claim_run(id, owner, duration)
+    }
+    fn execution_failed(&self, task_id: TaskId) -> Result<bool, DurableError> {
+        self.with_client(|client| {
+            Ok(client.query_one(
+            "SELECT EXISTS(SELECT 1 FROM durable_executions WHERE task_id=$1 AND state='failed')",
+            &[&&task_id_bytes(task_id)[..]]
+        )?.get(0))
+        })
+    }
+    fn execution_store(&self, claim: &ExecutionClaim) -> Arc<dyn DurableStore> {
+        Arc::new(Self { pool: self.pool.clone(), execution: Some(claim.clone()) })
+    }
+    fn finish_execution(&self, claim: &ExecutionClaim, failed: bool) -> Result<(), DurableError> {
+        self.release_run(claim, failed)
+    }
+    fn send_signal_once(
+        &self,
+        id: TaskId,
+        name: &str,
+        payload: &Value,
+        key: &str,
+        now: u64,
+    ) -> Result<u64, DurableError> {
+        self.send_signal_inner(id, name, payload, now, Some(key))
+    }
+    fn completion(&self, task_id: TaskId) -> Result<Option<TaskCompletion>, DurableError> {
+        self.read_completion(task_id)
+    }
+    fn complete_task(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        completed_at_ms: u64,
+    ) -> Result<bool, DurableError> {
+        self.finish_task(task_id, expected_sequence, value, completed_at_ms, None)
+    }
+    fn complete_task_before(
+        &self,
+        task_id: TaskId,
+        expected_sequence: u64,
+        value: &Value,
+        lease_until_ms: u64,
+    ) -> Result<bool, DurableError> {
+        self.finish_task(task_id, expected_sequence, value, 0, Some(lease_until_ms))
+    }
+    fn prune_completed(&self, before_ms: u64, limit: usize) -> Result<usize, DurableError> {
+        self.prune_finished(before_ms, limit)
+    }
     fn log_version(&self) -> Result<u32, DurableError> {
         self.with_client(|client| {
             let row = client
@@ -416,14 +573,37 @@ impl DurableStore for PostgresStore {
         now_ms: u64,
         kind: DurableProgramKind,
     ) -> Result<Vec<DurableProgram>, DurableError> {
+        self.load_due_programs_batch(now_ms, kind, MAX_DURABLE_PROGRAMS)
+    }
+
+    fn load_due_programs_batch(
+        &self,
+        now_ms: u64,
+        kind: DurableProgramKind,
+        limit: usize,
+    ) -> Result<Vec<DurableProgram>, DurableError> {
         let now_ms = to_sql_integer(now_ms, "now_ms")?;
         self.with_client(|client| {
             let rows = client.query(
-                "SELECT p.task_id, p.program_kind, p.source, p.source_sha256, p.registered_at_ms
-                 FROM durable_programs p JOIN durable_wakeups w ON w.task_id = p.task_id
-                 WHERE w.wake_at_ms <= $1 AND (w.lease_until_ms IS NULL OR w.lease_until_ms <= $1)
-                   AND p.program_kind = $2 ORDER BY p.task_id LIMIT $3",
-                &[&now_ms, &kind.as_str(), &((MAX_DURABLE_PROGRAMS + 1) as i64)],
+                "WITH due AS (
+                SELECT w.task_id, w.wake_at_ms AS due_at
+                FROM durable_wakeups w LEFT JOIN durable_executions r ON r.task_id=w.task_id
+                WHERE w.wake_at_ms <= $1 AND (w.lease_until_ms IS NULL OR w.lease_until_ms <= $1)
+                  AND (r.state IS NULL OR r.state IN ('ready','running','suspended'))
+                  AND (r.lease_until_ms IS NULL OR r.lease_until_ms <= $1)
+                UNION ALL
+                SELECT r.task_id, COALESCE(r.lease_until_ms, 0) AS due_at
+                FROM durable_executions r
+                WHERE r.state IN ('ready','running') AND (r.lease_until_ms IS NULL OR r.lease_until_ms <= $1)
+                  AND NOT EXISTS(SELECT 1 FROM durable_wakeups w WHERE w.task_id=r.task_id)
+                  AND NOT EXISTS(SELECT 1 FROM durable_signal_waits s WHERE s.task_id=r.task_id)
+             )
+             SELECT p.task_id, p.program_kind, p.source, p.source_sha256, p.registered_at_ms
+             FROM due d JOIN durable_programs p ON p.task_id=d.task_id
+             WHERE p.program_kind=$2
+               AND NOT EXISTS(SELECT 1 FROM durable_completions c WHERE c.task_id=p.task_id)
+             ORDER BY d.due_at, p.task_id LIMIT $3",
+                &[&now_ms, &kind.as_str(), &(limit.min(MAX_DURABLE_PROGRAMS) as i64)],
             )?;
             if rows.len() > MAX_DURABLE_PROGRAMS {
                 return Err(DurableError::ProgramLimit);
@@ -449,7 +629,7 @@ impl DurableStore for PostgresStore {
             let mut tx = client.transaction()?;
             let id = lock_task(&mut tx, task_id)?;
             let existing = select_program(&mut tx, task_id)?;
-            if existing.is_some() {
+            if let Some(program) = &existing {
                 let row = tx.query_one(
                     "SELECT EXISTS(SELECT 1 FROM durable_events WHERE task_id = $1)
                        OR EXISTS(SELECT 1 FROM durable_wakeups WHERE task_id = $1)
@@ -460,6 +640,7 @@ impl DurableStore for PostgresStore {
                 if row.get::<_, bool>(0) {
                     return Err(DurableError::ProgramInUse { task_id });
                 }
+                tx.execute("UPDATE durable_program_stats SET active_count = active_count - 1, active_bytes = active_bytes - $1 WHERE singleton = 1", &[&(program.source.len() as i64)])?;
                 tx.execute("DELETE FROM durable_programs WHERE task_id = $1", &[&&id[..]])?;
             }
             tx.commit()?;
@@ -469,7 +650,12 @@ impl DurableStore for PostgresStore {
 
     fn program_count(&self) -> Result<usize, DurableError> {
         self.with_client(|client| {
-            let count: i64 = client.query_one("SELECT COUNT(*) FROM durable_programs", &[])?.get(0);
+            let count: i64 = client
+                .query_one(
+                    "SELECT active_count FROM durable_program_stats WHERE singleton = 1",
+                    &[],
+                )?
+                .get(0);
             usize::try_from(count).map_err(|_| DurableError::ProgramLimit)
         })
     }
@@ -629,20 +815,24 @@ impl DurableStore for PostgresStore {
         let sequence = to_sql_integer(sequence, "sequence")?;
         let now_ms = to_sql_integer(now_ms, "now_ms")?;
         self.with_client(|client| {
+            let mut tx = client.transaction()?;
+            self.guard_execution(&mut tx, task_id)?;
             let changed = if let Some(owner) = lease_owner {
                 validate_lease_owner(owner)?;
-                client.execute(
+                tx.execute(
                     "DELETE FROM durable_wakeups WHERE task_id = $1 AND sequence = $2
                      AND lease_owner = $3 AND lease_until_ms > $4",
                     &[&&id[..], &sequence, &owner, &now_ms],
                 )?
             } else {
-                client.execute(
+                tx.execute(
                     "DELETE FROM durable_wakeups WHERE task_id = $1 AND sequence = $2
                      AND lease_owner IS NULL",
                     &[&&id[..], &sequence],
                 )?
             };
+            self.guard_execution(&mut tx, task_id)?;
+            tx.commit()?;
             Ok(changed == 1)
         })
     }
@@ -768,52 +958,7 @@ impl DurableStore for PostgresStore {
         payload: &Value,
         sent_at_ms: u64,
     ) -> Result<u64, DurableError> {
-        validate_signal_name(signal_name)?;
-        let payload = serde_json::to_string(payload)?;
-        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
-            return Err(DurableError::EventPayloadTooLarge);
-        }
-        let sent_at_ms = to_sql_integer(sent_at_ms, "sent_at_ms")?;
-        self.with_client(|client| {
-            let mut tx = client.transaction()?;
-            let id = lock_task(&mut tx, task_id)?;
-            let row = tx.query_one(
-                "SELECT COUNT(*), COALESCE(SUM(octet_length(signal_name) + octet_length(payload)), 0)
-                 FROM durable_signal_inbox WHERE task_id = $1",
-                &[&&id[..]],
-            )?;
-            let count: i64 = row.get(0);
-            let bytes: i64 = row.get(1);
-            let signal_bytes = signal_name.len().checked_add(payload.len()).ok_or(DurableError::SignalInboxLimit)?;
-            if count >= MAX_PENDING_SIGNALS as i64
-                || bytes
-                    .checked_add(i64::try_from(signal_bytes).map_err(|_| DurableError::SignalInboxLimit)?)
-                    .is_none_or(|value| value > MAX_HISTORY_BYTES as i64)
-            {
-                return Err(DurableError::SignalInboxLimit);
-            }
-            let signal_id: i64 = tx
-                .query_one(
-                    "INSERT INTO durable_signal_inbox (task_id, signal_name, payload, sent_at_ms)
-                     VALUES ($1, $2, $3, $4) RETURNING id",
-                    &[&&id[..], &signal_name, &payload, &sent_at_ms],
-                )?
-                .get(0);
-            if let Some(row) = tx.query_opt(
-                "SELECT sequence FROM durable_signal_waits WHERE task_id = $1 AND signal_name = $2",
-                &[&&id[..], &signal_name],
-            )? {
-                let sequence: i64 = row.get(0);
-                tx.execute(
-                    "INSERT INTO durable_wakeups
-                     (task_id, sequence, wake_at_ms, lease_owner, lease_until_ms)
-                     VALUES ($1, $2, $3, NULL, NULL) ON CONFLICT (task_id) DO NOTHING",
-                    &[&&id[..], &sequence, &sent_at_ms],
-                )?;
-            }
-            tx.commit()?;
-            from_sql_integer(signal_id, "signal_id")
-        })
+        self.send_signal_inner(task_id, signal_name, payload, sent_at_ms, None)
     }
 
     fn poll_signal(
@@ -828,6 +973,7 @@ impl DurableStore for PostgresStore {
         let now_sql = to_sql_integer(now_ms, "now_ms")?;
         self.with_client(|client| {
             let mut tx = client.transaction()?;
+            self.guard_execution(&mut tx, task_id)?;
             let id = lock_task(&mut tx, task_id)?;
             let actual: i64 = tx
                 .query_one(
@@ -870,7 +1016,8 @@ impl DurableStore for PostgresStore {
                 {
                     return Err(DurableError::SignalWaitConflict);
                 }
-                tx.commit()?;
+                self.guard_execution(&mut tx, task_id)?;
+            tx.commit()?;
                 return Ok(None);
             };
 
@@ -922,6 +1069,7 @@ impl DurableStore for PostgresStore {
                 "DELETE FROM durable_signal_waits WHERE task_id = $1 AND sequence = $2 AND signal_name = $3",
                 &[&&id[..], &sequence, &signal_name],
             )?;
+            self.guard_execution(&mut tx, task_id)?;
             tx.commit()?;
             stored_event(task_id, sequence, event, payload_json).map(Some)
         })

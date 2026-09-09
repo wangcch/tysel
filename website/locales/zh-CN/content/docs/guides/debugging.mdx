@@ -1,0 +1,96 @@
+---
+title: "调试"
+description: "本指南从 HTTP 错误信封追踪单个请求，定位开发源码信息和能力日志，然后用应用自行定义的生产响应替换不安全的运行时详情。"
+---
+
+本指南从 HTTP 错误信封追踪单个请求，定位开发源码信息和能力日志，然后用应用自行定义的生产响应替换不安全的运行时详情。
+
+## 在开发环境复现
+
+使用与故障部署相同的清单限额和权限运行服务：
+
+```sh
+tysel check
+tysel inspect
+tysel dev
+```
+
+`tysel dev` 会在打包 TypeScript 时生成源码映射，并用它解析处理程序故障。触发能够复现问题的最小请求，记录状态、响应错误码、固定宽度十六进制 `requestId`，以及匹配 JSON 日志中的 `rid`。
+
+未处理的抛出或被拒绝的处理程序会变为：
+
+```json
+{
+  "error": {
+    "code": "RUNTIME_ERROR",
+    "message": "...",
+    "requestId": "000000000000002a"
+  }
+}
+```
+
+响应 ID 使用十六进制，结构化日志的 `rid` 使用十进制。转换进制后，两者标识同一个进程本地请求。它们会在进程重启后重置，并非分布式追踪 ID。
+
+## 先判断边界
+
+| HTTP 状态与错误码 | 边界 | 首要处理 |
+| --- | --- | --- |
+| `413 BODY_TOO_LARGE` | 请求超过 `max_request_mb` | 在调用方拒绝或分块；只有明确测得的载荷需求才提高限额。 |
+| `500 RESPONSE_TOO_LARGE` | 缓冲响应超过 `max_response_mb` | 分页、在边界内流式传输，或减少输出。 |
+| `503 OVERLOADED` | `max_in_flight` 准入没有可用许可 | 对幂等工作退避，并检查服务时间和容量。 |
+| `500 RUNTIME_ERROR` | 处理程序、运行时、超时或能力失败 | 将请求与日志关联，并在相同权限下复现。 |
+| 正文最小化的 `500 INTERNAL_ERROR` | 错误信封序列化回退 | 保留宿主诊断，并按运行时故障处理。 |
+
+返回的 `Response` 由应用控制。只有未捕获的失败才使用运行时信封。能力日志会标识有边界的能力、操作，以及 `ok`、`denied` 或 `error` 结果，但不会公开 SQL、路径、URL 或密钥。
+
+## 理解源码映射范围
+
+源码映射在打包期间生成并嵌入应用程序包。目前开发服务器会解析映射并将其应用于 HTTP 故障。打包后的服务运行时尚未将嵌入映射接入 HTTP 分派器，因此生产环境的 `RUNTIME_ERROR` 可能包含生成的打包位置，而非原始 TypeScript 位置。
+
+每次部署都应保留确切的源码修订、锁文件、清单、可执行文件摘要和发布伴随文件。使用该修订在 `tysel dev` 下复现相同请求；不要依赖向客户端返回生产堆栈文本作为调试通道。
+
+Component 任务没有 HTTP 信封。成功时向 stdout 写入一个 JSON 值；ABI、策略、来宾、资源和输出验证失败写入 stderr，并以非零状态退出。来宾 WIT 错误文本是有长度限制、供人阅读的诊断，并非稳定错误码。
+
+## 在应用中映射预期错误
+
+应在应用可以选择安全状态和消息的最窄边界捕获失败。以下示例中，`route` 是应用现有路由器，记录的类别经过有意限制：
+
+```ts
+import type { TyselApp } from "@tysel/types";
+
+function safeCategory(error: unknown): "type" | "unexpected" {
+  return error instanceof TypeError ? "type" : "unexpected";
+}
+
+export default {
+  async fetch(request) {
+    try {
+      return await route(request);
+    } catch (error) {
+      console.error("request failed", safeCategory(error));
+      return Response.json(
+        { error: { code: "DEPENDENCY_UNAVAILABLE", message: "Try again later" } },
+        { status: 503 },
+      );
+    }
+  },
+} satisfies TyselApp;
+```
+
+`safeCategory` 必须保持有界；不要记录请求正文、Authorization 请求头、密钥值、连接 URL、SQL 或原始提供商响应。应将验证、未找到、冲突、拒绝和依赖失败映射为明确的应用错误码。开发期间让真正意外的故障保持未捕获，使其清晰可见。
+
+## 比较项目与打包后的行为
+
+关闭事件前，应测试两条执行路径：
+
+```sh
+tysel test --json
+tysel build --release --output dist/app
+./dist/app
+```
+
+项目命令从清单目录解析相对能力根目录；打包后的可执行文件从进程工作目录解析。`.env` 参与本地开发，但不会被打包。工作目录、注入密钥、Postgres URL、OTLP 配置、代理行为或操作系统权限的差异，通常可以解释“开发环境正常”的生产故障。
+
+CLI 和编辑器自动化应使用 `tysel --error-format json dev`。构建和运行时诊断更新以换行分隔的 JSON 写入 stderr；成功重新加载会发布空诊断数组，以清除过期错误。致命准备错误仍是一个 `TYSEL_CLI_ERROR` 对象，并以 `1` 退出。命令报告写入 stdout，因此应分别解析两个流。
+
+请参阅[错误与机器可读输出](/reference/errors-and-output)、[并发与背压](/docs/guides/concurrency-backpressure)和[生产事件响应](/docs/operations/production#incident-response)。

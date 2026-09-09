@@ -1,0 +1,104 @@
+---
+title: "持久 API"
+description: "持久处理程序记录副作用结果，使中断的工作可以回放已记录的边界。"
+---
+
+持久处理程序记录副作用结果，使中断的工作可以回放已记录的边界。
+
+外部提交若尚未记录结果，重新进入回调时仍需提供方幂等机制或结果核对。
+
+```ts
+interface DurableContext {
+  step<T>(name: string, operation: () => MaybePromise<T>): Promise<T>;
+  effect<T>(name: string, operation: () => MaybePromise<T>): Promise<T>;
+  sleep(duration: number | string): Promise<void>;
+  waitForSignal<T = JsonValue>(name: string): Promise<T>;
+  retry<T>(policy: DurableRetryPolicy,
+    operation: (attempt: number) => MaybePromise<T>): Promise<T>;
+  now(): Date;
+  random(): number;
+}
+```
+
+## 边界
+
+| 方法 | 记录的约定 |
+| --- | --- |
+| `step` | 持久化可回放的计算结果。 |
+| `effect` | 持久化外部副作用的结果。 |
+| `sleep` | 按数字或字符串时长持久化暂停状态。 |
+| `waitForSignal` | 暂停，直至收到具名 JSON 信号。 |
+| `retry` | 根据重试策略记录每次有界尝试。 |
+| `now` | 返回回放安全的 `Date`。 |
+| `random` | 返回回放安全的随机值。 |
+
+传给 `step` 和 `effect` 的名称以及信号名称都属于持久化历史。应保持这些名称稳定，并按顺序 `await` 持久边界。输入、边界结果、信号和处理程序结果都必须可序列化为 JSON。
+
+## 重试策略
+
+```ts
+interface DurableRetryPolicy {
+  maxAttempts?: number;
+  delay?: number | string;
+  factor?: number;
+  maxDelay?: number | string;
+}
+```
+
+数字形式的 `delay` 和 `maxDelay` 以毫秒为单位；两者也接受运行时的时长字符串格式。`factor` 控制退避增长系数。
+
+## 处理程序示例
+
+```ts
+import type { DurableContext, TyselApp } from "@tysel/types";
+
+const app: TyselApp = {
+  durable: {
+    async provision(ctx: DurableContext, input) {
+      const id = await ctx.step("allocate-id", () => ({ value: cryptoValue() }));
+      await ctx.effect("notify", () => notifyOwner(id));
+      const approval = await ctx.waitForSignal("approval");
+      return { id, approval };
+    },
+  },
+};
+
+export default app;
+```
+
+示例中的应用函数如果其结果没有被记录边界包裹，就必须自身具备确定性。
+
+## 控制 API
+
+```ts
+const status = tysel.durable.start("provision", input, {
+  idempotencyKey: "tenant-42:provision:request-123",
+});
+tysel.durable.sendSignal(status.taskId, "approval", { approved: true }, {
+  idempotencyKey: "approval-decision-456",
+});
+```
+
+`start` 在执行处理程序前，原子持久化任务、不可变输入和重启恢复资格。它返回 `completed`、`suspended`，或在其他执行拥有任务、任务已排队或等待时返回 `accepted`。`accepted` 不是暂停确认，也不是终态结果。
+
+可选启动键的作用域是整个持久存储，应按租户与操作划分命名空间。使用相同的完整 bundle 源码、导出名称及规范化 JSON 输入重试同一键，会返回同一任务 ID，不创建替代任务。任一项变化都会导致同键冲突，即使目标处理程序本身没有变化。因此，跨版本部署的 outbox 准入重试需要原始 bundle；更换键会创建新任务，不能修复原始准入。失败任务的同键重试会明确报错。不提供键时，每次调用都是新准入；确认丢失后不能通过再次启动来安全修复。
+
+信号键以任务为作用域，回执与收件箱写入属于同一事务。即使信号已消费或任务已完成，重复相同名称、载荷和键也会确认成功，不追加信号；冲突复用会被拒绝。无键信号保持 FIFO，每次调用都会入队新信号。已完成任务拒绝新信号。每任务最多保留 10,000 条带键信号回执，与待处理收件箱限制独立。
+
+使用独立数据库的应用应在自身事务中持久化 outbox 意图与稳定键，交付不确定时重试完全相同的请求，收到确认后标记已交付。这是可修复协议，**不是应用与运行时数据库之间的跨库事务**。Tysel 不负责运行或清空应用 outbox。准入与信号去重持续到显式 `prune` 删除已完成任务；任务保留期应长于应用重试窗口，清理后不要复用键。
+
+## 活跃任务崩溃恢复
+
+服务调度器独立于唤醒记录持久化执行租约。进程死亡后，符合条件的任务会在租约到期后被重新认领，并使用原始源码与历史恢复。已记录的 effect 返回记录结果；尚未记录结果就中断的 effect 会重新进入。再次写入前，应使用相同的提供方操作键或核对已有结果。
+
+执行代次和唯一所有者令牌会拒绝过期执行者的历史、暂停及完成写入，但无法阻止外部提供方已在处理的请求。租约为请求超时加调度余量，因此恢复不是即时的。待完成结果的写入重试也受租约约束：过期句柄会被丢弃且不停止服务，原始托管任务重新获得正常的受租约保护的恢复资格。
+
+持久边界上的存储失败会使当前执行失效，即使处理程序捕获 JavaScript 异常也如此。运行时会保留存储错误与重启资格，不会提交回退结果。存储恢复且租约到期后会回放原始历史。普通处理程序异常、任务边界校验或限额错误只使该任务失败，不停止调度器。失去执行权限会放弃过期尝试，不停止其他任务。
+
+完成会释放活跃配额，同时保留程序、历史和回执。具有持久唤醒记录的旧 v1/v2 任务可在恢复时进入托管生命周期。既无唤醒记录也无执行记录的旧孤儿任务不会被猜测为可运行；再次发起外部写入前应调查。低层调用者持有的 Rust session 和内存注册表仍使用调用者管理的生命周期。
+
+使用 [`tysel durable result` 与 `tysel durable prune`](/reference/cli/tasks#tysel-durable) 读取保留结果或移除一批旧数据。不能因缺少唤醒记录就推断失败或旧任务已完成。
+
+持久输入和结果上限为 1 MiB，其他历史、信号及程序限制见[限制与默认值](/reference/limits-and-defaults)。
+
+更改仍有运行中实例的处理程序前，请阅读[持久执行](/docs/concepts/durable-execution)。

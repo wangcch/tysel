@@ -1,0 +1,104 @@
+---
+title: "Cron 与 Queue"
+description: "本指南注册一个 UTC 调度和一个具名 Queue 消费者，从 CLI 调用 Queue 路径，并在不引入第二种应用协议的情况下验证调度器。"
+---
+
+本指南注册一个 UTC 调度和一个具名 Queue 消费者，从 CLI 调用 Queue 路径，并在不引入第二种应用协议的情况下验证调度器。
+
+## 定义两个处理程序
+
+```ts
+import type { TyselApp } from "@tysel/types";
+
+interface Job {
+  id: string;
+  action: string;
+}
+
+export default {
+  async fetch() {
+    return Response.json({ queues: ["jobs"], cron: ["heartbeat"] });
+  },
+  tasks: {
+    heartbeat: {
+      kind: "cron",
+      expression: "*/5 * * * *",
+      async handler(context) {
+        console.log(JSON.stringify({
+          event: "heartbeat",
+          requestId: context.requestId,
+          deadlineMs: context.deadlineMs,
+        }));
+      },
+    },
+    processJob: {
+      kind: "queue",
+      name: "jobs",
+      async handler(message: Job, context) {
+        return {
+          accepted: true,
+          jobId: message.id,
+          action: message.action,
+          requestId: context.requestId,
+        };
+      },
+    },
+  },
+} satisfies TyselApp;
+```
+
+这个小型 HTTP 处理程序使模块在服务自有调度器运行时仍可通过 `tysel run` 启动；Queue 和 Cron 工作仍从任务平面进入，而不是通过该路由。
+
+导出键 `processJob` 是处理程序名称。`name: "jobs"` 是传给 `tysel queue` 的 Queue 地址。同一应用中，每个 Queue 名称只能注册一个消费者。
+
+## 验证并调用 Queue
+
+使用完整的[任务工作进程示例](https://github.com/wangcch/tysel/tree/main/examples/task-worker)：
+
+```sh
+cd examples/task-worker
+tysel check
+tysel queue jobs \
+  --input '{"id":"job_123","action":"reindex"}' \
+  --message-id msg_123
+```
+
+命令会打印 JSON 结果；输入格式错误、Queue 未知、超过截止时间或处理程序失败时以非零状态退出。消息和结果必须可序列化为 JSON，且各自限制为 1 MiB。
+
+`--message-id` 会成为任务幂等键。只有生产者表达同一条逻辑消息时才应复用它。处理程序副作用仍需由应用保证幂等；幂等键无法将任意外部写入变为恰好一次操作。
+
+## 运行调度器
+
+```sh
+tysel run
+```
+
+Cron 表达式包含五个字段，并按 UTC 计算：
+
+```text
+minute hour day-of-month month day-of-week
+```
+
+支持数字列表、范围和步长，不支持月份和星期名称。`0` 和 `7` 都表示星期日。日期和星期字段都受限制时，使用传统 Cron 的 OR 语义。
+
+快速验证时，可暂时把示例表达式改为 `* * * * *`，在下一个整分钟前启动服务，并观察 `heartbeat` 日志和运行时的 `cron task queued` 事件。随后恢复实际生产调度。
+
+本地调度器每秒轮询一次，每个 UTC 分钟对同一处理程序去重，最多补偿执行过去 24 小时的任务。有界 broker 已满时，它会保留游标，并随着容量恢复逐步准入到期工作。
+
+## 截止时间与故障
+
+Queue 和 Cron 任务使用 `limits.request_timeout_ms`。`context.deadlineMs` 是绝对 Unix 毫秒截止时间。开始可选的上游调用前应检查该值，并为每个依赖设置更短的超时。
+
+任务处理程序在有边界的任务工作进程路径上运行。进程重启不会使普通 Queue 或 Cron 处理程序具备持久性。需要持久化、回放、信号或恢复步骤时，请使用[持久 API](/reference/runtime/durable)。
+
+## 生产检查清单
+
+- 运维调度明确使用 UTC；
+- Queue 和 Cron 副作用具备幂等性；
+- 重试身份有意义时，由生产者提供稳定消息 ID；
+- 对处理程序失败、截止时间到期和到期工作延迟发出告警；
+- 不依赖超过 24 小时的本地 Cron 补偿执行；
+- 消息必须经受宿主丢失时，使用外部持久生产者；
+- 任务输入和输出保持在文档规定的协议限额内。
+
+请参阅[应用任务类型](/reference/runtime/application)、[`tysel queue`](/reference/cli/tasks#tysel-queue)和[任务限额](/reference/limits-and-defaults#application-task-and-mcp-bounds)。

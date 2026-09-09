@@ -45,6 +45,7 @@ name = "tysel-service"
 path = "src/bin/tysel-service.rs"
 
 [dev-dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
 wat = "1"
 http-body-util.workspace = true
 hyper.workspace = true

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tysel_engine::{HttpHead, HttpRequest, IsolateConfig, Value};
 use tysel_engine_qjs::ModuleTaskDefinition;
@@ -15,6 +17,7 @@ fn spec_from_config(config: IsolateConfig) -> WorkerSpec {
 /// Fetch-handler pool that runs QuickJS in `tysel-worker`. The supervisor keeps
 /// the HTTP listener and secret values; the worker only sees secret names.
 pub struct IsolatedHttpPool {
+    request_timeout: Duration,
     inner: Mutex<Supervisor>,
 }
 
@@ -70,9 +73,10 @@ impl IsolatedHttpPool {
             .cloned()
             .map(|name| (name, String::new()))
             .collect::<HashMap<_, _>>();
+        let request_timeout = Duration::from_millis(spec.request_timeout_ms.max(1));
         let mut supervisor = Supervisor::spawn(worker_bin, spec, secrets)?;
         supervisor.load_handler(source, secret_names)?;
-        Ok(Self { inner: Mutex::new(supervisor) })
+        Ok(Self { inner: Mutex::new(supervisor), request_timeout })
     }
 
     pub fn spawn_from_config(
@@ -84,7 +88,39 @@ impl IsolatedHttpPool {
         Self::spawn(worker_bin, source, spec_from_config(config), secret_names)
     }
 
+    pub fn request_timeout(&self) -> Duration {
+        self.request_timeout
+    }
+
+    pub fn dispatch_sync_until(
+        &self,
+        request: HttpRequest,
+        deadline: Instant,
+    ) -> Result<(HttpHead, Vec<u8>), IsolateError> {
+        self.inner
+            .lock()
+            .map_err(|err| IsolateError::Worker(err.to_string()))?
+            .http_until(&request, deadline)
+    }
+
+    pub fn dispatch_sync_cancellable(
+        &self,
+        request: HttpRequest,
+        deadline: Instant,
+        cancelled: &Arc<AtomicBool>,
+    ) -> Result<(HttpHead, Vec<u8>), IsolateError> {
+        let mut supervisor =
+            self.inner.lock().map_err(|err| IsolateError::Worker(err.to_string()))?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(tysel_engine::EngineError::Interrupted(
+                tysel_engine::InterruptReason::Cancelled,
+            )
+            .into());
+        }
+        supervisor.http_cancellable(&request, deadline, Some(cancelled.clone()))
+    }
+
     pub fn dispatch_sync(&self, request: HttpRequest) -> Result<(HttpHead, Vec<u8>), IsolateError> {
-        self.inner.lock().map_err(|err| IsolateError::Worker(err.to_string()))?.http(&request)
+        self.dispatch_sync_until(request, Instant::now() + self.request_timeout)
     }
 }

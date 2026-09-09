@@ -1,0 +1,60 @@
+---
+title: "Tysel 的工作原理"
+description: "Tysel 将 TypeScript 应用转换为自包含的原生可执行文件。"
+---
+
+Tysel 将 TypeScript 应用转换为自包含的原生可执行文件。该可执行文件包含应用程序包、经过验证的清单、源码映射、兼容性元数据，以及执行应用所需的原生运行时。
+
+## 从源码到可执行文件
+
+```text
+TypeScript source
+      │
+      ├─ type and compatibility checks
+      ├─ JavaScript bundle + source map
+      └─ validated tysel.toml or tysel.json
+                    │
+                    ▼
+          Tysel application package
+                    │
+                    ▼
+        native runtime + embedded package
+                    │
+                    ▼
+             one executable
+```
+
+`tysel build` 在当前宿主上完成打包。生成的文件在运行时不需要 Node.js、V8、npm 或 `node_modules`。这是经过验证的跨目标打包，并非原生运行时的交叉编译：当 `--target` 与宿主不同时，Tysel 会验证同版本的官方目标运行时，并将应用程序包嵌入该运行时存根。
+
+## 运行时的职责
+
+应用 JavaScript 在 QuickJS 隔离实例中执行。原生宿主管理网络套接字、存储连接、密钥、文件系统句柄、限额和持久调度。JavaScript 只能通过运行时 API 和应用清单中的授权访问这些资源。
+
+这种分工为 Tysel 建立了范围明确的应用约定：
+
+- 应用代码使用 Web 标准 API 和 `globalThis.tysel`；
+- 清单声明所需权限和资源限额；
+- 宿主验证并强制实施该约定；
+- 执行配置决定最终的信任边界。
+
+最终生效的权限是应用清单、部署策略、执行配置和运行时支持范围的交集。声明权限不会突破所选执行配置允许的范围。
+
+CLI 命令会从当前目录开始向上查找最近的清单，并以该项目根目录执行。TOML 和 JSON 共用一套带版本的 schema；`package.json` 是可选的。请参阅[项目与配置](/docs/concepts/projects-and-configuration)。
+
+## 请求与任务生命周期
+
+HTTP 应用导出 Fetch 风格的处理程序。Cron、Queue 和 MCP 处理程序使用相同的有边界执行环境。每次调用都有截止时间，并受已配置的内存、CPU 轮次、并发数、请求和响应限额约束。
+
+持久处理程序还会保存事件历史。持久边界会先记录结果，再继续执行，使运行时能够在任务休眠或等待信号时释放 JavaScript 隔离实例。进程重启后，已完成的边界从历史中回放，不会再次执行。
+
+## 开发与交付
+
+开发工具链包含三个协作工具：
+
+- `tysel`：提供项目、测试、构建、诊断和发布命令；
+- `tysel-service`：服务运行时和应用构建存根；
+- `tysel-worker`：隔离应用使用的受限工作进程。
+
+这些属于工具链实现细节。`tysel build` 会把选定的应用和运行时嵌入一个可交付的可执行文件中。
+
+接下来可以选择[执行配置](/docs/concepts/execution-profiles)、查看[清单](/reference/manifest)，或构建[第一个服务](/docs/getting-started)。

@@ -1,5 +1,6 @@
 "use client";
 
+import { T, SourceText } from "@/components/locale-provider";
 import { useEffect, useState } from "react";
 
 const steps = [
@@ -66,7 +67,7 @@ export function FiveMinutes() {
             >
               <span className="font-mono text-xs text-tysel-blue">{item.n}</span>
               <span>
-                <span className="block text-sm font-medium">{item.title}</span>
+                <span className="block text-sm font-medium"><SourceText text={item.title} /></span>
                 <span className="mt-1 block font-mono text-xs text-fd-muted-foreground">
                   $ {item.command}
                 </span>
@@ -86,11 +87,10 @@ export function FiveMinutes() {
           key={`${step.n}-copy`}
           className="home-code-fade mt-4 text-sm leading-6 text-white/70"
         >
-          {step.copy}
+          <SourceText text={step.copy} />
         </p>
         <p className="mt-6 text-xs text-white/40">
-          Node.js is optional for editor declarations. The packaged application
-          does not need it. {paused ? "Paused." : "Hover to pause."}
+          <T id="ui.node.js.is.optional.for.editor.declarations.the" /> <SourceText text={paused ? "Paused." : "Hover to pause."} />
         </p>
       </div>
     </div>

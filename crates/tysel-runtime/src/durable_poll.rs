@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 use tokio::task::JoinSet;
 use tysel_durable::{
     DurableError, DurableProgramKind, DurableStore, MAX_DURABLE_PROGRAM_BYTES,
@@ -145,9 +145,10 @@ impl DurableProgramCatalog {
         &self,
         now_ms: u64,
         kind: DurableProgramKind,
+        limit: usize,
     ) -> Result<Vec<(TaskId, Arc<str>)>, ProgramRegistryError> {
         self.store
-            .load_due_programs_by_kind(now_ms, kind)?
+            .load_due_programs_batch(now_ms, kind, limit)?
             .into_iter()
             .map(|program| Ok((program.task_id, Arc::from(program.source))))
             .collect()
@@ -179,13 +180,14 @@ impl ProgramSource {
     async fn snapshot(
         &self,
         execution: ProgramExecution,
+        limit: usize,
     ) -> Result<Vec<(TaskId, Arc<str>)>, PollerError> {
         match self {
             Self::Memory(registry) => Ok(registry.snapshot()?),
             Self::Persistent(catalog) => {
                 let catalog = catalog.clone();
                 tokio::task::spawn_blocking(move || {
-                    catalog.due_snapshot(unix_time_ms()?, execution.kind())
+                    catalog.due_snapshot(unix_time_ms()?, execution.kind(), limit)
                 })
                 .await
                 .map_err(PollerError::Join)?
@@ -201,6 +203,7 @@ pub struct DurablePoller {
     interval: Duration,
     batch_size: usize,
     cursor: AtomicUsize,
+    wakeup: Arc<Notify>,
     execution: ProgramExecution,
 }
 
@@ -272,8 +275,14 @@ impl DurablePoller {
             interval,
             batch_size,
             cursor: AtomicUsize::new(0),
+            wakeup: Arc::new(Notify::new()),
             execution,
         })
+    }
+
+    // Notifications are coalesced hints. Persistent scans remain authoritative.
+    pub(crate) fn wakeup(&self) -> Arc<Notify> {
+        self.wakeup.clone()
     }
 
     pub async fn poll_once(&self) -> Result<Vec<DurableRun>, PollerError> {
@@ -289,8 +298,24 @@ impl DurablePoller {
         F: FnMut(),
     {
         let dispatcher = self.dispatcher.clone();
+        let completed = if dispatcher.has_pending_completions() {
+            let finalize_dispatcher = dispatcher.clone();
+            let (runs, error) =
+                tokio::task::spawn_blocking(move || finalize_dispatcher.retry_completions())
+                    .await
+                    .map_err(PollerError::Join)?;
+            if let Some(error) = error {
+                return Err(PollerError::Dispatch(error).with_runs(runs));
+            }
+            runs
+        } else {
+            Vec::new()
+        };
         let execution = self.execution;
-        let mut programs = self.programs.snapshot(execution).await?;
+        let mut programs = match self.programs.snapshot(execution, self.batch_size).await {
+            Ok(programs) => programs,
+            Err(error) => return Err(error.with_runs(completed)),
+        };
         let batch_size = self.batch_size;
         if !programs.is_empty() {
             let start = self.cursor.fetch_add(batch_size, Ordering::Relaxed) % programs.len();
@@ -298,10 +323,12 @@ impl DurablePoller {
         }
         let mut programs = programs.into_iter();
         let mut pending = JoinSet::new();
-        let mut runs = Vec::with_capacity(batch_size.min(programs.len()));
+        let mut runs = completed;
+        let mut failure = None;
         loop {
             let cancelled = shutdown.is_some_and(PollerShutdown::is_cancelled);
             while !cancelled
+                && failure.is_none()
                 && pending.len() < MAX_POLL_CONCURRENCY
                 && runs.len() + pending.len() < batch_size
             {
@@ -319,11 +346,31 @@ impl DurablePoller {
             let Some(joined) = pending.join_next().await else {
                 break;
             };
-            if let Some(run) = joined.map_err(PollerError::Join)?.map_err(PollerError::Dispatch)? {
-                runs.push(run);
+            match joined
+                .map_err(PollerError::Join)
+                .and_then(|result| result.map_err(PollerError::Dispatch))
+            {
+                Ok(Some(run)) => {
+                    if let Err(crate::DurableRunError::Store(error)) = run.result {
+                        if failure.is_none() {
+                            failure = Some(PollerError::Dispatch(DispatchError::Store(error)));
+                        }
+                    } else {
+                        runs.push(run);
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    if failure.is_none() {
+                        failure = Some(error);
+                    }
+                }
             }
         }
-        Ok(runs)
+        match failure {
+            Some(error) => Err(error.with_runs(runs)),
+            None => Ok(runs),
+        }
     }
 
     /// Poll immediately, then at `interval` until shutdown. An in-flight batch
@@ -333,6 +380,62 @@ impl DurablePoller {
         F: FnMut(DurableRun) + Send,
     {
         self.run_inner(shutdown, &mut on_run, &mut || {}).await
+    }
+
+    pub async fn run_supervised<F, G>(
+        &self,
+        shutdown: PollerShutdown,
+        mut on_run: F,
+        mut on_health: G,
+    ) -> Result<(), PollerError>
+    where
+        F: FnMut(DurableRun) + Send,
+        G: FnMut(PollerHealth) + Send,
+    {
+        let mut attempt = 0u32;
+        loop {
+            if shutdown.is_cancelled() {
+                return Ok(());
+            }
+            let batch = self
+                .poll_batch(Some(&shutdown), &mut || {})
+                .await
+                .map_err(|error| error.deliver_runs(&mut on_run));
+            let delay = match batch {
+                Ok(runs) => {
+                    if attempt > 0 {
+                        on_health(PollerHealth::Healthy);
+                    }
+                    attempt = 0;
+                    for run in runs {
+                        on_run(run);
+                    }
+                    self.interval
+                }
+                Err(error) if error.is_retryable() => {
+                    attempt = attempt.saturating_add(1);
+                    on_health(PollerHealth::Recovering { attempt });
+                    let base_ms =
+                        200u64.saturating_mul(1 << attempt.saturating_sub(1).min(5)).min(5_000);
+                    let jitter = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .subsec_nanos() as u64
+                        % (base_ms / 4 + 1);
+                    Duration::from_millis(base_ms + jitter)
+                }
+                Err(error) => {
+                    on_health(PollerHealth::Failed);
+                    return Err(error);
+                }
+            };
+            tokio::select! {
+                () = shutdown.cancelled() => return Ok(()),
+                () = tokio::time::sleep(delay) => {},
+                // Do not let producers bypass storage-error backoff.
+                () = self.wakeup.notified(), if attempt == 0 => {}
+            }
+        }
     }
 
     async fn run_inner<F, G>(
@@ -349,15 +452,27 @@ impl DurablePoller {
             if shutdown.is_cancelled() {
                 return Ok(());
             }
-            for run in self.poll_batch(Some(&shutdown), on_dispatch).await? {
+            for run in self
+                .poll_batch(Some(&shutdown), on_dispatch)
+                .await
+                .map_err(|error| error.deliver_runs(on_run))?
+            {
                 on_run(run);
             }
             tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
-                () = tokio::time::sleep(self.interval) => {}
+                () = tokio::time::sleep(self.interval) => {},
+                () = self.wakeup.notified() => {}
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PollerHealth {
+    Healthy,
+    Recovering { attempt: u32 },
+    Failed,
 }
 
 #[derive(Clone)]
@@ -423,6 +538,14 @@ fn unix_time_ms() -> Result<u64, ProgramRegistryError> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PollerError {
+    /// A failed batch can still contain completed or suspended runs. Callers of
+    /// poll_once must consume these outcomes; supervised loops deliver them automatically.
+    #[error("{source}")]
+    PartialBatch {
+        runs: Vec<DurableRun>,
+        #[source]
+        source: Box<PollerError>,
+    },
     #[error("durable poll interval must be greater than zero")]
     InvalidInterval,
     #[error("durable poll batch must be 1..={MAX_POLL_BATCH}")]
@@ -433,6 +556,33 @@ pub enum PollerError {
     Dispatch(#[from] DispatchError),
     #[error("durable polling worker failed: {0}")]
     Join(tokio::task::JoinError),
+}
+
+impl PollerError {
+    fn with_runs(self, runs: Vec<DurableRun>) -> Self {
+        if runs.is_empty() { self } else { Self::PartialBatch { runs, source: Box::new(self) } }
+    }
+
+    fn deliver_runs(self, on_run: &mut impl FnMut(DurableRun)) -> Self {
+        match self {
+            Self::PartialBatch { runs, source } => {
+                for run in runs {
+                    on_run(run);
+                }
+                source.deliver_runs(on_run)
+            }
+            error => error,
+        }
+    }
+
+    fn is_retryable(&self) -> bool {
+        match self {
+            Self::PartialBatch { source, .. } => source.is_retryable(),
+            Self::Registry(ProgramRegistryError::Store(error))
+            | Self::Dispatch(DispatchError::Store(error)) => error.is_retryable(),
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -500,6 +650,61 @@ mod tests {
                 now,
             )
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn partial_batch_and_later_catalog_failure_preserve_completed_runs() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-partial-batch-{}-{}.db",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let store = Arc::new(SqliteStore::open(&path).unwrap());
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        for (id, value) in [(TaskId(991), "a"), (TaskId(992), "b")] {
+            store
+                .put_program(
+                    id,
+                    &format!(
+                        "(async () => {{ await tysel.durable.sleep(1); return '{value}'; }})()"
+                    ),
+                    0,
+                )
+                .unwrap();
+            seed_due_sleep(&store, id);
+        }
+        connection
+            .execute_batch(
+                r#"CREATE TRIGGER fail_b BEFORE INSERT ON durable_completions
+            WHEN NEW.result_json = '"b"' BEGIN SELECT json('malformed'); END;"#,
+            )
+            .unwrap();
+        let dispatcher = dispatcher(store.clone(), "partial");
+        let poller =
+            DurablePoller::new_persistent(dispatcher.clone(), Duration::from_millis(10), 8)
+                .unwrap();
+        let error = poller.poll_once().await.unwrap_err();
+        let mut delivered = Vec::new();
+        assert!(error.deliver_runs(&mut |run| delivered.push(run.task_id)).is_retryable());
+        assert_eq!(delivered, vec![TaskId(991)]);
+        assert!(store.completion(TaskId(991)).unwrap().is_some());
+        assert!(store.completion(TaskId(992)).unwrap().is_none());
+        connection.execute_batch("DROP TRIGGER fail_b").unwrap();
+        // The retry succeeds, but discovery of a different due program fails.
+        // The retry's result must remain available in the error, exactly once.
+        store.put_program(TaskId(993), "42", 0).unwrap();
+        seed_due_sleep(&store, TaskId(993));
+        connection.execute_batch("UPDATE durable_programs SET source = 'bad hash' WHERE task_id = X'000000000000000000000000000003e1'").unwrap();
+        let error = poller.poll_once().await.unwrap_err();
+        assert!(!error.deliver_runs(&mut |run| delivered.push(run.task_id)).is_retryable());
+        assert_eq!(delivered, vec![TaskId(991), TaskId(992)]);
+        assert!(!dispatcher.has_pending_completions());
+        assert!(store.completion(TaskId(992)).unwrap().is_some());
+        drop(connection);
+        drop(poller);
+        drop(dispatcher);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -709,6 +914,102 @@ mod tests {
         let run = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
         assert_eq!(run.task_id, id);
         tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn notification_does_not_bypass_storage_error_backoff() {
+        let path = std::env::temp_dir().join(format!(
+            "tysel-notify-backoff-{}-{}.db",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let store = Arc::new(SqliteStore::open(&path).unwrap());
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("ALTER TABLE durable_programs RENAME TO unavailable_programs").unwrap();
+        let poller = DurablePoller::new_persistent_modules(
+            dispatcher(store, "notify-backoff"),
+            Duration::from_millis(1),
+            8,
+        )
+        .unwrap();
+        let wakeup = poller.wakeup();
+        let stop = PollerShutdown::default();
+        let shutdown = stop.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            poller
+                .run_supervised(
+                    shutdown,
+                    |_| {},
+                    |health| {
+                        tx.send(health).unwrap();
+                    },
+                )
+                .await
+        });
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap(),
+            Some(PollerHealth::Recovering { attempt: 1 })
+        );
+        for _ in 0..100 {
+            wakeup.notify_one();
+        }
+        let early = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await;
+        stop.cancel();
+        task.await.unwrap().unwrap();
+        assert!(early.is_err(), "notification bypassed the minimum 200 ms storage backoff");
+        drop(db);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn committed_signal_notification_interrupts_long_poll_interval() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let dispatcher = dispatcher(store.clone(), "notify");
+        let programs = DurableProgramRegistry::default();
+        for id in [TaskId(801), TaskId(802)] {
+            store.put_program(id, WAIT_SCRIPT, unix_time_ms()).unwrap();
+            assert!(matches!(
+                dispatcher.start(id, WAIT_SCRIPT).result,
+                Ok(crate::DurableRunStatus::Suspended)
+            ));
+            programs.register(id, WAIT_SCRIPT).unwrap();
+        }
+        store
+            .send_signal(TaskId(801), "approval", &serde_json::json!(true), unix_time_ms())
+            .unwrap();
+        let poller = DurablePoller::new(dispatcher, programs, Duration::from_secs(60), 8).unwrap();
+        let wakeup = poller.wakeup();
+        let stop = PollerShutdown::default();
+        let shutdown = stop.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            poller
+                .run_supervised(
+                    shutdown,
+                    |run| {
+                        tx.send(run.task_id).unwrap();
+                    },
+                    |_| {},
+                )
+                .await
+        });
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap(),
+            Some(TaskId(801))
+        );
+        store
+            .send_signal(TaskId(802), "approval", &serde_json::json!(true), unix_time_ms())
+            .unwrap();
+        // notify_one retains a permit even if the loop has not entered select yet.
+        for _ in 0..100 {
+            wakeup.notify_one();
+        }
+        let received = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await;
+        stop.cancel();
+        task.await.unwrap().unwrap();
+        assert_eq!(received.unwrap(), Some(TaskId(802)));
+        assert!(store.completion(TaskId(802)).unwrap().is_some());
     }
 
     #[tokio::test]

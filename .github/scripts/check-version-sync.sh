@@ -75,12 +75,12 @@ runtime_constant="$(extract_quoted_version runtime-js/bootstrap/index.ts \
   '.*runtimeJsVersion = "([0-9]+\.[0-9]+\.[0-9]+)";.*')"
 web_api_constant="$(extract_quoted_version runtime-js/web-api/index.ts \
   '.*webApiVersion = "([0-9]+\.[0-9]+\.[0-9]+)";.*')"
-website_version="$(extract_quoted_version 'website/app/(home)/page.tsx' \
+website_version="$(extract_quoted_version 'website/components/home/home-page.tsx' \
   '.*softwareVersion: "([0-9]+\.[0-9]+\.[0-9]+)",.*')"
 for version_entry in \
   "runtime-js/bootstrap/index.ts:${runtime_constant}" \
   "runtime-js/web-api/index.ts:${web_api_constant}" \
-  "website/app/(home)/page.tsx:${website_version}"; do
+  "website/components/home/home-page.tsx:${website_version}"; do
   version_file="${version_entry%%:*}"
   declared_version="${version_entry#*:}"
   if [[ "$declared_version" != "$version" ]]; then

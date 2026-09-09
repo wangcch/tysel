@@ -5,6 +5,14 @@ use anyhow::{Context, Result, anyhow};
 use tysel_manifest::Manifest;
 
 pub fn run(manifest_path: &Path) -> Result<()> {
+    run_with_options(manifest_path, false)
+}
+
+pub(crate) fn run_requiring_types(manifest_path: &Path) -> Result<()> {
+    run_with_options(manifest_path, true)
+}
+
+fn run_with_options(manifest_path: &Path, require_types: bool) -> Result<()> {
     let manifest = Manifest::from_path(manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let root = manifest_path.parent().unwrap_or(Path::new("."));
@@ -33,21 +41,20 @@ pub fn run(manifest_path: &Path) -> Result<()> {
         Typecheck::Skipped(reason) => println!("  types     skipped ({reason})"),
         Typecheck::Failed(_) => println!("  types     fail"),
     }
-    if let Typecheck::Failed(output) = types {
-        eprint!("{output}");
-        return Err(anyhow!("TypeScript check failed"));
+    match types {
+        Typecheck::Failed(output) => {
+            eprint!("{output}");
+            return Err(anyhow!("TypeScript check failed"));
+        }
+        Typecheck::Skipped(reason) if require_types => {
+            return Err(anyhow!("TypeScript check was skipped: {reason}"));
+        }
+        Typecheck::Ok | Typecheck::Skipped(_) => {}
     }
     if !is_component {
-        let specifiers = crate::node_scan::scan_file(&entry)?;
-        if specifiers.is_empty() {
-            println!("  node      ok");
-        } else {
-            println!("  node      fail");
-            for specifier in &specifiers {
-                eprintln!("unsupported Node builtin '{specifier}'");
-            }
-            return Err(anyhow!("Node builtins are not available in Tysel"));
-        }
+        // The build resolver validates runtime imports across the entire graph.
+        // Re-scanning raw TS here would incorrectly reject erased type imports.
+        println!("  node      ok");
     }
     Ok(())
 }
@@ -98,4 +105,36 @@ fn find_tsc(start: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn strict_check_rejects_a_skipped_typecheck() {
+        let root = std::env::temp_dir().join(format!(
+            "tysel-strict-check-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("tysel.toml"),
+            "[app]\nname = \"strict-check\"\nentry = \"src/index.ts\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/index.ts"),
+            "export default { fetch() { return new Response('ok'); } };\n",
+        )
+        .unwrap();
+        fs::write(root.join("tsconfig.json"), "{}\n").unwrap();
+
+        let error = run_requiring_types(&root.join("tysel.toml")).unwrap_err();
+        assert!(error.to_string().contains("TypeScript check was skipped"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

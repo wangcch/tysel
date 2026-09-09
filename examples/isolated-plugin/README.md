@@ -32,6 +32,22 @@ JSON document with `denied: true`. This is expected even though the resources
 appear under `[permissions]`: the effective authority is the intersection of
 the manifest, deployment policy, execution profile, and runtime support.
 
+## Run a packaged application
+
+`tysel build` creates the application executable. Deploy a matching toolchain's
+`tysel-worker` alongside it:
+
+```text
+dist/
+  isolated-plugin
+  tysel-worker
+```
+
+Alternatively, set `TYSEL_WORKER` to the matching worker's path. The build
+command reports this dependency but does not copy the worker automatically.
+The application does not need TypeScript source, the manifest, or `node_modules`
+at runtime, but the isolated profile does need this separate worker executable.
+
 ## Crash recovery
 
 On Unix, kill the worker child while leaving the `tysel` supervisor alive:

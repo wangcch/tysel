@@ -43,6 +43,21 @@ before dispatching a request:
 Setting `max_in_flight = 0` deliberately sheds every request and can serve as a
 circuit breaker. It does not mean unlimited.
 
+## Request deadlines
+
+`request_timeout_ms` starts when a parsed HTTP request is admitted. It includes
+body consumption, waiting for a worker, and execution; dequeuing does not reset
+it. Expired or canceled queued requests are skipped before entering JavaScript.
+In the isolated profile, the remaining budget is forwarded to the worker, and
+canceled requests waiting for the supervisor are skipped before IPC dispatch.
+An already dispatched isolated request remains bounded by its remaining deadline.
+
+A timeout before response headers yields `504 REQUEST_TIMEOUT`. After headers,
+a streamed response ends with a body error. Request-header receipt and sending
+an already buffered response to a slow client are separate transport concerns;
+configure ingress timeouts as well. Cancellation does not roll back effects
+that already happened.
+
 ## Choose an initial value
 
 Use measured service time and a target throughput as a starting estimate:
@@ -104,7 +119,7 @@ provider concurrency limits, or deployment-level CPU and memory controls.
 | Immediate `503 OVERLOADED` | HTTP admission full | Reduce demand, shorten work, or raise the measured limit carefully. |
 | `413 BODY_TOO_LARGE` | Request-body limit | Reject or chunk earlier; raise only for a documented payload need. |
 | `500 RESPONSE_TOO_LARGE` | Response-body limit | Paginate, stream within the bound, or reduce output. |
-| Runtime timeout | Handler deadline | Bound upstream calls and keep the ingress deadline longer than Tysel's. |
+| `504 REQUEST_TIMEOUT`, or an aborted stream | Admission-to-execution deadline | Bound upstream calls and keep the ingress deadline longer than Tysel's. |
 | Memory grows after adding workers | Per-isolate budget multiplied | Reduce worker count or state; confirm external storage and cache strategy. |
 
 See [Application limits](/reference/manifest/limits),

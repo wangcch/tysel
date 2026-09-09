@@ -1,10 +1,11 @@
 use rquickjs::{ArrayBuffer, Ctx, Function, Module, Object, TypedArray};
-use tokio::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use tysel_engine::{EngineError, HttpHead, HttpRequest};
 
 use crate::isolate::{js_err, js_err_ctx};
 use crate::pool::{OutgoingHttpBody, PreparedHttpResponse, ResponseSender};
-use crate::queue::STREAM_WINDOW;
+use crate::queue::{IoHandle, IoRequest, STREAM_WINDOW};
 
 const BOOTSTRAP: &str = include_str!("../../../runtime-js/web-api/runtime.js");
 const REQUEST_FACTORY: &str = "__tysel_request_factory";
@@ -48,7 +49,34 @@ pub fn take_response_into_globals(ctx: Ctx<'_>) -> Result<(), EngineError> {
     Ok(())
 }
 
-pub fn emit_response(ctx: Ctx<'_>, response_tx: ResponseSender) -> Result<(), EngineError> {
+pub(crate) struct ResponseCompletion {
+    completion: Option<oneshot::Sender<Result<(), EngineError>>>,
+    sink: Arc<Mutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    watcher_stop: Option<oneshot::Sender<()>>,
+}
+
+impl ResponseCompletion {
+    pub fn finish(mut self, result: Result<(), EngineError>) {
+        self.watcher_stop.take();
+        self.sink.lock().expect("response sink").take();
+        if let Some(completion) = self.completion.take() {
+            let _ = completion.send(result);
+        }
+    }
+}
+
+impl Drop for ResponseCompletion {
+    fn drop(&mut self) {
+        self.watcher_stop.take();
+        self.sink.lock().expect("response sink").take();
+    }
+}
+
+pub fn emit_response(
+    ctx: Ctx<'_>,
+    response_tx: ResponseSender,
+    io: &IoHandle,
+) -> Result<Option<ResponseCompletion>, EngineError> {
     let response: Object = ctx.globals().get("__tysel_response").map_err(js_err)?;
     let status: i32 = response.get("status").unwrap_or(200);
     let headers = read_headers(&response)?;
@@ -57,7 +85,50 @@ pub fn emit_response(ctx: Ctx<'_>, response_tx: ResponseSender) -> Result<(), En
         headers,
         websocket: ctx.globals().get::<_, bool>("__tysel_ws_accepted").unwrap_or(false),
     };
-    let body: rquickjs::Value = response.get("body").map_err(js_err)?;
+    let get_body: Function = ctx.globals().get("__tysel_responseBody").map_err(js_err)?;
+    let body: rquickjs::Value =
+        get_body.call((response.clone(),)).map_err(|e| js_err_ctx(&ctx, e))?;
+    if body
+        .as_object()
+        .is_some_and(|o| o.contains_key("_readableStreamController").unwrap_or(false))
+    {
+        let (tx, rx) = mpsc::channel(STREAM_WINDOW);
+        let (watcher_stop, stop) = oneshot::channel();
+        let closed = crate::host::submit_cancellable(ctx.clone(), io, |id| {
+            IoRequest::ResponseClosed { id, tx: tx.clone(), stop }
+        })
+        .map_err(js_err)?;
+        let sink = Arc::new(Mutex::new(Some(tx)));
+        let write_sink = sink.clone();
+        let io = io.clone();
+        let write = Function::new(ctx.clone(), move |ctx, bytes: TypedArray<u8>| {
+            let tx =
+                write_sink.lock().expect("response sink").as_ref().cloned().ok_or_else(|| {
+                    rquickjs::Exception::throw_type(&ctx, "response stream has finished")
+                })?;
+            let bytes = bytes.as_bytes().ok_or(rquickjs::Error::Unknown)?.to_vec();
+            crate::host::submit(ctx, &io, |id| IoRequest::ResponseWrite {
+                id,
+                tx: tx.clone(),
+                bytes,
+            })
+        })
+        .map_err(js_err)?;
+        let pump: Function = ctx.globals().get("__tysel_pumpResponse").map_err(js_err)?;
+        let promise: rquickjs::Promise =
+            pump.call((body, write, closed)).map_err(|e| js_err_ctx(&ctx, e))?;
+        ctx.globals().set("__tysel_result", promise).map_err(js_err)?;
+        let (completion_tx, completion) = tokio::sync::oneshot::channel();
+        let _ = response_tx.send(Ok(PreparedHttpResponse {
+            head,
+            body: OutgoingHttpBody::CheckedStream { chunks: rx, completion },
+        }));
+        return Ok(Some(ResponseCompletion {
+            completion: Some(completion_tx),
+            sink,
+            watcher_stop: Some(watcher_stop),
+        }));
+    }
     if let Some(bytes) = buffered_body(&body)? {
         let _ = response_tx
             .send(Ok(PreparedHttpResponse { head, body: OutgoingHttpBody::Buffered(bytes) }));
@@ -67,7 +138,7 @@ pub fn emit_response(ctx: Ctx<'_>, response_tx: ResponseSender) -> Result<(), En
             .send(Ok(PreparedHttpResponse { head, body: OutgoingHttpBody::Stream(body_rx) }));
         send_body(body, &body_tx)?;
     }
-    Ok(())
+    Ok(None)
 }
 
 pub fn arm_websocket(ctx: Ctx<'_>) -> Result<bool, EngineError> {
@@ -80,11 +151,19 @@ pub fn arm_websocket(ctx: Ctx<'_>) -> Result<bool, EngineError> {
 
 fn read_headers(response: &Object<'_>) -> Result<Vec<(String, String)>, EngineError> {
     let headers_obj: Object = response.get("headers").map_err(js_err)?;
+    // Adapter to our Headers storage: avoid a JS generator, sorting, pair
+    // arrays and nested Vec allocations on every response. Public iteration
+    // remains sorted; wire order is immaterial except for individual cookies.
     let map: Object = headers_obj.get("_map").map_err(js_err)?;
     let mut headers = Vec::new();
     for entry in map.props::<String, String>() {
         let (key, value) = entry.map_err(js_err)?;
-        headers.push((key, value));
+        if key == "set-cookie" {
+            let cookies: Vec<String> = headers_obj.get("_cookies").map_err(js_err)?;
+            headers.extend(cookies.into_iter().map(|value| (key.clone(), value)));
+        } else {
+            headers.push((key, value));
+        }
     }
     Ok(headers)
 }
@@ -159,10 +238,10 @@ fn to_js_request<'js>(ctx: &Ctx<'js>, request: &HttpRequest) -> Result<Object<'j
     let init = Object::new(ctx.clone()).map_err(js_err)?;
     init.set("method", request.method.as_str()).map_err(js_err)?;
     init.set("bodyStream", true).map_err(js_err)?;
-    let headers = Object::new(ctx.clone()).map_err(js_err)?;
-    for (key, value) in &request.headers {
-        headers.set(key.as_str(), value.as_str()).map_err(js_err)?;
-    }
-    init.set("headers", headers).map_err(js_err)?;
+    init.set(
+        "headers",
+        request.headers.iter().map(|(k, v)| vec![k.as_str(), v.as_str()]).collect::<Vec<_>>(),
+    )
+    .map_err(js_err)?;
     factory.call((request.url.as_str(), init)).map_err(js_err)
 }

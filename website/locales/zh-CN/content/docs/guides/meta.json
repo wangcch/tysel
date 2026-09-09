@@ -1,0 +1,21 @@
+{
+  "title": "指南",
+  "pages": [
+    "index",
+    "examples",
+    "service-networking",
+    "concurrency-backpressure",
+    "cron-queue",
+    "llm-gateway",
+    "filesystem",
+    "sqlite",
+    "postgresql",
+    "redis",
+    "container-image",
+    "observability",
+    "debugging",
+    "reproducible-release",
+    "wasm-component-rust",
+    "wasm-component-go"
+  ]
+}

@@ -1,0 +1,123 @@
+---
+title: "可观测性"
+description: "本指南启用结构化 JSON 日志和 OTLP/HTTP 追踪与指标，在采集器中验证每种信号，并维持 Tysel 的脱敏与低基数边界。"
+---
+
+本指南启用结构化 JSON 日志和 OTLP/HTTP 追踪与指标，在采集器中验证每种信号，并维持 Tysel 的脱敏与低基数边界。
+
+## 启用结构化日志
+
+JSON 日志由打包清单控制：
+
+```toml
+[observability]
+logs = "json"
+```
+
+每个 HTTP 请求会向 stderr 写入一个 JSON 对象，其中包含 `ts`、`app`、`method`、`path`、`status`、`ms` 和 `rid`。经过审计的能力调用使用 `capability`、`operation`、`result` 和相同的进程本地 `rid`，从而可以关联请求及其能力活动。
+
+日志记录器会省略查询字符串、请求与响应头、正文、SQL、文件系统路径、出站 URL 和密钥值。能力、操作和结果标签使用固定白名单；意外值会变为 `redacted`。即便如此仍应限制日志访问，因为路由名称和时间信息也属于运维数据。
+
+除不区分大小写的 `json` 外，其他 `logs` 值都会禁用这些 JSON 行，但不会禁用 OTLP。
+
+## 启用 OTLP 导出
+
+当前实际运维控制使用标准环境变量，而非清单中的 `observability.traces` 和 `observability.metrics` 字段。通过 OTLP/HTTP 采集器启用两种信号：
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+tysel run
+```
+
+只启用一种信号时，只设置对应端点：
+
+```sh
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+```
+
+```sh
+export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
+```
+
+Tysel 使用带 protobuf 载荷的 OTLP over HTTP。端点必须以 `http://` 或 `https://` 开头，最长 2 KiB，且不能包含用户信息、查询参数或片段。身份验证信息应放入采集器集成使用的标准 OTLP headers 环境变量，绝不能写入端点 URL 或清单。
+
+设置 `OTEL_SDK_DISABLED=true` 会禁用追踪和指标，即使仍有过期端点变量。端点未设置或为空时，不会启用相应信号。通过验证后，共享端点和信号专用端点的解析由 OpenTelemetry exporter 处理；应针对采集器验证确切路径。
+
+## 了解输出约定
+
+Tysel 发布以下仪器：
+
+| 信号 | 名称 | 属性 |
+| --- | --- | --- |
+| Counter | `tysel.http.server.requests` | service、method、数字状态码、状态类别 |
+| Histogram（ms） | `tysel.http.server.duration` | 相同 HTTP 属性 |
+| Counter | `tysel.capability.calls` | service、capability、operation、result |
+| Histogram（ms） | `tysel.capability.duration` | 相同能力属性 |
+| Server span | `http.server.request` | HTTP 属性，以及可用时的 `tysel.request.id` |
+| Internal span | `tysel.capability` | 能力属性，以及可用时的 `tysel.request.id` |
+
+资源包含 `service.name` 和 Tysel 运行时 `service.version`。指标有意省略请求 ID，以避免高基数时间序列。Span 和 JSON 日志可以携带进程本地 ID；该 ID 不是全局唯一追踪或业务标识符。
+
+## 发布前验证
+
+Tysel 运行时不依赖 OpenTelemetry Collector。应选择符合环境的方式：
+
+- 已有 OTLP/HTTP 后端时，将 Tysel 端点变量指向它，并在该平台检查信号；
+- 可选的本地验证使用下述仓库 `otelcol-contrib` 配置；
+- 不需要遥测时，保持端点变量未设置，也不需要 Collector。
+
+本地配置只监听 `127.0.0.1:4318`，并使用 Collector 的详细 debug exporter。在仓库根目录验证并启动兼容的 `otelcol-contrib` 二进制文件：
+
+```sh
+otelcol-contrib validate --config examples/filesystem-transform/otel-collector.yaml
+otelcol-contrib --config examples/filesystem-transform/otel-collector.yaml
+```
+
+在另一个终端运行完整文件系统示例。其 `/transform` 路由执行一次文件读取和一次写入，因此会产生 HTTP 与能力遥测：
+
+```sh
+cd examples/filesystem-transform
+mkdir -p input output
+printf '%s\n' '{"items":["alpha","beta"]}' > input/jobs.json
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
+tysel run
+```
+
+从第三个终端调用路由：
+
+```sh
+curl --fail http://127.0.0.1:3000/transform
+```
+
+采集器 debug 输出应包含 `http.server.request`、`tysel.capability`、`tysel.http.server.requests`、`tysel.http.server.duration`、`tysel.capability.calls` 和 `tysel.capability.duration`。追踪会批量发送，指标会定期导出，因此不一定在 `curl` 后立即出现。应等待配置的导出间隔，再正常停止 Tysel 以发送两个遥测提供器中缓冲的数据，然后才能判断信号缺失。
+
+确认以下各项：
+
+1. 服务名称与 `[app].name` 一致；
+2. 请求和能力信号均已到达；
+3. 状态、方法、能力、操作和结果使用有界标签；
+4. 不包含 token、SQL 文本、正文、查询字符串、文件系统路径或出站 URL；
+5. 正常停止 Tysel 时，会在进程退出前发送遥测提供器中缓冲的数据。
+
+随后断开采集器并验证部署策略。导出失败必须在采集器或宿主监控中可见；不能只依靠遥测判断就绪状态。
+
+Debug exporter 是本地验证工具，不是生产遥测后端。生产环境应通过与其他基础设施相同的供应链策略固定并批准采集器版本和镜像。
+
+## 构建有效告警
+
+应针对持续 5xx 比例、相对于已配置请求超时的延迟、意外的 `denied` 或 `error` 能力结果、进程重启、内存压力和采集器导出缺失发出告警。数据库饱和度、距最近一次备份的时间和持久任务的逾期时长应由其所属系统监控；Tysel 目前不导出到期唤醒任务的逾期时长指标。
+
+不要从 `path`、`rid`、用户 ID、URL、SQL、异常消息或其他无界输入派生指标标签。应使用追踪和受限日志进行有边界的调查。
+
+## 排查导出问题
+
+| 现象 | 检查项 |
+| --- | --- |
+| 有 JSON 日志但没有 OTLP | 已明确设置端点，且 `OTEL_SDK_DISABLED` 不为 `true`。 |
+| 有追踪但没有指标 | 已配置共享或指标专用端点，且采集器已启用指标摄取。 |
+| 启动时报告 OTLP 配置无效 | 移除 URL 凭据、查询参数、片段、不支持的协议，或缩短过长端点。 |
+| 采集器返回未授权 | 将凭据移至 OTLP headers，并确认服务管理器注入时没有记录凭据。 |
+| 指标时间序列过多 | 移除下游基于路径或 ID 的重新标记；只使用输出的固定属性。 |
+
+请参阅[环境变量](/reference/environment#opentelemetry)、[可观测性清单字段](/reference/manifest/durable-observability#observability)和[生产监控](/docs/operations/production#monitoring-and-alerts)。

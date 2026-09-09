@@ -16,6 +16,8 @@ const targets = [
     sources: [
       "web-api/source/event.js",
       "web-api/source/url.js",
+      "web-api/source/utilities.js",
+      "web-api/vendor/web-streams-polyfill/polyfill.js",
       "web-api/source/http.js",
       "web-api/source/encoding.js",
       "web-api/source/timers.js",
@@ -42,7 +44,47 @@ const targets = [
 ];
 
 function readSource(path) {
-  return readFileSync(resolve(root, path), "utf8").replaceAll("\r\n", "\n").trimEnd();
+  const source = readFileSync(resolve(root, path), "utf8").replaceAll("\r\n", "\n").trimEnd();
+  if (path === "web-api/vendor/web-streams-polyfill/polyfill.js") {
+    const license = readFileSync(resolve(root, "web-api/vendor/web-streams-polyfill/LICENSE"), "utf8").trimEnd();
+    const globals = [
+      "ReadableStream", "ReadableStreamDefaultController", "ReadableByteStreamController",
+      "ReadableStreamBYOBRequest", "ReadableStreamDefaultReader", "ReadableStreamBYOBReader",
+      "WritableStream", "WritableStreamDefaultController", "WritableStreamDefaultWriter",
+      "ByteLengthQueuingStrategy", "CountQueuingStrategy", "TransformStream", "TransformStreamDefaultController",
+    ];
+    return `/*\n${license}\n*/\n(() => {
+  let constructors;
+  let slots = [];
+  function load() {
+    if (constructors) return;
+    // Evaluate against a private global facade: vendor installation must never
+    // overwrite an application's replacements or fail on sealed globals.
+    constructors = tysel._loadStreams();
+    for (const [name, get, set] of slots) {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+      if (descriptor && descriptor.configurable && descriptor.get === get && descriptor.set === set) {
+        Object.defineProperty(globalThis, name, {
+          value: constructors[name], writable: true, configurable: true,
+        });
+      }
+    }
+    slots = null;
+  }
+  // Buffered bodies must not trigger loading merely to test instanceof.
+  globalThis.__tysel_isReadableStream = value => constructors !== undefined && value instanceof constructors.ReadableStream;
+  for (const name of ${JSON.stringify(globals)}) {
+    const get = () => { load(); return constructors[name]; };
+    const set = value => {
+      load();
+      Object.defineProperty(globalThis, name, {value, writable: true, configurable: true});
+    };
+    slots.push([name, get, set]);
+    Object.defineProperty(globalThis, name, {configurable: true, get, set});
+  }
+})();`;
+  }
+  return source;
 }
 
 function build(target) {

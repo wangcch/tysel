@@ -1,0 +1,100 @@
+---
+title: "PostgreSQL"
+description: "本指南授予一个具名 PostgreSQL 连接，由宿主注入 URL，使用参数化 SQL，验证只读强制检查，并为生产部署准备连接。"
+---
+
+本指南授予一个具名 PostgreSQL 连接，由宿主注入 URL，使用参数化 SQL，验证只读强制检查，并为生产部署准备连接。
+
+## 声明名称，而非 URL
+
+```toml
+[app]
+name = "postgres-service"
+entry = "src/index.ts"
+profile = "service"
+
+[permissions]
+postgres = ["main:read-write"]
+```
+
+授权格式为 `name:read-write` 或 `name:read-only`；省略模式表示 `read-write`。版本 1 最多接受一个 PostgreSQL 授权。名称以小写字母开头，后续使用小写字母、数字、`_` 或 `-`。
+
+URL 由部署环境提供：
+
+```sh
+export TYSEL_POSTGRES_MAIN='postgres://app:password@db.example.com:5432/app?sslmode=require'
+```
+
+将授权名称转为大写，并把 `-` 替换为 `_`：`review-ro` 映射到 `TYSEL_POSTGRES_REVIEW_RO`。`tysel dev` 可以从 `.env` 读取该选定值，但打包部署应通过服务管理器或密钥管理器注入。绝不要把 URL 写入清单、CLI 参数、构建产物或日志。
+
+## 执行参数化 SQL
+
+```ts
+await tysel.postgres.exec(
+  "INSERT INTO jobs (id, state) VALUES ($1, $2) " +
+    "ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state",
+  ["job_123", "ready"],
+);
+const rows = await tysel.postgres.query(
+  "SELECT id, state FROM jobs WHERE id = $1",
+  ["job_123"],
+);
+```
+
+`exec` 返回受影响行数，`query` 返回行对象。参数接受 `null`、布尔值、有限数值和字符串。数组和对象不能直接绑定。schema 使用 JSON、UUID、时间戳或其他数据库特有类型时，应有意进行类型转换或序列化。
+
+运行完整的 [Postgres 服务](https://github.com/wangcch/tysel/tree/main/examples/postgres-service)：
+
+```sh
+cd examples/postgres-service
+export TYSEL_POSTGRES_MAIN='postgres://app:password@127.0.0.1:5432/app'
+tysel config validate
+tysel check
+tysel run
+```
+
+访问 `http://127.0.0.1:3000/`。响应包含插入的问候行。
+
+## 强制只读访问
+
+只执行查询的应用可使用：
+
+```toml
+[permissions]
+postgres = ["main:read-only"]
+```
+
+宿主会在发送 SQL 前拒绝所有 `tysel.postgres.exec` 调用。每次 `query` 都在 `BEGIN READ ONLY` 中运行；尝试通过 `query` 执行写 SQL 同样会失败。PostgreSQL 只读违规使用安全消息 `postgres connection is read-only (SQLSTATE 25006)`。
+
+将示例授权切换为只读并调用处理程序，以验证该边界。其建表或 upsert 必须失败。只有实际负责 schema 或数据修改的部署角色才应恢复读写权限。
+
+只读强制检查属于应用边界，不能替代数据库角色。URL 使用的数据库用户应具有与清单模式匹配的 PostgreSQL 权限。
+
+## 连接池、类型与边界
+
+运行时为已配置授权维护最多四个 PostgreSQL 连接，并复用健康的空闲会话。获取连接会在应用调用截止时间内等待可用槽位。URL 要求 TLS 时，连接建立过程使用会验证证书的原生 TLS。
+
+| 接口项 | 边界 |
+| --- | ---: |
+| SQL 文本 | 1 MiB |
+| 参数数 | 999 |
+| 返回行数 | 10,000 |
+| 序列化结果 | 1 MiB |
+| 运行时连接数 | 4 |
+
+返回列目前支持 null、布尔值、整数、浮点数、文本兼容值和字节值。数据库特有类型不受支持时，应在 SQL 中将其转换为受支持的表示。数据库错误只公开有长度限制的 SQLSTATE，不会公开服务器的完整错误详情；连接和 TLS 失败仍属于运维诊断，不应直接返回给客户端。
+
+## 生产检查清单
+
+- 要求使用经过证书验证的 TLS，并验证部署 URL；
+- 将 URL 存储在密钥管理器中，防止其进入日志；
+- 使清单模式与最小权限 PostgreSQL 角色保持一致；
+- 将 schema 迁移作为独立、受控的部署步骤执行；
+- 按每个进程四个连接为数据库和外部代理确定容量；
+- 将语句和 Ingress 截止时间设置为短于调用方超时；
+- 监控连接获取延迟、SQLSTATE 类别、饱和度、行数和结果大小；
+- 使用确切驱动路径测试数据库故障转移和连接重建。
+
+应用 PostgreSQL 与持久事件存储变量 `TYSEL_DURABLE_POSTGRES_URL` 相互独立。即使两者指向同一服务器，也应根据各自的数据所有权进行配置和恢复。
+
+请参阅 [Postgres 权限](/reference/manifest/permissions#postgres)、[环境变量](/reference/environment#application-capabilities)和[数据能力限额](/reference/limits-and-defaults#data-capabilities)。

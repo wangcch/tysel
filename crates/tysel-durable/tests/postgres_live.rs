@@ -7,9 +7,39 @@ use tysel_durable::{
 };
 use tysel_task::TaskId;
 
-fn store() -> Option<Arc<PostgresStore>> {
+struct TestSchema {
+    admin: postgres::Client,
+    schema: String,
+    url: String,
+}
+
+impl Drop for TestSchema {
+    fn drop(&mut self) {
+        let result = self.admin.batch_execute(&format!("DROP SCHEMA {} CASCADE", self.schema));
+        if !std::thread::panicking() {
+            result.expect("remove test schema");
+        }
+    }
+}
+
+fn store() -> Option<(Arc<PostgresStore>, TestSchema)> {
     let url = std::env::var("TYSEL_POSTGRES_TEST_URL").ok()?;
-    Some(Arc::new(PostgresStore::connect_with_pool_size(&url, 8).expect("connect durable store")))
+    let schema = format!("tysel_live_{}", task(0).0);
+    let mut admin = postgres::Client::connect(&url, postgres::NoTls).expect("connect schema owner");
+    admin.batch_execute(&format!("CREATE SCHEMA {schema}")).expect("create test schema");
+    let scoped = if url.contains("://") {
+        format!(
+            "{url}{}options=-csearch_path%3D{schema}",
+            if url.contains('?') { "&" } else { "?" }
+        )
+    } else {
+        format!("{url} options='-c search_path={schema}'")
+    };
+    let fixture = TestSchema { admin, schema, url: scoped };
+    let store = Arc::new(
+        PostgresStore::connect_with_pool_size(&fixture.url, 8).expect("connect durable store"),
+    );
+    Some((store, fixture))
 }
 
 fn task(offset: u128) -> TaskId {
@@ -19,7 +49,7 @@ fn task(offset: u128) -> TaskId {
 
 #[test]
 fn postgres_preserves_replay_claim_signal_and_catalog_contracts() {
-    let Some(store) = store() else {
+    let Some((store, _fixture)) = store() else {
         return;
     };
     assert_eq!(store.log_version().unwrap(), DURABLE_LOG_VERSION);
@@ -81,4 +111,204 @@ fn postgres_preserves_replay_claim_signal_and_catalog_contracts() {
     assert_eq!(event.payload, json!({"ok": true}));
     assert!(store.wakeup(signaled).unwrap().is_none());
     assert!(store.signal_wait(signaled).unwrap().is_none());
+}
+
+#[test]
+fn postgres_completion_serializes_with_writers_and_prunes_only_terminal_tasks() {
+    let Some((store, _fixture)) = store() else {
+        return;
+    };
+    let initial = store.program_count().unwrap();
+    let live = task(100);
+    store.put_module(live, "export default async () => 1", 0).unwrap();
+    store.append_event_json_with_wakeup_at(live, 0, "sleep".into(), "null", 0, 1).unwrap();
+    assert!(matches!(
+        store.complete_task(live, 1, &json!(1), 10),
+        Err(DurableError::TaskSuspended { .. })
+    ));
+    let mut completed = Vec::new();
+    for offset in 101..113 {
+        let id = task(offset);
+        store.put_module(id, "export default async () => 1", 0).unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let writer = {
+            let store = store.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                store.append_event_json_at(id, 0, EventKind::Step, "once".into(), "1", 1)
+            })
+        };
+        let finisher = {
+            let store = store.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                store.complete_task(id, 0, &json!(42), 10)
+            })
+        };
+        barrier.wait();
+        let written = writer.join().unwrap();
+        let finished = finisher.join().unwrap();
+        match (written, finished) {
+            (Ok(_), Err(DurableError::HistoryConflict { .. })) => {
+                store.complete_task(id, 1, &json!(42), 10).unwrap();
+            }
+            (Err(DurableError::TaskCompleted { .. }), Ok(true)) => {}
+            other => panic!("non-serial terminal mutation: {other:?}"),
+        }
+        assert!(matches!(
+            store.send_signal(id, "late", &json!(true), 11),
+            Err(DurableError::TaskCompleted { .. })
+        ));
+        assert!(matches!(store.remove_program(id), Err(DurableError::TaskCompleted { .. })));
+        assert_eq!(store.completion(id).unwrap().unwrap().value, json!(42));
+        completed.push(id);
+    }
+    assert_eq!(store.program_count().unwrap(), initial + 1);
+    assert_eq!(store.prune_completed(10, 100).unwrap(), 0);
+    // Concurrent collectors use the same task lock as completion and event writers.
+    let collectors: Vec<_> = (0..2)
+        .map(|_| {
+            let store = store.clone();
+            std::thread::spawn(move || store.prune_completed(11, 3).unwrap())
+        })
+        .collect();
+    let deleted: usize = collectors.into_iter().map(|thread| thread.join().unwrap()).sum();
+    assert!((3..=6).contains(&deleted));
+    let remaining = store.prune_completed(11, 100).unwrap();
+    assert_eq!(deleted + remaining, completed.len());
+    for id in completed {
+        assert!(store.program(id).unwrap().is_none());
+        assert!(store.completion(id).unwrap().is_none());
+    }
+    assert!(store.wakeup(live).unwrap().is_some());
+    assert_eq!(store.load_history(live).unwrap().events.len(), 1);
+    assert_eq!(store.program_count().unwrap(), initial + 1);
+}
+
+#[test]
+fn postgres_v1_migration_keeps_unclassified_work_and_reopens_completion_counters() {
+    let Ok(url) = std::env::var("TYSEL_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let schema = format!("tysel_migration_{}", task(300).0);
+    let mut admin = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    admin.batch_execute(&format!("CREATE SCHEMA {schema}")).unwrap();
+    let scoped = if url.contains("://") {
+        format!(
+            "{url}{}options=-csearch_path%3D{schema}",
+            if url.contains('?') { "&" } else { "?" }
+        )
+    } else {
+        format!("{url} options='-c search_path={schema}'")
+    };
+    {
+        let store = PostgresStore::connect(&scoped).unwrap();
+        store.put_program(TaskId(1), "1", 0).unwrap();
+    }
+    {
+        let mut client = postgres::Client::connect(&scoped, postgres::NoTls).unwrap();
+        client.batch_execute("DROP TABLE durable_completions; DROP TABLE durable_program_stats; UPDATE tysel_durable_metadata SET value=1 WHERE key='schema_version'").unwrap();
+    }
+    {
+        let store = PostgresStore::connect(&scoped).unwrap();
+        assert_eq!(store.log_version().unwrap(), DURABLE_LOG_VERSION);
+        assert_eq!(store.program_count().unwrap(), 1);
+        assert_eq!(store.prune_completed(100, 100).unwrap(), 0);
+        store.complete_task(TaskId(1), 0, &json!(42), 1).unwrap();
+    }
+    {
+        let store = PostgresStore::connect(&scoped).unwrap();
+        assert_eq!(store.program_count().unwrap(), 0);
+        assert_eq!(store.completion(TaskId(1)).unwrap().unwrap().value, json!(42));
+        store.put_program(TaskId(2), "2", 2).unwrap();
+        assert_eq!(store.program_count().unwrap(), 1);
+    }
+    admin.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).unwrap();
+}
+
+#[test]
+fn postgres_completion_rechecks_lease_after_task_and_quota_lock_waits() {
+    let Some((store, fixture)) = store() else {
+        return;
+    };
+    let mut blocker = postgres::Client::connect(&fixture.url, postgres::NoTls).unwrap();
+    for quota in [false, true] {
+        let id = task(901 + u128::from(quota));
+        store.put_program(id, "42", 0).unwrap();
+        let active_before = store.program_count().unwrap();
+        let bytes = id.0.to_be_bytes();
+        let mut tx = blocker.transaction().unwrap();
+        if quota {
+            tx.query_one(
+                "SELECT singleton FROM durable_program_stats WHERE singleton = 1 FOR UPDATE",
+                &[],
+            )
+            .unwrap();
+        } else {
+            tx.query_one(
+                "SELECT task_id FROM durable_task_locks WHERE task_id = $1 FOR UPDATE",
+                &[&&bytes[..]],
+            )
+            .unwrap();
+        }
+        let now = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        let until = now() + 500;
+        let worker = {
+            let store = store.clone();
+            std::thread::spawn(move || store.complete_task_before(id, 0, &json!(42), until))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        assert!(!worker.is_finished(), "completion must wait for the held lock");
+        tx.rollback().unwrap();
+        assert!(matches!(worker.join().unwrap(), Err(DurableError::TaskSuspended { .. })));
+        assert!(store.completion(id).unwrap().is_none());
+        assert!(store.program(id).unwrap().is_some());
+        assert_eq!(store.program_count().unwrap(), active_before);
+        let before = now();
+        assert!(store.complete_task_before(id, 0, &json!(42), now() + 5_000).unwrap());
+        assert!(store.completion(id).unwrap().unwrap().completed_at_ms >= before);
+        assert!(store.complete_task_before(id, 0, &json!(42), 0).unwrap());
+        assert!(matches!(
+            store.complete_task_before(id, 0, &json!(43), 0),
+            Err(DurableError::TaskCompleted { .. })
+        ));
+    }
+}
+
+#[test]
+fn postgres_concurrent_empty_schema_initialization_is_serialized() {
+    let Ok(url) = std::env::var("TYSEL_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let schema = format!(
+        "init_{}_{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    );
+    let mut admin = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+    admin.batch_execute(&format!("CREATE SCHEMA {schema}")).unwrap();
+    let scoped_url = format!(
+        "{url}{}options=-csearch_path%3D{schema}",
+        if url.contains('?') { "&" } else { "?" }
+    );
+    let barrier = Arc::new(Barrier::new(8));
+    let workers: Vec<_> = (0..8)
+        .map(|_| {
+            let url = scoped_url.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let store = PostgresStore::connect_with_pool_size(&url, 1)?;
+                assert_eq!(store.log_version()?, DURABLE_LOG_VERSION);
+                Ok::<_, DurableError>(())
+            })
+        })
+        .collect();
+    let results: Vec<_> = workers.into_iter().map(|w| w.join()).collect();
+    admin.batch_execute(&format!("DROP SCHEMA {schema} CASCADE")).unwrap();
+    for result in results {
+        result.unwrap().unwrap();
+    }
 }

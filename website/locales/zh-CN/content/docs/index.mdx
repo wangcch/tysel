@@ -1,0 +1,94 @@
+---
+title: "Tysel 文档"
+description: "Tysel 是一个面向服务和 AI 智能体的轻量级原生 TypeScript 运行时。基于 Web API 编写应用，显式授予宿主能力，并在生产环境中交付无需 Node.js 或 node_modules 的单个可执行文件。"
+---
+
+Tysel 是一个面向服务和 AI 智能体的轻量级原生 TypeScript 运行时。
+基于 Web API 编写应用，显式授予宿主能力，并在生产环境中交付无需
+Node.js 或 `node_modules` 的单个可执行文件。
+
+## 从这里开始
+
+| 你的目标 | 从这里开始 | 然后阅读 |
+| --- | --- | --- |
+| 构建 HTTP 服务 | [创建第一个服务](/docs/getting-started) | [运行时 API](/reference/runtime) |
+| 将 Tysel 添加到现有项目 | [创建或接入项目](/docs/concepts/projects-and-configuration#create-or-adopt-a-project) | [npm 兼容性](/docs/compatibility) |
+| 运行生成的代码或第三方代码 | [选择执行配置](/docs/concepts/execution-profiles) | [安全模型](/docs/security) |
+| 构建 Rust 或 Go Wasm 任务 | [Wasm 组件指南](/docs/guides/wasm-component-rust) | [组件参考](/reference/component) |
+| 构建可在重启后恢复的任务 | [持久执行](/docs/concepts/durable-execution) | [持久智能体示例](https://github.com/wangcch/tysel/tree/main/examples/durable-agent) |
+| 部署应用 | [选择部署方式](/docs/operations/deployment) | [生产运维](/docs/operations/production) |
+| 评估 Tysel 是否适合生产环境 | [生产运维](/docs/operations/production) | [性能验证结果](/docs/performance) |
+
+你也可以浏览[按任务组织的指南地图](/docs/guides)、
+[可运行示例库](/docs/guides/examples)，或者在已经明确需求时直接查阅
+[API 参考](/reference)。
+
+## 五分钟上手
+
+[安装 Tysel](/docs/install) 后，创建并运行一个小型服务：
+
+```sh
+tysel init hello-tysel --yes
+cd hello-tysel
+tysel task verify
+tysel dev
+```
+
+访问服务器输出的地址，然后打包应用：
+
+```sh
+curl http://127.0.0.1:3000/hello
+tysel task release
+./dist/hello-tysel
+```
+
+开发工具安装包包含三个协同工作的工具，但最终应用产物仍然只有一个可执行文件。
+
+## 功能概览
+
+| 领域 | Tysel 提供的能力 | 主要命令或 API |
+| --- | --- | --- |
+| 开发 | 创建项目、验证、测试和自动重载 | `tysel init`、`check`、`test`、`dev` |
+| 交付 | 单个原生应用可执行文件和发布验证材料 | `tysel build --release` |
+| 限定权限 | 显式声明网络、密钥、数据库和文件系统授权 | `tysel inspect` 和清单 |
+| 运行服务 | Fetch 处理函数、Web API、HTTP 和 WebSocket | `export default { fetch() {} }` |
+| 运行任务 | 在统一且受限的任务模型上运行 Cron、Queue 和 MCP 处理函数 | `tasks` 导出 |
+| 运行 Wasm 组件 | 使用受限 WASI、与语言无关的单次 JSON 任务 | `profile = "component"` |
+| 恢复任务 | 持久化的步骤、副作用、休眠、重试和信号 | `durable` 导出 |
+
+## 理解运行约定
+
+Tysel 以 Web API 为先，并非通用的 Node.js 兼容层。Node 内置模块、原生扩展、
+子进程、动态库和隐式宿主访问都不属于应用运行约定。`service` 执行配置适用于
+可信的自有代码。`isolated` 执行配置使用独立工作进程；Linux 是它面向生产环境的
+安全目标。Tysel 不对原生运行时进行交叉编译，但 `build --target` 可以使用经过验证、
+版本相同的官方 Linux 或 macOS x64/arm64 运行时进行打包。
+
+请阅读 [Tysel 的工作原理](/docs/concepts/how-tysel-works)，浏览
+[JavaScript API 参考](/reference/javascript)，并在采用依赖前运行
+[`tysel compat`](/docs/compatibility)。
+
+## 按领域探索
+
+- **学习：**[Tysel 的工作原理](/docs/concepts/how-tysel-works)、
+  [项目与配置](/docs/concepts/projects-and-configuration)、
+  [执行配置](/docs/concepts/execution-profiles)和
+  [持久执行](/docs/concepts/durable-execution)。
+- **构建：**[运行时 API](/reference/runtime)、
+  [Wasm 组件](/reference/component)、
+  [能力矩阵](/docs/capabilities)和
+  [可运行示例](/docs/guides/examples)。
+- **查询：**[API 参考](/reference)、
+  [CLI](/reference/cli)、[清单](/reference/manifest)、
+  [兼容性](/docs/compatibility)和
+  [JavaScript API](/reference/javascript)。
+- **运维：**[安装与升级](/docs/install)、
+  [安全](/docs/security)、
+  [选择部署方式](/docs/operations/deployment)、
+  [生产运维](/docs/operations/production)和
+  [性能验证结果](/docs/performance)。
+
+机器可读文档提供三种形式：作为精简起点的
+[`llms-small.txt`](https://tysel.dev/llms-small.txt)、
+页面索引 [`llms.txt`](https://tysel.dev/llms.txt)，以及
+完整导出 [`llms-full.txt`](https://tysel.dev/llms-full.txt)。

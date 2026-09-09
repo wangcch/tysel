@@ -1,5 +1,6 @@
 "use client";
 
+import { SourceText } from "@/components/locale-provider";
 import { useEffect, useState } from "react";
 
 const frames = [
@@ -75,16 +76,16 @@ export function ArtifactDemo() {
                   : "text-white/55 hover:text-white"
               }`}
             >
-              {String(i + 1).padStart(2, "0")} {item.label}
+              {String(i + 1).padStart(2, "0")} <SourceText text={item.label} />
             </button>
           ))}
         </div>
         <span className="hidden font-mono text-[10px] tracking-wide text-white/40 sm:inline">
-          {paused ? "paused" : "replay"}
+          <SourceText text={paused ? "paused" : "replay"} />
         </span>
       </div>
       <div className="border-b border-white/10 px-4 py-2">
-        <p className="text-xs text-white/55">{frame.hint}</p>
+        <p className="text-xs text-white/55"><SourceText text={frame.hint} /></p>
       </div>
       <pre
         key={frame.id}

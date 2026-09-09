@@ -129,11 +129,31 @@
 
 // source: web-api/source/url.js
 (() => {
+  function scalarString(value) {
+    return String(value).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g,
+      unit => unit.length === 2 ? unit : "\ufffd");
+  }
+
   function decodeURIComponentSafe(value) {
+    const text = scalarString(value).replace(/\+/g, " ");
     try {
-      return decodeURIComponent(String(value).replace(/\+/g, " "));
+      return decodeURIComponent(text);
     } catch {
-      return String(value);
+      // Decode valid percent bytes even when an adjacent escape or UTF-8
+      // sequence is malformed. Compact in place; URL queries preserve BOM.
+      const bytes = new TextEncoder().encode(text);
+      let written = 0;
+      const hex = byte => byte >= 48 && byte <= 57 ? byte - 48
+        : byte >= 65 && byte <= 70 ? byte - 55
+        : byte >= 97 && byte <= 102 ? byte - 87 : -1;
+      for (let i = 0; i < bytes.length; i++) {
+        if (bytes[i] === 37 && i + 2 < bytes.length) {
+          const high = hex(bytes[i + 1]), low = hex(bytes[i + 2]);
+          if (high !== -1 && low !== -1) { bytes[written++] = high * 16 + low; i += 2; continue; }
+        }
+        bytes[written++] = bytes[i];
+      }
+      return new TextDecoder("utf-8", {ignoreBOM: true}).decode(bytes.subarray(0, written));
     }
   }
 
@@ -158,18 +178,25 @@
   }
 
   function normalizePath(pathname) {
-    const absolute = pathname.charAt(0) === "/";
-    const trailing = /\/(?:\.{0,2})?$/.test(pathname);
+    const input = pathname.split("/");
     const segments = [];
-    for (const segment of pathname.split("/")) {
-      if (!segment || segment === ".") continue;
-      if (segment === "..") segments.pop();
-      else segments.push(segment);
+    for (let i = 1; i < input.length; i++) {
+      const segment = input[i];
+      const dots = segment.replace(/%2e/gi, ".");
+      if (dots === "." || dots === "..") {
+        if (dots === "..") segments.pop();
+        if (i === input.length - 1) segments.push("");
+      } else segments.push(segment);
     }
-    let result = (absolute ? "/" : "") + segments.join("/");
-    if (absolute && !result) result = "/";
-    if (trailing && result !== "/") result += "/";
-    return result;
+    return "/" + segments.join("/");
+  }
+
+  const defaultPorts = {"http:": 80, "https:": 443, "ws:": 80, "wss:": 443, "ftp:": 21};
+  function normalizePort(protocol, port) {
+    if (!port) return "";
+    if (!/^\d+$/.test(port) || Number(port) > 65535) throw new TypeError("Invalid URL port");
+    const number = Number(port);
+    return number === defaultPorts[protocol] ? "" : String(number);
   }
 
   function parseAbsolute(value) {
@@ -177,7 +204,7 @@
     if (!match) throw new TypeError("Invalid URL");
     const protocol = match[1].toLowerCase();
     const authority = match[2];
-    const host = authority.slice(authority.lastIndexOf("@") + 1);
+    let host = authority.slice(authority.lastIndexOf("@") + 1);
     let hostname = host;
     let port = "";
     if (host.charAt(0) === "[") {
@@ -193,8 +220,10 @@
       }
     }
     if (!hostname) throw new TypeError("Invalid URL");
+    port = normalizePort(protocol, port);
+    host = hostname + (port ? ":" + port : "");
     const pathname = normalizePath(match[3] || "/");
-    const origin = protocol + "//" + authority;
+    const origin = protocol + "//" + host;
     return {
       protocol,
       origin,
@@ -265,7 +294,7 @@
         }
       } else {
         for (const key of Object.keys(init)) {
-          this._pairs.push([String(key), String(init[key])]);
+          this._pairs.push([scalarString(key), scalarString(init[key])]);
         }
       }
     }
@@ -276,12 +305,12 @@
       return this._pairs.length;
     }
     append(name, value) {
-      this._pairs.push([String(name), String(value)]);
+      this._pairs.push([scalarString(name), scalarString(value)]);
       this._changed();
     }
     set(name, value) {
-      name = String(name);
-      value = String(value);
+      name = scalarString(name);
+      value = scalarString(value);
       const first = this._pairs.findIndex((pair) => pair[0] === name);
       if (first === -1) this._pairs.push([name, value]);
       else {
@@ -291,22 +320,22 @@
       this._changed();
     }
     get(name) {
-      name = String(name);
+      name = scalarString(name);
       for (const pair of this._pairs) {
         if (pair[0] === name) return pair[1];
       }
       return null;
     }
     getAll(name) {
-      name = String(name);
+      name = scalarString(name);
       return this._pairs.filter((pair) => pair[0] === name).map((pair) => pair[1]);
     }
     has(name) {
-      name = String(name);
+      name = scalarString(name);
       return this._pairs.some((pair) => pair[0] === name);
     }
     delete(name) {
-      name = String(name);
+      name = scalarString(name);
       this._pairs = this._pairs.filter((pair) => pair[0] !== name);
       this._changed();
     }
@@ -372,6 +401,8 @@
       if (!protocol.endsWith(":")) protocol += ":";
       if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:$/.test(protocol)) throw new TypeError("Invalid URL protocol");
       this._protocol = protocol.toLowerCase();
+      this._port = normalizePort(this._protocol, this._port);
+      this._host = this._hostname + (this._port ? ":" + this._port : "");
       this._commit();
     }
     get origin() { return this._origin; }
@@ -395,8 +426,7 @@
     }
     get port() { return this._port; }
     set port(value) {
-      const port = String(value);
-      if (port && (!/^\d+$/.test(port) || Number(port) > 65535)) throw new TypeError("Invalid URL port");
+      const port = normalizePort(this._protocol, String(value));
       this._port = port;
       this._host = this._hostname + (port ? ":" + port : "");
       this._commit();
@@ -434,122 +464,366 @@
   globalThis.URLSearchParams = URLSearchParams;
 })();
 
+// source: web-api/source/utilities.js
+(() => {
+  globalThis.queueMicrotask = function(callback) {
+    if (typeof callback !== "function") throw new TypeError("callback must be a function");
+    const generation = globalThis.__tysel_request_generation;
+    tysel._queueMicrotask(() => {
+      if (generation === globalThis.__tysel_request_generation) callback();
+    });
+  };
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  globalThis.btoa = function(input) {
+    const text = String(input);
+    const output = [];
+    for (let i = 0; i < text.length; i += 3) {
+      const a = text.charCodeAt(i), b = text.charCodeAt(i + 1), c = text.charCodeAt(i + 2);
+      if (a > 255 || b > 255 || c > 255) throw new DOMException("Invalid character", "InvalidCharacterError");
+      output.push(alphabet[a >> 2], alphabet[((a & 3) << 4) | ((b || 0) >> 4)],
+        i + 1 < text.length ? alphabet[((b & 15) << 2) | ((c || 0) >> 6)] : "=",
+        i + 2 < text.length ? alphabet[c & 63] : "=");
+    }
+    return output.join("");
+  };
+  globalThis.atob = function(input) {
+    let text = String(input).replace(/[\t\n\f\r ]/g, "");
+    if (text.length % 4 === 0) text = text.replace(/==?$/, "");
+    if (text.length % 4 === 1 || /[^A-Za-z0-9+/]/.test(text)) {
+      throw new DOMException("Invalid base64", "InvalidCharacterError");
+    }
+    let bits = 0, count = 0;
+    const output = [];
+    for (const char of text) {
+      bits = (bits << 6) | alphabet.indexOf(char);
+      count += 6;
+      if (count >= 8) { count -= 8; output.push(String.fromCharCode((bits >> count) & 255)); }
+    }
+    return output.join("");
+  };
+})();
+
+// source: web-api/vendor/web-streams-polyfill/polyfill.js
+/*
+The MIT License (MIT)
+
+Copyright (c) 2026 Mattias Buelens
+Copyright (c) 2016 Diwank Singh Tomer
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+(() => {
+  let constructors;
+  let slots = [];
+  function load() {
+    if (constructors) return;
+    // Evaluate against a private global facade: vendor installation must never
+    // overwrite an application's replacements or fail on sealed globals.
+    constructors = tysel._loadStreams();
+    for (const [name, get, set] of slots) {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+      if (descriptor && descriptor.configurable && descriptor.get === get && descriptor.set === set) {
+        Object.defineProperty(globalThis, name, {
+          value: constructors[name], writable: true, configurable: true,
+        });
+      }
+    }
+    slots = null;
+  }
+  // Buffered bodies must not trigger loading merely to test instanceof.
+  globalThis.__tysel_isReadableStream = value => constructors !== undefined && value instanceof constructors.ReadableStream;
+  for (const name of ["ReadableStream","ReadableStreamDefaultController","ReadableByteStreamController","ReadableStreamBYOBRequest","ReadableStreamDefaultReader","ReadableStreamBYOBReader","WritableStream","WritableStreamDefaultController","WritableStreamDefaultWriter","ByteLengthQueuingStrategy","CountQueuingStrategy","TransformStream","TransformStreamDefaultController"]) {
+    const get = () => { load(); return constructors[name]; };
+    const set = value => {
+      load();
+      Object.defineProperty(globalThis, name, {value, writable: true, configurable: true});
+    };
+    slots.push([name, get, set]);
+    Object.defineProperty(globalThis, name, {configurable: true, get, set});
+  }
+})();
+
 // source: web-api/source/http.js
 (() => {
+  function headerName(name) {
+    const key = String(name).toLowerCase();
+    if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(key)) throw new TypeError("invalid header name");
+    return key;
+  }
+  function headerValue(value) {
+    const text = String(value).replace(/^[ \t]+|[ \t]+$/g, "");
+    if (/[\r\n\0]/.test(text)) throw new TypeError("invalid header value");
+    return text;
+  }
+  function headerIterator(headers, kind) {
+    let version = -1, entries, index = 0;
+    return {
+      [Symbol.iterator]() { return this; },
+      next() {
+        // Web IDL indexes the current sorted list, including separate cookies.
+        // Rebuild only after mutation. Reaching the end does not freeze the list.
+        if (version !== headers._version) {
+          entries = [];
+          for (const key of Object.keys(headers._map).sort()) {
+            if (key === "set-cookie") {
+              for (const cookie of headers._cookies) entries.push([key, cookie]);
+            } else entries.push([key, headers._map[key]]);
+          }
+          version = headers._version;
+        }
+        if (index >= entries.length) return {value: undefined, done: true};
+        const pair = entries[index++];
+        return {value: kind === "keys" ? pair[0] : kind === "values" ? pair[1] : pair, done: false};
+      },
+    };
+  }
+
   class Headers {
     constructor(init) {
-      this._map = {};
-      if (!init) return;
-      // Arrays have forEach, so the sequence form must be checked first.
-      if (Array.isArray(init)) {
-        for (const pair of init) this.append(pair[0], pair[1]);
-      } else if (typeof init.forEach === "function") {
-        init.forEach((value, key) => this.append(key, value));
+      this._map = Object.create(null);
+      this._cookies = [];
+      this._version = 0;
+      if (init == null) return;
+      if (typeof init[Symbol.iterator] === "function") {
+        for (const item of init) {
+          const pair = Array.from(item);
+          if (pair.length !== 2) throw new TypeError("header pair must have two items");
+          this.append(pair[0], pair[1]);
+        }
       } else {
         for (const key of Object.keys(init)) this.append(key, init[key]);
       }
     }
-    get(name) {
-      const value = this._map[String(name).toLowerCase()];
-      return value === undefined ? null : value;
-    }
+    get(name) { return this._map[headerName(name)] ?? null; }
+    getSetCookie() { return this._cookies.slice(); }
     set(name, value) {
-      this._map[String(name).toLowerCase()] = String(value);
+      if (this._immutable) throw new TypeError("headers are immutable");
+      const key = headerName(name), text = headerValue(value);
+      this._map[key] = text;
+      this._version++;
+      if (key === "set-cookie") this._cookies = [text];
     }
     append(name, value) {
-      const key = String(name).toLowerCase();
+      if (this._immutable) throw new TypeError("headers are immutable");
+      const key = headerName(name), text = headerValue(value);
       const prev = this._map[key];
-      this._map[key] = prev == null ? String(value) : prev + ", " + String(value);
+      this._map[key] = prev == null ? text : prev + ", " + text;
+      this._version++;
+      if (key === "set-cookie") this._cookies.push(text);
     }
-    has(name) {
-      return Object.prototype.hasOwnProperty.call(this._map, String(name).toLowerCase());
-    }
+    has(name) { return Object.hasOwn(this._map, headerName(name)); }
     delete(name) {
-      delete this._map[String(name).toLowerCase()];
+      if (this._immutable) throw new TypeError("headers are immutable");
+      const key = headerName(name);
+      delete this._map[key];
+      this._version++;
+      if (key === "set-cookie") this._cookies = [];
     }
-    _names() {
-      return Object.keys(this._map).sort();
-    }
-    forEach(callback, thisArg) {
-      for (const key of this._names()) {
-        callback.call(thisArg, this._map[key], key, this);
-      }
-    }
-    entries() {
-      return this._names().map((key) => [key, this._map[key]])[Symbol.iterator]();
-    }
-    keys() {
-      return this._names()[Symbol.iterator]();
-    }
-    values() {
-      return this._names().map((key) => this._map[key])[Symbol.iterator]();
-    }
-    [Symbol.iterator]() {
-      return this.entries();
-    }
+    entries() { return headerIterator(this, "entries"); }
+    keys() { return headerIterator(this, "keys"); }
+    values() { return headerIterator(this, "values"); }
+    forEach(callback, thisArg) { for (const [key, value] of this) callback.call(thisArg, value, key, this); }
+    [Symbol.iterator]() { return this.entries(); }
   }
+
+  function bodyBytes(body) {
+    if (globalThis.__tysel_isReadableStream(body)) throw new TypeError("streaming uploads are not supported");
+    if (body == null) return new Uint8Array(0);
+    if (Array.isArray(body)) {
+      const chunks = body.map(bodyBytes);
+      return joinBytes(chunks, chunks.reduce((size, chunk) => size + chunk.byteLength, 0));
+    }
+    if (body instanceof ArrayBuffer) return new Uint8Array(body);
+    if (ArrayBuffer.isView(body)) {
+      return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    }
+    return new TextEncoder().encode(String(body));
+  }
+
+  function copyBody(body) {
+    return body instanceof ArrayBuffer || ArrayBuffer.isView(body)
+      ? bodyBytes(body).slice()
+      : body;
+  }
+
+  function copyResponseBody(body) {
+    if (!Array.isArray(body)) return copyBody(body);
+    // Snapshot both the chunk list and each view's selected bytes. Native
+    // emission can then handle every public ArrayBufferView as Uint8Array.
+    return Array.from(body, (chunk) => {
+      if (typeof chunk !== "string" && !(chunk instanceof ArrayBuffer) && !ArrayBuffer.isView(chunk)) {
+        throw new TypeError("response chunk must be a string or BufferSource");
+      }
+      return copyBody(chunk);
+    });
+  }
+
+  function joinBytes(chunks, length) {
+    if (chunks.length === 1) return chunks[0];
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
+  }
+
+  function used(owner) {
+    // Adapter to the pinned web-streams-polyfill's disturbed flag. Covered by
+    // reader/pipe/async-iteration lifecycle tests when updating the vendor.
+    return owner._bodyUsed || Boolean(owner._bodyStream && owner._bodyStream._disturbed);
+  }
+  function getBody(owner) {
+    if (owner._bodyStream) return owner._bodyStream;
+    if (!owner._stream && owner._body == null) return null;
+    if (owner._bodyUsed) {
+      // The buffered fast path consumed the body without initializing Streams.
+      // Materialize the same closed, disturbed, unlocked state as consumeBytes.
+      // A public read marks disturbance synchronously without vendor field writes.
+      const stream = new ReadableStream({ start(controller) { controller.close(); } });
+      const reader = stream.getReader();
+      reader.read();
+      reader.releaseLock();
+      owner._bodyStream = stream;
+      return stream;
+    }
+    const host = owner._stream;
+    const generation = owner._generation;
+    let operation = null;
+    let index = 0;
+    const chunks = Array.isArray(owner._body) ? owner._body : [owner._body];
+    owner._bodyStream = new ReadableStream({
+      async pull(controller) {
+        if (used(owner) && owner._bodyUsed) throw new TypeError("body has already been consumed");
+        if (host) {
+          if (generation !== globalThis.__tysel_request_generation) throw new TypeError("body belongs to a completed request");
+          operation = owner instanceof Request ? tysel._readBodyOp() : tysel._httpRead(owner._bodyId);
+          try {
+            const chunk = await globalThis.__tysel_awaitOperation(operation, owner._signal || owner.signal);
+            if (chunk == null) {
+              controller.close();
+              if (owner._abortCleanup) owner._abortCleanup();
+            } else controller.enqueue(chunk);
+          } finally { operation = null; }
+        } else {
+          if (index < chunks.length) controller.enqueue(bodyBytes(chunks[index++]));
+          if (index === chunks.length) controller.close();
+        }
+      },
+      cancel() {
+        if (host && generation === globalThis.__tysel_request_generation) {
+          if (operation) tysel._cancelOp(operation.id);
+          if (owner instanceof Request) tysel._cancelRequestBody();
+          else tysel._httpCancelBody(owner._bodyId);
+        }
+        if (owner._abortCleanup) owner._abortCleanup();
+      },
+    }, { highWaterMark: 0 });
+    return owner._bodyStream;
+  }
+  async function consumeBytes(owner) {
+    if (used(owner)) throw new TypeError("body has already been consumed");
+    if (!owner._stream && !owner._bodyStream) {
+      if (owner._body != null) owner._bodyUsed = true;
+      return bodyBytes(owner._body);
+    }
+    const reader = getBody(owner).getReader();
+    const chunks = [];
+    let length = 0;
+    try {
+      for (;;) {
+        const {value: chunk, done} = await reader.read();
+        if (done) break;
+        if (!(chunk instanceof Uint8Array)) throw new TypeError("HTTP stream chunks must be Uint8Array");
+        if (chunk.byteLength) { chunks.push(chunk); length += chunk.byteLength; }
+      }
+      return joinBytes(chunks, length);
+    } catch (error) {
+      // Cleanup must not delay the original failure if user cancellation hangs.
+      try { reader.cancel(error).catch(() => {}); } catch (_) {}
+      throw error;
+    } finally { owner._bodyUsed = true; reader.releaseLock(); }
+  }
+  async function consumeText(owner) {
+    if (!owner._stream && !owner._bodyStream && typeof owner._body === "string") {
+      if (used(owner)) throw new TypeError("body has already been consumed");
+      owner._bodyUsed = true;
+      return owner._body.charCodeAt(0) === 0xfeff ? owner._body.slice(1) : owner._body;
+    }
+    return new TextDecoder().decode(await consumeBytes(owner));
+  }
+  async function consumeArrayBuffer(owner) {
+    const ownsBytes = owner._stream || owner._bodyStream || (Array.isArray(owner._body) && owner._body.length !== 1);
+    const bytes = await consumeBytes(owner);
+    // A user-supplied stream can retain its chunks: return independent bytes.
+    return ownsBytes && !owner._customStream && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  }
+
+  globalThis.__tysel_bodyBytes = bodyBytes;
+  globalThis.__tysel_consumeBytes = consumeBytes;
 
   class Request {
     constructor(input, init) {
       init = init || {};
+      if (globalThis.__tysel_isReadableStream(init.body)) throw new TypeError("streaming uploads are not supported");
       if (typeof input === "string") {
         this.url = input;
         this.method = String(init.method || "GET").toUpperCase();
         this.headers = new Headers(init.headers);
-        this.body = init.body == null ? null : init.body;
+        this._body = init.body == null ? null : copyBody(init.body);
         this._stream = init.bodyStream === true;
-        this._text = null;
         this.signal = init.signal || null;
       } else {
-        if (input.bodyUsed && init.body == null) {
+        if ((input.bodyUsed || (input._bodyStream && input._bodyStream.locked)) && init.body == null) {
           throw new TypeError("cannot construct from a consumed Request");
         }
         this.url = input.url;
         this.method = String(init.method || input.method || "GET").toUpperCase();
         this.headers = new Headers(init.headers || input.headers);
-        this.body = init.body == null ? input.body : init.body;
+        this._body = copyBody(init.body == null ? input._body : init.body);
         this._stream = init.bodyStream === true || (init.body == null && input._stream === true);
-        this._text = input._text || null;
         this.signal = init.signal || input.signal || null;
       }
+      this._generation = typeof input !== "string" && init.body == null && input._stream
+        ? input._generation : globalThis.__tysel_request_generation;
       this._bodyUsed = false;
+      this._bodyStream = null;
+      this._customStream = false;
     }
     get bodyUsed() {
-      return this._bodyUsed;
+      return used(this);
     }
-    async text() {
-      if (this._bodyUsed) throw new TypeError("body has already been consumed");
-      this._bodyUsed = true;
-      if (this._text != null) return this._text;
-      if (this._stream) {
-        const chunks = [];
-        for (;;) {
-          const chunk = await tysel._readBody();
-          if (chunk == null) break;
-          chunks.push(chunk);
-        }
-        this._text = chunks.join("");
-        this._stream = false;
-        return this._text;
-      }
-      this._text = this.body == null ? "" : String(this.body);
-      return this._text;
-    }
-    async json() {
-      const text = await this.text();
-      return text ? JSON.parse(text) : null;
-    }
-    async arrayBuffer() {
-      return new TextEncoder().encode(await this.text()).buffer;
-    }
+    get body() { return getBody(this); }
+    async text() { return consumeText(this); }
+    async json() { return JSON.parse(await this.text()); }
+    async arrayBuffer() { return consumeArrayBuffer(this); }
+    async bytes() { return new Uint8Array(await consumeArrayBuffer(this)); }
     clone() {
-      if (this._stream || this._bodyUsed) {
+      if (this._stream || this._customStream || used(this) || (this._bodyStream && this._bodyStream.locked)) {
         throw new TypeError("cannot clone a streaming or consumed request");
       }
       return new Request(this.url, {
         method: this.method,
         headers: this.headers,
-        body: this.body,
+        body: this._body,
         signal: this.signal,
       });
     }
@@ -558,93 +832,112 @@
   class Response {
     constructor(body, init) {
       init = init || {};
-      if (body instanceof ArrayBuffer) {
-        this.body = body.slice(0);
-      } else if (body instanceof Uint8Array) {
-        this.body = new Uint8Array(
-          body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
-        );
-      } else {
-        this.body = body == null ? null : body;
+      const stream = globalThis.__tysel_isReadableStream(body);
+      if (stream && (body.locked || body._disturbed)) throw new TypeError("body stream is locked or consumed");
+      this._body = stream ? null : body == null ? null : copyResponseBody(body);
+      let status = 200;
+      const initialStatus = init.status;
+      if (initialStatus !== undefined) {
+        const number = +initialStatus;
+        status = Number.isFinite(number) ? ((Math.trunc(number) % 65536) + 65536) % 65536 : 0;
+        if ((status < 200 || status > 599) && !(status === 101 && globalThis.__tysel_ws_accepted)) throw new RangeError("invalid response status");
+        if (body != null && (status === 101 || status === 204 || status === 205 || status === 304)) throw new TypeError("status cannot have a body");
       }
-      this.status = init.status || 200;
+      this.status = status;
       this.headers = new Headers(init.headers);
       this._stream = false;
       this._signal = null;
+      this._generation = globalThis.__tysel_request_generation;
       this._bodyUsed = false;
+      this._bodyStream = null;
+      this._customStream = stream;
+      if (this._customStream) this._bodyStream = body;
     }
+    get type() { return this.status === 0 ? "error" : "default"; }
     get ok() {
       return this.status >= 200 && this.status < 300;
     }
+    static error() {
+      const response = new Response();
+      response.status = 0;
+      response.headers._immutable = true;
+      return response;
+    }
+    static redirect(url, status = 302) {
+      const location = new URL(String(url)).href;
+      const number = +status;
+      status = Number.isFinite(number) ? ((Math.trunc(number) % 65536) + 65536) % 65536 : 0;
+      if (![301, 302, 303, 307, 308].includes(status)) throw new RangeError("invalid redirect status");
+      const response = new Response(null, {status, headers: {location}});
+      response.headers._immutable = true;
+      return response;
+    }
     static json(data, init) {
       init = init || {};
-      const headers = new Headers(init.headers);
-      if (!headers.get("content-type")) {
-        headers.set("content-type", "application/json");
-      }
       const body = JSON.stringify(data);
       if (body === undefined) throw new TypeError("data is not JSON serializable");
-      return new Response(body, { status: init.status || 200, headers });
+      // The constructor snapshots headers once. Building another Headers here
+      // would iterate, sort and revalidate the same list a second time.
+      const response = new Response(body, init);
+      if (!response.headers.get("content-type")) {
+        response.headers.set("content-type", "application/json");
+      }
+      return response;
     }
     get bodyUsed() {
-      return this._bodyUsed;
+      return used(this);
     }
-    async text() {
-      if (this._bodyUsed) throw new TypeError("body has already been consumed");
-      this._bodyUsed = true;
-      if (this._stream) {
-        const chunks = [];
-        try {
-          for (;;) {
-            const operation = tysel._httpRead(this._bodyId);
-            const chunk = await globalThis.__tysel_awaitOperation(
-              operation,
-              this._signal,
-            );
-            if (chunk == null) break;
-            chunks.push(chunk);
-          }
-          this.body = chunks.join("");
-          return this.body;
-        } finally {
-          this._stream = false;
-          if (this._abortCleanup) this._abortCleanup();
-        }
-      }
-      if (this.body == null) return "";
-      if (this.body instanceof ArrayBuffer || ArrayBuffer.isView(this.body)) {
-        return new TextDecoder().decode(this.body);
-      }
-      return String(this.body);
-    }
-    async json() {
-      const text = await this.text();
-      return text ? JSON.parse(text) : null;
-    }
-    async arrayBuffer() {
-      if (!this._stream && !this._bodyUsed) {
-        if (this.body instanceof ArrayBuffer) {
-          this._bodyUsed = true;
-          return this.body.slice(0);
-        }
-        if (ArrayBuffer.isView(this.body)) {
-          this._bodyUsed = true;
-          return this.body.buffer.slice(
-            this.body.byteOffset,
-            this.body.byteOffset + this.body.byteLength,
-          );
-        }
-      }
-      return new TextEncoder().encode(await this.text()).buffer;
-    }
+    get body() { return getBody(this); }
+    async text() { return consumeText(this); }
+    async json() { return JSON.parse(await this.text()); }
+    async arrayBuffer() { return consumeArrayBuffer(this); }
+    async bytes() { return new Uint8Array(await consumeArrayBuffer(this)); }
     clone() {
-      if (this._stream || this._bodyUsed) {
+      if (this._stream || this._customStream || used(this) || (this._bodyStream && this._bodyStream.locked)) {
         throw new TypeError("cannot clone a streaming or consumed response");
       }
-      return new Response(this.body, { status: this.status, headers: this.headers });
+      if (this.status === 0) return Response.error();
+      const response = new Response(this._body, { status: this.status, headers: this.headers });
+      response.headers._immutable = this.headers._immutable;
+      return response;
     }
   }
 
+  globalThis.__tysel_responseBody = response => {
+    if (response.status === 0) throw new TypeError("cannot send a network-error Response");
+    if (used(response)) throw new TypeError("response body has already been consumed");
+    if (response._bodyStream && response._bodyStream.locked) throw new TypeError("response body is locked");
+    return response._stream || response._bodyStream ? response.body : response._body;
+  };
+  globalThis.__tysel_headerPairs = headers => Array.from(headers);
+  globalThis.__tysel_pumpResponse = async function(body, write, closed) {
+    const reader = body.getReader();
+    let stopped = false;
+    const pump = async () => {
+      for (;;) {
+        const {value, done} = await reader.read();
+        if (done || stopped) break;
+        if (!(value instanceof Uint8Array)) throw new TypeError("HTTP stream chunks must be Uint8Array");
+        await write(value);
+      }
+    };
+    try {
+      // One race per response, not per chunk: pending reactions stay bounded.
+      await Promise.race([pump(), closed.promise.then(() => {
+        throw new TypeError("response consumer closed");
+      })]);
+    } catch (error) {
+      stopped = true;
+      // Invoke cleanup, but an application's pending cancel promise must not
+      // keep the worker assigned after the consumer has disconnected.
+      try { reader.cancel(error).catch(() => {}); } catch (_) {}
+      throw error;
+    } finally {
+      stopped = true;
+      tysel._cancelOp(closed.id);
+      reader.releaseLock();
+    }
+  };
   globalThis.Headers = Headers;
   globalThis.Request = Request;
   globalThis.Response = Response;
@@ -652,12 +945,39 @@
 
 // source: web-api/source/encoding.js
 (() => {
+  // Read the internal view length even when an instance or subclass shadows it.
+  const byteLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "byteLength").get;
   class TextEncoder {
     constructor() {
       this.encoding = "utf-8";
     }
+    encodeInto(source, destination) {
+      if (arguments.length < 2) throw new TypeError("encodeInto requires source and destination");
+      source = `${source}`;
+      if (!(destination instanceof Uint8Array)) throw new TypeError("expected Uint8Array");
+      const capacity = byteLength.call(destination);
+      let read = 0, written = 0;
+      // Bound each native conversion, including a surrogate lookahead.
+      do {
+        let end = Math.min(source.length, read + Math.min(16384, capacity - written + 1));
+        if (end < source.length && end > read + 1 && source.charCodeAt(end - 1) >= 0xd800 && source.charCodeAt(end - 1) <= 0xdbff) end--;
+        const chunk = source.slice(read, end);
+        const result = tysel._utf8EncodeInto(chunk, destination, written);
+        read += result.read; written += result.written;
+        if (!result.read || result.read < chunk.length) break;
+      } while (read < source.length && written < capacity);
+      return { read, written };
+    }
     encode(input) {
-      return tysel._utf8Encode(input == null ? "" : String(input));
+      const text = input === undefined ? "" : `${input}`;
+      try { return tysel._utf8Encode(text); }
+      catch (error) {
+        // The native bridge rejects lone surrogate code points. Keep valid
+        // strings on the existing fast path; normalize only this fallback.
+        const scalar = text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g, unit => unit.length === 2 ? unit : "\ufffd");
+        if (scalar === text) throw error;
+        return tysel._utf8Encode(scalar);
+      }
     }
   }
 
@@ -673,21 +993,96 @@
       this.encoding = "utf-8";
       this.fatal = Boolean(options && options.fatal);
       this.ignoreBOM = Boolean(options && options.ignoreBOM);
+      this._pending = new Uint8Array(0);
+      this._bomSeen = false;
     }
-    decode(input) {
-      if (input == null) return "";
+    decode(input, options) {
       let view;
-      if (input instanceof ArrayBuffer) view = new Uint8Array(input);
-      else if (ArrayBuffer.isView(input)) {
-        view = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
-      } else {
-        throw new TypeError("expected BufferSource");
+      if (input == null) view = new Uint8Array(0);
+      else if (input instanceof ArrayBuffer) view = new Uint8Array(input);
+      else if (ArrayBuffer.isView(input)) view = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+      else throw new TypeError("expected BufferSource");
+      const stream = Boolean(options && options.stream);
+      if (this._pending.length) {
+        const joined = new Uint8Array(this._pending.length + view.byteLength);
+        joined.set(this._pending); joined.set(view, this._pending.length); view = joined;
       }
-      let text = tysel._utf8Decode(view, this.fatal);
-      if (this.ignoreBOM && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-      return text;
+      this._pending = new Uint8Array(0);
+      if (stream && view.length) {
+        let start = view.length - 1;
+        while (start > 0 && view[start] >= 128 && view[start] <= 191 && view.length - start < 4) start--;
+        const lead = view[start];
+        const required = lead >= 194 && lead <= 223 ? 2 : lead >= 224 && lead <= 239 ? 3 : lead >= 240 && lead <= 244 ? 4 : 0;
+        const available = view.length - start;
+        const second = view[start + 1];
+        const validSecond = available < 2 || (second >= 128 && second <= 191
+          && !(lead === 224 && second < 160) && !(lead === 237 && second > 159)
+          && !(lead === 240 && second < 144) && !(lead === 244 && second > 143));
+        if (required > available && validSecond) {
+          this._pending = view.slice(start);
+          view = view.subarray(0, start);
+        }
+      }
+      try {
+        let text = tysel._utf8Decode(view, this.fatal);
+        if (text.length && !this._bomSeen) {
+          this._bomSeen = true;
+          if (!this.ignoreBOM && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+        }
+        if (!stream) { this._pending = new Uint8Array(0); this._bomSeen = false; }
+        return text;
+      } catch (error) {
+        this._pending = new Uint8Array(0); this._bomSeen = false;
+        throw error;
+      }
     }
   }
+
+  class TextEncoderStream {
+    constructor() {
+      const encoder = new TextEncoder();
+      let pending = "";
+      const transform = new TransformStream({
+        transform(chunk, controller) {
+          // Convert before changing pending state; Symbols must reject the write.
+          let text = pending + `${chunk}`;
+          pending = "";
+          const last = text.charCodeAt(text.length - 1);
+          if (last >= 0xd800 && last <= 0xdbff) {
+            pending = text.slice(-1);
+            text = text.slice(0, -1);
+          }
+          if (text) controller.enqueue(encoder.encode(text));
+        },
+        flush(controller) {
+          if (pending) controller.enqueue(encoder.encode(pending));
+          pending = "";
+        },
+      });
+      Object.defineProperties(this, {
+        encoding: {value: "utf-8", enumerable: true},
+        readable: {value: transform.readable},
+        writable: {value: transform.writable},
+      });
+    }
+  }
+  globalThis.TextEncoderStream = TextEncoderStream;
+
+  class TextDecoderStream {
+    constructor(label, options) {
+      const decoder = new TextDecoder(label, options);
+      const transform = new TransformStream({
+        transform(chunk, controller) {
+          const text = decoder.decode(chunk, {stream: true});
+          if (text) controller.enqueue(text);
+        },
+        flush(controller) { const text = decoder.decode(); if (text) controller.enqueue(text); },
+      });
+      for (const key of ["encoding", "fatal", "ignoreBOM"]) Object.defineProperty(this, key, {value: decoder[key], enumerable: true});
+      Object.defineProperties(this, {readable: {value: transform.readable}, writable: {value: transform.writable}});
+    }
+  }
+  globalThis.TextDecoderStream = TextDecoderStream;
 
   globalThis.TextEncoder = TextEncoder;
   globalThis.TextDecoder = TextDecoder;
@@ -755,6 +1150,14 @@
   const signalToken = Object.freeze({});
   const states = new WeakMap();
 
+  // Held values contain only weak source references, never the dependent.
+  const collected = new FinalizationRegistry(links => {
+    for (const [source, dependent] of links) {
+      const signal = source.deref();
+      if (signal) states.get(signal).followers.delete(dependent);
+    }
+  });
+
   function defaultReason() {
     return new DOMException("This operation was aborted", "AbortError");
   }
@@ -763,12 +1166,36 @@
     constructor(token) {
       super();
       if (token !== signalToken) throw new TypeError("Illegal constructor");
-      states.set(this, { aborted: false, reason: undefined });
+      states.set(this, { aborted: false, reason: undefined, followers: new Set() });
       this.onabort = null;
     }
     static abort(reason) {
       const controller = new AbortController();
       controller.abort(reason);
+      return controller.signal;
+    }
+    static any(signals) {
+      if (signals == null || typeof signals[Symbol.iterator] !== "function") {
+        throw new TypeError("expected an iterable of AbortSignal");
+      }
+      const list = Array.from(signals);
+      for (const signal of list) if (!states.has(signal)) throw new TypeError("expected AbortSignal");
+      const controller = new AbortController();
+      const aborted = list.find(signal => signal.aborted);
+      if (aborted) { controller.abort(aborted.reason); return controller.signal; }
+      const dependent = new WeakRef(controller.signal);
+      const links = [];
+      for (const signal of new Set(list)) {
+        states.get(signal).followers.add(dependent);
+        links.push([new WeakRef(signal), dependent]);
+      }
+      const state = states.get(controller.signal);
+      state.links = links;
+      // A live dependent keeps its propagation path alive, including temporary
+      // intermediate composites. The reverse edges remain weak.
+      state.sources = list;
+      // This QuickJS version retains unregister tokens: never use the target.
+      if (links.length) collected.register(controller.signal, links, links);
       return controller.signal;
     }
     static timeout(milliseconds) {
@@ -799,10 +1226,35 @@
     _abort(reason) {
       const state = states.get(this);
       if (state.aborted) return;
+      const pending = [this];
+      const value = reason === undefined ? defaultReason() : reason;
+      // Mark the complete dependency graph before running any user callback.
       state.aborted = true;
-      state.reason = reason === undefined ? defaultReason() : reason;
-      const event = globalThis.__tysel_event("abort");
-      this.dispatchEvent(event);
+      state.reason = value;
+      for (let i = 0; i < pending.length; i++) {
+        const current = states.get(pending[i]);
+        for (const reference of current.followers) {
+          const signal = reference.deref();
+          if (!signal) continue;
+          const next = states.get(signal);
+          if (next.aborted) continue;
+          next.aborted = true;
+          next.reason = value;
+          pending.push(signal);
+        }
+        current.followers.clear();
+      }
+      for (const signal of pending) {
+        const current = states.get(signal);
+        for (const [source, dependent] of current.links || []) {
+          const parent = source.deref();
+          if (parent) states.get(parent).followers.delete(dependent);
+        }
+        if (current.links) collected.unregister(current.links);
+        current.links = undefined;
+        current.sources = undefined;
+      }
+      for (const signal of pending) signal.dispatchEvent(globalThis.__tysel_event("abort"));
     }
   }
 
@@ -849,6 +1301,13 @@
     "[object BigUint64Array]",
   ]);
   globalThis.crypto = {
+    randomUUID() {
+      const bytes = tysel._randomBytes(16);
+      bytes[6] = (bytes[6] & 15) | 64;
+      bytes[8] = (bytes[8] & 63) | 128;
+      const hex = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    },
     getRandomValues(typedArray) {
       if (!integerTypedArrays.has(Object.prototype.toString.call(typedArray))) {
         throw new DOMException("expected an integer TypedArray", "TypeMismatchError");

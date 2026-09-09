@@ -8,12 +8,17 @@
     "import:docs": "node scripts/import-docs.mjs",
     "check:docs-contracts": "node scripts/check-docs-contracts.mjs",
     "test:benchmarks": "node --experimental-strip-types --test test/build-admission-board.test.mjs",
-    "predev": "node scripts/sync-brand.mjs && node scripts/import-docs.mjs",
-    "prebuild": "node scripts/sync-brand.mjs && node scripts/import-docs.mjs",
+    "prepare:site": "node scripts/sync-brand.mjs && node scripts/import-docs.mjs && node scripts/i18n.mjs prepare",
+    "predev": "pnpm run prepare:site",
+    "prebuild": "pnpm run prepare:site",
     "dev": "next dev --port 4000",
     "build": "next build --webpack",
     "start": "next start --port 4000",
-    "types:check": "next typegen && tsc --noEmit"
+    "types:check": "next typegen && tsc --noEmit",
+    "i18n:export": "node scripts/i18n.mjs export",
+    "i18n:import": "node scripts/i18n.mjs import",
+    "i18n:check": "node scripts/i18n.mjs check",
+    "test:i18n": "node --test test/i18n*.test.mjs"
   },
   "dependencies": {
     "cnfast": "^0.1.0",
