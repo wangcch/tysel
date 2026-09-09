@@ -53,9 +53,11 @@ fn quickjs_engine_version_matches_adapter_identity() {
 }
 
 fn config() -> IsolateConfig {
+    // Functional tests need room on slower runners. Budget enforcement tests
+    // below set their own deliberately small limits.
     IsolateConfig {
-        request_timeout_ms: 2_000,
-        cpu_ms_per_turn: 50,
+        request_timeout_ms: 10_000,
+        cpu_ms_per_turn: 500,
         memory_limit_bytes: 8 * 1024 * 1024,
     }
 }
@@ -1514,18 +1516,68 @@ fn cpu_interrupt_stops_busy_loop() {
 }
 
 #[test]
+fn cancellation_during_initialization_keeps_interrupt_reason() {
+    let cancel = IsolateCancel::new();
+    cancel.cancel();
+    let err = eval_cancellable("1 + 1", config(), cancel).expect_err("cancelled initialization");
+    assert!(
+        matches!(err, EngineError::Interrupted(InterruptReason::Cancelled)),
+        "unexpected initialization error: {err:?}"
+    );
+}
+
+#[test]
+fn initialization_cpu_timeout_keeps_interrupt_reason() {
+    let err = eval("for (;;) {}", IsolateConfig { cpu_ms_per_turn: 1, ..config() })
+        .expect_err("initialization and script share the CPU budget");
+    assert!(
+        matches!(err, EngineError::Interrupted(InterruptReason::Timeout)),
+        "unexpected initialization error: {err:?}"
+    );
+}
+
+#[test]
 fn native_array_work_obeys_cpu_interrupt() {
-    let started = Instant::now();
-    let err = eval(
-        "Array.prototype.includes.call({ length: 2 ** 32 - 1 }, 42)",
-        IsolateConfig { cpu_ms_per_turn: 10, request_timeout_ms: 1_000, ..config() },
-    )
-    .expect_err("native array work should be interrupted");
-    assert!(started.elapsed() < Duration::from_secs(1));
-    assert!(matches!(
-        err,
-        EngineError::Interrupted(InterruptReason::Timeout | InterruptReason::Cancelled)
-    ));
+    let runtime = rquickjs::Runtime::new().unwrap();
+    let context = rquickjs::Context::full(&runtime).unwrap();
+    let cpu = crate::cpu::CpuBudget::new(Duration::from_millis(10));
+    cpu.pause();
+    let entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let interrupted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let interrupt_cpu = cpu.clone();
+    let cpu_interrupted = interrupted.clone();
+    runtime.set_interrupt_handler(Some(Box::new(move || {
+        if interrupt_cpu.exhausted() {
+            cpu_interrupted.store(true, AtomicOrdering::SeqCst);
+            return true;
+        }
+        // Bound a broken CPU gate without accepting wall timeout as success.
+        Instant::now() >= deadline
+    })));
+    context.with(|ctx| {
+        let start_cpu = cpu.clone();
+        let entered_native = entered.clone();
+        ctx.globals()
+            .set("startNative", rquickjs::Function::new(ctx.clone(), move || {
+                entered_native.store(true, AtomicOrdering::SeqCst);
+                start_cpu.resume();
+            }).unwrap())
+            .unwrap();
+        // includes reads length inside native code. Start the budget there,
+        // after context creation and compilation have both completed.
+        let work: rquickjs::Function = ctx.eval(
+            "(() => Array.prototype.includes.call({ get length() { startNative(); return 2 ** 32 - 1; } }, 42))",
+        ).unwrap();
+        let err = work.call::<_, bool>(()).expect_err("native array work should be interrupted");
+        assert!(entered.load(AtomicOrdering::SeqCst), "native array work was never entered");
+        assert!(interrupted.load(AtomicOrdering::SeqCst), "CPU interrupt did not fire: {err:?}");
+        assert!(matches!(
+            crate::isolate::map_eval_error(&ctx, err, &IsolateCancel::new(), deadline, &cpu),
+            EngineError::Interrupted(InterruptReason::Timeout)
+        ));
+    });
+    runtime.set_interrupt_handler(None);
 }
 
 #[test]
@@ -2909,7 +2961,7 @@ async fn fetch_binary_roundtrip_preserves_all_bytes_and_upload_snapshot() {
     }})()"#
     );
     let value = tokio::task::spawn_blocking(move || {
-        eval(&source, IsolateConfig { cpu_ms_per_turn: 500, ..config() })
+        eval(&source, IsolateConfig { cpu_ms_per_turn: 2_000, ..config() })
     })
     .await
     .unwrap()

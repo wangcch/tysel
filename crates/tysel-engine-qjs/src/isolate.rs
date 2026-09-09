@@ -296,9 +296,10 @@ fn start_script(
     durable: Option<DurableSession>,
 ) -> Result<Option<Value>, EngineError> {
     match durable {
-        Some(durable) => host::install_durable(ctx.clone(), io, 0, durable).map_err(js_err)?,
-        None => host::install(ctx.clone(), io, 0).map_err(js_err)?,
+        Some(durable) => host::install_durable(ctx.clone(), io, 0, durable),
+        None => host::install(ctx.clone(), io, 0),
     }
+    .map_err(|err| map_eval_error(&ctx, err, cancel, request_deadline, cpu))?;
     let Evaluation::Script(script) = evaluation else {
         let Evaluation::DurableModule { source, input_json } = evaluation else {
             unreachable!();

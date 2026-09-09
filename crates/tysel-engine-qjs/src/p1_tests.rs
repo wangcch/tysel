@@ -194,7 +194,8 @@ async fn p1_response_stream_reports_failure_after_headers() {
     let OutgoingHttpBody::CheckedStream { mut chunks, completion } = body else { panic!("stream") };
     assert_eq!(chunks.recv().await.unwrap(), [65]);
     assert!(chunks.recv().await.is_none());
-    assert!(completion.await.unwrap().unwrap_err().to_string().contains("broken stream"));
+    let error = completion.await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("broken stream"), "unexpected stream error: {error:?}");
 }
 
 #[test]
@@ -349,10 +350,13 @@ async fn p1_lazily_opened_stale_body_cannot_read_next_request() {
 #[test]
 fn p1_stream_queues_obey_isolate_heap_limit() {
     let error=eval(r#"(()=>{const stream=new ReadableStream({start(c){for(let i=0;i<64;i++)c.enqueue(new Uint8Array(128*1024));}});return stream.locked;})()"#,IsolateConfig{memory_limit_bytes:2*1024*1024,..config()}).unwrap_err();
-    assert!(matches!(
-        error,
-        EngineError::Interrupted(InterruptReason::MemoryLimit) | EngineError::Isolate(_)
-    ));
+    assert!(
+        matches!(
+            error,
+            EngineError::Interrupted(InterruptReason::MemoryLimit) | EngineError::Isolate(_)
+        ),
+        "unexpected heap limit error: {error:?}"
+    );
 }
 
 #[tokio::test]
@@ -853,8 +857,9 @@ fn long_small_chunk_pipes_do_not_retain_ready_promise_chains() {
             &source,
             IsolateConfig {
                 memory_limit_bytes: 4 * 1024 * 1024,
-                request_timeout_ms: 10000,
-                cpu_ms_per_turn: 10000,
+                // This checks retained memory across 32K chunks, not throughput.
+                request_timeout_ms: 30_000,
+                cpu_ms_per_turn: 30_000,
             },
         )
         .unwrap();
