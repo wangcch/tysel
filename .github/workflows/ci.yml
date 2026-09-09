@@ -363,19 +363,15 @@ jobs:
         with:
           toolchain: 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Build packaged runtime stub
-        run: cargo build --locked -p tysel-runtime --bin tysel-service --release
-      - name: Build multi-suite benchmark runner
-        run: >-
-          cargo build --locked --release
-          -p tysel-cli --bin tysel
-          -p tysel-isolate --bin tysel-worker
-      - name: Measure hello-service cold start, PSS, and artifact size
-        run: >-
-          cargo run --locked -p tysel-testkit --bin tysel-bench --release --
-          --evidence target/benchmark-evidence-linux-x64.json
-          --source-commit ${{ github.sha }}
-          --command "cargo run --locked -p tysel-testkit --bin tysel-bench --release"
+      - name: Build release binaries and measure cold start, PSS, and artifact size
+        shell: bash
+        run: |
+          # Keep compiler flags and build metadata for the benchmark runner build.
+          source .github/scripts/build-release-binaries.sh linux-x64
+          cargo run --locked -p tysel-testkit --bin tysel-bench --release -- \
+            --evidence target/benchmark-evidence-linux-x64.json \
+            --source-commit ${{ github.sha }} \
+            --command "cargo run --locked -p tysel-testkit --bin tysel-bench --release"
       - name: Measure isolate, task, durable, and HTTP suites
         run: >-
           target/release/tysel bench all

@@ -19,16 +19,10 @@ bash "$(dirname "$0")/release-channel.sh" "$version" > /dev/null
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 export CARGO_TARGET_DIR="${PWD}/target/repro-build"
 saved_target_dir="${PWD}/target/repro-${ordinal}"
-# rustc applies the last matching remap, so the more specific target path must
-# follow the workspace path.
-path_remap="--remap-path-prefix=${PWD}=/src --remap-path-prefix=${CARGO_TARGET_DIR}=/build"
 case "$release_target" in
   linux-x64|linux-arm64)
-    export CARGO_PROFILE_RELEASE_LTO=thin
-    export RUSTFLAGS="${path_remap} -C link-arg=-Wl,--build-id=none"
     ;;
   darwin-x64|darwin-arm64)
-    export RUSTFLAGS="$path_remap"
     export COPYFILE_DISABLE=1
     ;;
   *)
@@ -64,7 +58,7 @@ sha256_file() {
 # and native toolchains receive identical directory inputs. Preserve each
 # completed target tree under its ordinal name for the downstream release jobs.
 rm -rf "$CARGO_TARGET_DIR" "$saved_target_dir"
-cargo build --locked --release -p tysel-cli -p tysel-runtime -p tysel-isolate
+bash .github/scripts/build-release-binaries.sh "$release_target"
 rm -rf "target/archive-${ordinal}" "target/release-${ordinal}" "$build_info"
 rm -f "target/${archive%.gz}.${ordinal}.tar" "target/${archive%.gz}.${ordinal}.tar.gz"
 mkdir -p "${root}/bin" "$acceptance" "target/release-${ordinal}"
