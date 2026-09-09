@@ -83,7 +83,7 @@ tysel upgrade --check --json
 {
   "error": {
     "code": "RUNTIME_ERROR",
-    "message": "...",
+    "message": "request execution failed",
     "requestId": "000000000000002a"
   }
 }
@@ -91,7 +91,9 @@ tysel upgrade --check --json
 
 过大的入站正文返回 HTTP `413`，结构相同，错误码为 `BODY_TOO_LARGE`。`requestId` 是固定宽度的十六进制关联值。内部序列化回退可能只返回 `{"error":{"code":"INTERNAL_ERROR"}}`。
 
-`tysel dev` 使用生成的源码映射解析应用堆栈信息。虽然打包时会嵌入映射，但打包后的 HTTP 分派器目前不会应用它，因此生产消息可能包含打包位置。所有运行时消息都应视为运维诊断：向公共客户端暴露前，应将错误映射为应用自行定义的响应，以免泄露敏感内部信息。
+打包服务和 `tysel run` 对未处理的失败返回固定消息 `request execution failed`，不会在公共响应中包含任意异常文本、源码路径或堆栈。`tysel dev` 保留映射后的源码诊断和详细错误，便于本地调试。
+
+请求在响应头发出前超时会返回 HTTP `504`，错误码为 `REQUEST_TIMEOUT`，消息为 `request deadline exceeded`。时间预算包含准入后的排队和处理程序执行。响应头已发出时，流式超时会以错误终止正文，无法把已发送的状态改成 `504`。
 
 ## 应用错误
 

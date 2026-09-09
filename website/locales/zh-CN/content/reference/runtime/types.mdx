@@ -110,7 +110,7 @@ interface LlmResponse<Output = JsonValue> {
 | 执行 | `ExecutionProfile`、`TrustMode`、`CapabilityRequirement`、`RequestContext` | [执行与信任](#execution-and-trust) |
 | 应用 | `FetchHandler`、`RuntimeFetchHandler`、`CronTask`、`QueueTask`、`McpInputType`、`McpInputSchema`、`InferMcpInput`、`McpTask`、`AppTask`、`TyselApp` | [应用模块](/reference/runtime/application) |
 | 持久处理程序 | `DurableHandler`、`DurableDuration`、`DurableRetryPolicy`、`DurableContext`、`DurableHost` | [持久 API](/reference/runtime/durable) |
-| 持久控制 | `DurableSuspendedResult`、`DurableCompletedResult`、`DurableStartResult`、`DurableControlClient` | [持久控制](/reference/runtime/durable#control-api) |
+| 持久控制 | `DurableRequestOptions`、`DurableAcceptedResult`、`DurableSuspendedResult`、`DurableCompletedResult`、`DurableStartResult`、`DurableControlClient` | [持久控制](/reference/runtime/durable#control-api) |
 | SQL 与文件 | `SqlParameter`、`SqlRow`、`SqlClient`、`FileSystemClient` | [宿主能力](/reference/runtime/capabilities) |
 | Redis | `RedisSetOptions`、`RedisClient` | [Redis](/reference/runtime/capabilities#redis) |
 | 密钥 | `SecretReference`、`SecretClient` | [密钥](/reference/runtime/capabilities#secrets) |

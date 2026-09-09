@@ -117,8 +117,7 @@ An oversized inbound body returns HTTP `413` with the same shape and code
 An internal serialization fallback can return only
 `{"error":{"code":"INTERNAL_ERROR"}}`.
 
-Packaged services and `tysel run` return the fixed message `request execution
-failed` for unhandled failures. Arbitrary exception text, source paths, and
+Packaged services and `tysel run` return the fixed message `request execution failed` for unhandled failures. Arbitrary exception text, source paths, and
 stacks are not included in that public response. `tysel dev` retains mapped
 source diagnostics and detailed error messages for local debugging.
 

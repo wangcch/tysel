@@ -6,7 +6,7 @@ description: "Rust Component 项目应使用与已安装 Tysel 次版本匹配�
 状态：**实验性且带版本**。Rust Component 项目应使用与已安装 Tysel 次版本匹配的已发布 crate：
 
 ```toml
-tysel-component-sdk = "0.2.0"
+tysel-component-sdk = "0.3.0"
 ```
 
 发布起始项目同样是自包含的：它内置相同版本的 SDK，并使用 `tysel-component-sdk = { path = "sdk/tysel-component-sdk" }`。自己的项目可以使用 crates.io 依赖；如果可复现或离线构建起始项目更重要，则保留内置的路径依赖。

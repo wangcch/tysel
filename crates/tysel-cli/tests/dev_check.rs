@@ -586,7 +586,7 @@ fn init_rejects_a_stale_existing_tysel_tsconfig_before_writing() {
     let dir = temp_app("init-stale-tsconfig");
     fs::write(
         dir.join("package.json"),
-        r#"{"devDependencies":{"@tysel/types":"0.2.0","@tysel/test":"0.2.0"}}"#,
+        r#"{"devDependencies":{"@tysel/types":"0.3.0","@tysel/test":"0.3.0"}}"#,
     )
     .unwrap();
     fs::write(dir.join("tsconfig.tysel.json"), r#"{"files":["src/old.ts"]}"#).unwrap();

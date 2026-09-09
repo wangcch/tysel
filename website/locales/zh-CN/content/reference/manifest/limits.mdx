@@ -9,7 +9,7 @@ description: "可选的 [limits] 表定义应用级资源预算。所有字段�
 | --- | ---: | --- | --- |
 | `memory_mb` | `128` | MiB | QuickJS 或隔离工作进程的内存预算。 |
 | `cpu_ms_per_turn` | `50` | ms | 单轮 JavaScript 执行的 CPU 预算。 |
-| `request_timeout_ms` | `30000` | ms | 调用截止时间；也限制已配置的 LLM 调用。 |
+| `request_timeout_ms` | `30000` | ms | HTTP 截止时间包含准入后的排队与执行，也约束已配置的 LLM 调用。 |
 | `max_in_flight` | `1000` | 请求 | 允许同时进入的 HTTP 请求上限，许可保持到响应正文完成。 |
 | `max_response_mb` | `16` | MiB | HTTP 响应正文的累计大小上限。 |
 | `max_request_mb` | `16` | MiB | 入站请求正文上限。 |

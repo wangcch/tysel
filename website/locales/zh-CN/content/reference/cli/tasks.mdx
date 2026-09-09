@@ -52,3 +52,23 @@ tysel mcp [ENTRY] [--manifest FILE]
 `ENTRY` 会覆盖 `app.entry`。协议输入和输出专用于 MCP 消息；人类可读的诊断信息会单独写出。工具注册来自应用 `tasks` 导出中 `kind: "mcp"` 的条目。
 
 队列和 MCP 处理程序类型请参阅[应用模块](/reference/runtime/application)，协议边界请参阅[限额与默认值](/reference/limits-and-defaults)。
+
+
+## `tysel durable`
+
+从所选项目的持久存储中查看保留结果，或删除有界的一批已完成历史。命令不会加载或执行应用。
+
+```sh
+tysel -C services/worker durable result 00000000000000000000000000000001
+tysel -C services/worker durable prune --older-than-secs 604800 --limit 32
+```
+
+也接受 `--manifest FILE`。存储选择与运行时一致：优先 `TYSEL_DURABLE_POSTGRES_URL`，其次 `TYSEL_DURABLE_SQLITE_PATH`，最后是清单 SQLite 能力路径旁的 `durable-events.db`。不存在的 SQLite 事件存储会报错，命令不会创建它。
+
+`result` 输出含 `taskId` 和 `completion` 的 JSON。保留的完成记录包含 `status: "completed"`、`value` 和 `completedAtMs`。空 completion 表示无保留结果，不能区分活跃、失败、未知或已清理的任务。
+
+`prune` 默认保留七天，每次最多删除 32 个任务。limit 必须为 1–100。只有严格早于截止时间的显式完成记录才符合条件；待处理唤醒、租约和信号等待会阻止删除。每批保留程序、结果、历史、收件箱及带键信号回执的数据总量达到 16 MiB 时也会停止，但允许单个更大的任务以保证清理能推进。JSON 报告包含 `deleted`、`beforeMs` 和 `limit`；实际删除数可能低于 limit，需要更多清理时应主动重复执行。
+
+清理会永久移除所选结果、程序、事件、收件箱、准入身份和信号回执，不会取消活跃任务或自动压缩数据库文件。PostgreSQL 会保留小型任务同步行以保护并发写入。不要复用已清理的任务 ID：完成去重只保留到清理时。没有自动保留定时器。
+
+打开存储（包括这些管理命令）会将持久日志 v1/v2 迁移到 v3。在使用此版本打开已有存储前，请遵循[升级流程](/docs/operations/production#durable-log-v3-upgrade)。

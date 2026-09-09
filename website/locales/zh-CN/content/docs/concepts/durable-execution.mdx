@@ -37,7 +37,7 @@ export default {
 
 由 `tysel init` 创建的类型化项目已经包含 `tysel-env.d.ts`。修改持久存储或其他清单能力后，请运行 `tysel types`。
 
-`tysel.durable.start` 返回任务 ID，以及已完成或已暂停的状态。可通过 `tysel.durable.sendSignal(taskId, "approval", payload)` 发送外部事件。
+`tysel.durable.start` 返回任务 ID，以及已完成、已暂停或已接受的状态。使用稳定的 `idempotencyKey` 修复确认丢失，详见[控制约定](/reference/runtime/durable#control-api)。可通过 `tysel.durable.sendSignal(taskId, "approval", payload)` 发送外部事件。
 
 ## 持久边界
 

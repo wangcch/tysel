@@ -86,11 +86,14 @@ when another execution owns the task or it is already queued/waiting. `accepted`
 is not a suspension acknowledgement or a terminal result.
 
 The optional start key is scoped to the entire durable store: namespace it by
-tenant and operation. Repeating it with the same bundled handler and canonical
-JSON input returns the same task ID without starting a replacement. Changing the
-handler or input under the same key is a conflict. A failed task returns an
-explicit error on same-key admission retry; it is not acknowledged as `accepted`. Without a key, every call is a
-new admission; a lost acknowledgement cannot be safely repaired by another start.
+tenant and operation. Repeating it with the same full bundle source, export name
+and canonical JSON input returns the same task ID without starting a replacement.
+Changing any of these under the same key is a conflict, even if the target
+handler itself is unchanged. Across deployments, admission retries from an
+outbox therefore need the original bundle; changing the key creates a new task
+and does not repair the original admission. A failed task returns an explicit
+error on same-key retry. Without a key, every call is a new admission; a lost
+acknowledgement cannot be safely repaired by another start.
 
 Signal keys are scoped to a task. Receipt and inbox insertion share one transaction.
 Repeating the same name, payload and key is acknowledged even after consumption or

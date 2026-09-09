@@ -2,7 +2,7 @@ import type * as Streams from "./vendor/web-streams-polyfill/types.js";
 export type { ReadableStream, WritableStream, TransformStream, ReadableStreamDefaultReader, WritableStreamDefaultWriter, QueuingStrategy } from "./vendor/web-streams-polyfill/types.js";
 
 /** Versioned, server-side Web API subset installed into each isolate. */
-export const webApiVersion = "0.2.0";
+export const webApiVersion = "0.3.0";
 
 export type WebEventListener<E extends TyselEvent = TyselEvent> =
   | ((event: E) => void)

@@ -2074,13 +2074,13 @@
       "status": "reviewed"
     },
     "reference/cli/index.mdx": {
-      "sourceHash": "4aa3fab1c41a0694c91e4c01bc3ac9de2691026f286771a41e16d6eec90a368e",
-      "translationHash": "d550cbe29d988f8dada09d8c1b5faec83b6cf2f3f75b2ec47b785ae93a12bbb6",
+      "sourceHash": "47ae0ba133d49252ec77b27c3624710500cde9276d7b13e20ba78dc9b7dde518",
+      "translationHash": "89464720ca22aceb6b7e981f8e7bebf159b8d37e24d5ed1631b52e1eee79a96f",
       "status": "reviewed"
     },
     "reference/cli/installation.mdx": {
-      "sourceHash": "d59cb6740c462e65a3603bb3339faef2de2b9f42d56f783a1bd1bfda4a5c7ba6",
-      "translationHash": "126716cdee67cf67885e89fe548ab857559c89d18ada41234e864396fd27db02",
+      "sourceHash": "9a43b5ea2845677c8e832c887c05b9fc76caea54588996619c3f6d3fb7d20779",
+      "translationHash": "7f78f32e050c9f0e9a7e61d3c6127290e4f0e28d074f322d91962cfd1d9f948a",
       "status": "reviewed"
     },
     "reference/runtime/index.mdx": {
@@ -2099,13 +2099,13 @@
       "status": "reviewed"
     },
     "reference/cli/tasks.mdx": {
-      "sourceHash": "ff5255c0ca17f8bade09a9e7d783ee4e2596e27f1912677ba14b809633d6ec74",
-      "translationHash": "9ce93d245469f5575566963175bb60417598215846eac543f578a9da021db92c",
+      "sourceHash": "f7978a24b391190f48948c02d5a13d0c0d572a3b3ad6ab6501538fa922a91e09",
+      "translationHash": "1a0806aab45bc4675b4928edcd4a9e0927fb22c6b75d7a455e18e440b7a86f48",
       "status": "reviewed"
     },
     "docs/concepts/durable-execution.mdx": {
-      "sourceHash": "2e68a5f95eeebce606127e40dec9725e5e49b74f2a82e3d1b04690cb26d12b8b",
-      "translationHash": "e7b15ae198604e28fa0b1ab59ca6447ffda3d2de1d7d8089b27d4361d2b5d525",
+      "sourceHash": "9cec62c820248302469e7a5d8486c7f5a87852d148735262294098c893c82294",
+      "translationHash": "f729e74eed53de89aa12ee014ec691a39d7609abac92fae3c6eea703207af077",
       "status": "reviewed"
     },
     "docs/concepts/execution-profiles.mdx": {
@@ -2159,8 +2159,8 @@
       "status": "reviewed"
     },
     "reference/component/rust-sdk.mdx": {
-      "sourceHash": "af7df701c4d0ec207e023c11d8d67f84f48b55a053aa35718d273d0d6dcfd7cd",
-      "translationHash": "a6386b032b302697b156ff1daad1272dfffcbc25db4e3c5a87b84c4f5dfd2143",
+      "sourceHash": "8009128a6bee9e2fd77dfe8402cc45bde999ae353585ec68d6ba0a5df510e215",
+      "translationHash": "af2839f0982c6539708f443b0225ea8b7f5df27a89ce3871ffe53991ccf65991",
       "status": "reviewed"
     },
     "reference/manifest/durable-observability.mdx": {
@@ -2169,8 +2169,8 @@
       "status": "reviewed"
     },
     "reference/manifest/limits.mdx": {
-      "sourceHash": "3bfa8de2deef27e1572ae1ab01d136b406891a77d55e88ae111619ea1f839559",
-      "translationHash": "d50eb2af1b750a5c887779e720eecadb8a1800f40eade2d4b4c7aa3df38a83eb",
+      "sourceHash": "bc38e5c92eeba14a2ca3a94016530e5447bcfa6b3b9d85b261c925b4f3691bfe",
+      "translationHash": "ca3b4c46fc34680e37cdfdf390d59248a555dc94b658f46aef847fbb859197c0",
       "status": "reviewed"
     },
     "reference/manifest/tasks.mdx": {
@@ -2214,13 +2214,13 @@
       "status": "reviewed"
     },
     "reference/limits-and-defaults.mdx": {
-      "sourceHash": "392aa2c7ff52202c7cdd2a658608c1aceacea093b36192c28118bbf12e9ebf7f",
-      "translationHash": "ce294f87a1aa7d02706216475d24b1d494194352212548ea0e91421ba68d40fd",
+      "sourceHash": "951c391759a22096f12d0a65d9764609fa2157a7a49d251c3bdc7840d96e3091",
+      "translationHash": "0f5df081759e031e2f80fb14cbbfc7080da36f60052faac97b35de559db9dbfd",
       "status": "reviewed"
     },
     "reference/runtime/durable.mdx": {
-      "sourceHash": "4835cf1fb7d275ff25c03c3c306fea62235a9d1e7f7505f27f8d3a02073ef8ec",
-      "translationHash": "395f6d2c417078f720458775359a80eabfa7512e1b36d2e7fbab5465a4618a8e",
+      "sourceHash": "85fdc5a321d48ae8ab5de745f0d5121dd591db1fff25fd20fa61baca765faec7",
+      "translationHash": "5e4e58ed5091316bae8e42f69e9d57a46045759833dd737c717955145b0e4080",
       "status": "reviewed"
     },
     "reference/runtime/testing.mdx": {
@@ -2234,13 +2234,13 @@
       "status": "reviewed"
     },
     "reference/runtime/types.mdx": {
-      "sourceHash": "1cf8061857b9806f84ecc68c2ebcca590bdc150d1965f48bbbdb5fe1c61dd4cf",
-      "translationHash": "e9d0be559d9f905bd10eb0a8c7d6cce8a53424fe296f71cc35c134d9e7823ce7",
+      "sourceHash": "28c60162cbcd2489576ac5b2f2ca3a3e1ec6d466c0d0cab554e6722c94ad2c8b",
+      "translationHash": "1a2a09de75bc0d3e03d54f0140092ba64d60e1dd9e5737ff05a8a21a4bae1597",
       "status": "reviewed"
     },
     "reference/errors-and-output.mdx": {
-      "sourceHash": "b4c0f1849252797359fc17b91bb62a9d0c0a1c6621d882f03a2e28949861f150",
-      "translationHash": "6703555343b4b012af239d5c6753555cdb99a72ecbbdc59d3532ae98869bf217",
+      "sourceHash": "f9aa1cf2c38fd09657a70bc67135a39379337ca35fcb37f2446bd76ebb23b64a",
+      "translationHash": "9d1895380ec7313941825e0fab6033a9b375d6e860e802b6b0cb3efbc6c14c2b",
       "status": "reviewed"
     },
     "reference/runtime/application.mdx": {
@@ -2259,13 +2259,13 @@
       "status": "reviewed"
     },
     "docs/guides/wasm-component-rust.mdx": {
-      "sourceHash": "bdf1470ad9de6928f8180a9808e3fc36216449060dc0cfba85f316cf94dfe8d0",
-      "translationHash": "a731ebb7bc37162dcfcc2f7f8ff77920d488dcc1e8e04ef5603a12c2948ec2f9",
+      "sourceHash": "48b7fdb01d7f79599d8350a60990dc1692e7c6a733915a89820049ca543f2609",
+      "translationHash": "62beb555b2bb9643714a6196d01db05a2d79069bb500f97c35deb91a3f9aa4f2",
       "status": "reviewed"
     },
     "docs/guides/concurrency-backpressure.mdx": {
-      "sourceHash": "de69dabd5700e284947ed5dd91935f1e02c9062247244a302ed2e05ca6b8e782",
-      "translationHash": "490a0aeffc261282742e9671a289608f249e8761c41aa0fe6dd5b077f38f726a",
+      "sourceHash": "7d08839c4fa8ca52ecf82b3bbd3441e89d7e14d97753bd3aaceb0b26507e7d36",
+      "translationHash": "46d0ce2c6a352b0d3d455b0c6a3b746cb2e1b2fb5f2381e16d4eb49a1324a3f8",
       "status": "reviewed"
     },
     "docs/guides/cron-queue.mdx": {
@@ -2349,8 +2349,8 @@
       "status": "reviewed"
     },
     "docs/operations/production.mdx": {
-      "sourceHash": "641b9cbc094cd04e82334f8b7a707e6234eee599fc9e8e2ba9e5a7325628a733",
-      "translationHash": "31ecfd97d5004432ce8874cded686af7215c4c97a6d77a12b928eb505e4b912e",
+      "sourceHash": "59d5859749ac8ea0dfdbf51ad0b472740bcf3acfd51a8c3ed5dea115789e5e45",
+      "translationHash": "b3e5da0aaa2764ed4914d9d7451398d34d1e4024bcd6b021bbc293d227cb6c2c",
       "status": "reviewed"
     },
     "blog/durable-execution-recovery-semantics.mdx": {

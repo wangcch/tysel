@@ -80,17 +80,18 @@ unknown, or previously pruned task.
 `prune` defaults to retaining seven days and deleting at most 32 tasks. The
 limit must be 1–100. Only explicit completions strictly older than the cutoff
 are eligible; pending wakeups, leases, and signal waits prevent deletion. A
-batch also stops at 16 MiB of retained program, result, history, and inbox
-payload, allowing one larger task so cleanup can progress. The JSON report
+batch also stops at 16 MiB of retained program, result, history, inbox and keyed
+signal receipt data, allowing one larger task so cleanup can progress. The JSON report
 contains `deleted`, `beforeMs`, and `limit`. A batch may delete fewer than its
 limit; repeat it deliberately if more cleanup is needed.
 
-Pruning permanently removes the selected result, program, events, and inbox.
+Pruning permanently removes the selected result, program, events, inbox,
+admission identity and signal receipts.
 It does not cancel active tasks or automatically compact database files.
 PostgreSQL retains a small per-task synchronization row to keep concurrent
 writers safe. Do not reuse pruned task IDs: completion deduplication is retained
 only until pruning. There is no automatic retention timer.
 
-Opening a store, including through these commands, migrates durable log v1 to
-v2. Follow the [upgrade procedure](../../operations/production.md#durable-log-v2-upgrade)
+Opening a store, including through these commands, migrates durable log v1/v2 to
+v3. Follow the [upgrade procedure](../../operations/production.md#durable-log-v3-upgrade)
 before pointing this release at an existing store.

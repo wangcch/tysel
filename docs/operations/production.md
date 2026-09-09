@@ -107,8 +107,7 @@ Shutdown:
 On SIGTERM or Ctrl-C, packaged services and `tysel run` close the listener,
 stop new durable claims, and drain HTTP/1 and HTTP/2 connections. Idle sockets
 close immediately. WebSockets receive close code 1001 (Going Away) when the
-transport can send it. Connections that remain after `request_timeout_ms +
-1000` milliseconds are closed forcibly. This HTTP grace is shared across
+transport can send it. Connections that remain after `request_timeout_ms + 1000` milliseconds are closed forcibly. This HTTP grace is shared across
 connections; task-plane shutdown and telemetry flushing can add time, so keep
 the service-manager grace longer. Development servers use the same draining
 path, with enough grace for the largest timeout seen during reloads.
@@ -133,13 +132,11 @@ task in the same scheduling batch encounters a storage failure.
 Retries remain subject to the original lease. Completion transactions check fresh
 time after acquiring their locks and again before commit; expiry rolls back both
 the result and quota changes. An identical already-committed outcome can still be
-acknowledged after expiry. Lease expiry or shutdown with pending outcomes reports
-failure. Persisted execution eligibility survives process death; a new scheduler
-can reclaim the same task after expiry. Every execution has a unique token and
-generation, and stale history/suspension/completion writes are rejected. Interrupted
-unrecorded effects are re-entered: reconcile external outcomes or use provider
-idempotency before repeating writes. Automatic replay does not imply exactly-once
-external effects.
+acknowledged after expiry. Shutdown reports failure if outcomes still await
+persistence. Execution eligibility survives process death, and stale executors
+cannot write history, suspension or completion records. An interrupted effect
+without a recorded outcome can run again; reconcile external outcomes or use
+provider idempotency before repeating writes.
 
 For admission and signal acknowledgement gaps, use the optional stable
 `idempotencyKey` and an application outbox. The runtime atomically records each

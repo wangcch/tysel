@@ -126,7 +126,7 @@ remain undiscoverable.
 | Execution | `ExecutionProfile`, `TrustMode`, `CapabilityRequirement`, `RequestContext` | [Execution and trust](#execution-and-trust) |
 | Application | `FetchHandler`, `RuntimeFetchHandler`, `CronTask`, `QueueTask`, `McpInputType`, `McpInputSchema`, `InferMcpInput`, `McpTask`, `AppTask`, `TyselApp` | [Application module](application.md) |
 | Durable handler | `DurableHandler`, `DurableDuration`, `DurableRetryPolicy`, `DurableContext`, `DurableHost` | [Durable API](durable.md) |
-| Durable control | `DurableSuspendedResult`, `DurableCompletedResult`, `DurableStartResult`, `DurableControlClient` | [Durable control](durable.md#control-api) |
+| Durable control | `DurableRequestOptions`, `DurableAcceptedResult`, `DurableSuspendedResult`, `DurableCompletedResult`, `DurableStartResult`, `DurableControlClient` | [Durable control](durable.md#control-api) |
 | SQL and files | `SqlParameter`, `SqlRow`, `SqlClient`, `FileSystemClient` | [Host capabilities](capabilities.md) |
 | Redis | `RedisSetOptions`, `RedisClient` | [Redis](capabilities.md#redis) |
 | Secrets | `SecretReference`, `SecretClient` | [Secrets](capabilities.md#secrets) |
