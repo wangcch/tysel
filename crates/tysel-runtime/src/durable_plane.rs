@@ -25,12 +25,25 @@ const SQLITE_PATH_ENV: &str = "TYSEL_DURABLE_SQLITE_PATH";
 
 pub struct DurablePlane {
     dispatcher: Arc<DurableDispatcher>,
-    source: RwLock<Arc<str>>,
+    source: RwLock<Arc<RegisteredSource>>,
     config: IsolateConfig,
     shutdown: PollerShutdown,
     health: watch::Receiver<PollerHealth>,
     join: Mutex<Option<JoinHandle<Result<(), PollerError>>>>,
     hooks: Mutex<std::sync::Weak<DurableControl>>,
+}
+
+// Publish source and its inspected exports together so reloads cannot mix generations.
+struct RegisteredSource {
+    text: String,
+    exports: Vec<String>,
+}
+
+impl RegisteredSource {
+    fn new(text: String, config: IsolateConfig) -> Result<Self, DurablePlaneError> {
+        let exports = inspect_durable_exports(&text, config)?;
+        Ok(Self { text, exports })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -137,6 +150,7 @@ impl DurablePlane {
         config: IsolateConfig,
         owner: impl Into<String>,
     ) -> Result<Arc<Self>, DurablePlaneError> {
+        let source = Arc::new(RegisteredSource::new(source, config)?);
         let lease_duration_ms = config.request_timeout_ms.saturating_add(5_000).max(1_000);
         let dispatcher =
             Arc::new(DurableDispatcher::new(store.clone(), owner, lease_duration_ms, config)?);
@@ -173,7 +187,7 @@ impl DurablePlane {
         });
         let plane = Arc::new(Self {
             dispatcher,
-            source: RwLock::new(Arc::from(source)),
+            source: RwLock::new(source),
             config,
             shutdown,
             health,
@@ -185,7 +199,8 @@ impl DurablePlane {
     }
 
     pub fn replace_source(&self, source: String) -> Result<(), DurablePlaneError> {
-        *self.source.write().map_err(|_| DurablePlaneError::Poisoned)? = Arc::from(source);
+        let source = Arc::new(RegisteredSource::new(source, self.config)?);
+        *self.source.write().map_err(|_| DurablePlaneError::Poisoned)? = source;
         Ok(())
     }
 
@@ -246,12 +261,10 @@ impl DurablePlane {
         }
         let source =
             { self.source.read().map_err(|_| "durable source lock poisoned".to_string())?.clone() };
-        let available =
-            inspect_durable_exports(source.as_ref(), self.config).map_err(|err| err.to_string())?;
-        if !available.iter().any(|export| export == name) {
+        if !source.exports.iter().any(|export| export == name) {
             return Err(format!("durable export {name} is not registered"));
         }
-        let wrapped = encode_durable_export(name, source.as_ref());
+        let wrapped = encode_durable_export(name, &source.text);
         let slot = self.dispatcher.reserve().map_err(|error| error.to_string())?;
         let generated = next_task_id().to_string();
         let key = key.unwrap_or(&generated);
@@ -409,6 +422,40 @@ fn resolve_path(path: &str, root: Option<&Path>) -> PathBuf {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn source_replacement_updates_exports_atomically_and_preserves_replay() {
+        let store = Arc::new(SqliteStore::in_memory().unwrap());
+        let config = IsolateConfig { cpu_ms_per_turn: 500, ..Default::default() };
+        let plane = DurablePlane::start(
+            store.clone(),
+            "export default {durable:{async old(ctx){await ctx.waitForSignal('go');return 1}}};"
+                .into(),
+            config,
+            "source-cache",
+        )
+        .unwrap();
+        let started: JsonValue =
+            serde_json::from_str(&plane.start_named("old", "null").unwrap()).unwrap();
+        let id = parse_task_id(started["taskId"].as_str().unwrap()).unwrap();
+        assert!(plane.replace_source("export default {".into()).is_err());
+        assert!(plane.start_named("old", "null").is_ok());
+        plane.replace_source("export default {durable:{async new(){return 2}}};".into()).unwrap();
+        assert!(plane.start_named("old", "null").unwrap_err().contains("not registered"));
+        let new: JsonValue =
+            serde_json::from_str(&plane.start_named("new", "null").unwrap()).unwrap();
+        assert_eq!(new["value"].as_f64(), Some(2.0));
+        plane.send_signal(&id.to_string(), "go", "true").unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while store.completion(id).unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(store.completion(id).unwrap().unwrap().value.as_f64(), Some(1.0));
+        plane.shutdown().await.unwrap();
+    }
 
     #[tokio::test]
     async fn task_boundary_error_does_not_stop_scheduler_or_accept_failed_retry() {
