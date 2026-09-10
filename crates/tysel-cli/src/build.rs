@@ -54,8 +54,10 @@ pub fn run(manifest_path: PathBuf, options: Options) -> Result<()> {
             .with_context(|| format!("failed to compile Component {}", entry.display()))?;
         (tap, "not applicable (Wasm Component)".to_owned(), "Component", source_len)
     } else {
-        let (bundle, source_map) = tysel_build::read_bundle(&entry)
-            .with_context(|| format!("failed to read {}", entry.display()))?;
+        let (bundle, source_map) = crate::progress::Progress::run("Bundle application", || {
+            tysel_build::read_bundle(&entry)
+        })
+        .with_context(|| format!("failed to read {}", entry.display()))?;
         let types = typecheck(root);
         let type_line = match &types {
             Typecheck::Ok => "passed".to_owned(),

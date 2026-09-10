@@ -1,3 +1,4 @@
+use crate::progress::Progress;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -45,7 +46,9 @@ pub fn run(options: Options) -> Result<()> {
     let evidence_mode = options.evidence.is_some();
     let baseline = if needs_baseline {
         let stub = if evidence_mode { find_release_stub()? } else { find_stub()? };
-        Some(tysel_testkit::measure(&stub).context("measure hello-service")?)
+        Some(Progress::run_plain("Measure startup and memory baseline", || {
+            tysel_testkit::measure(&stub)
+        })?)
     } else {
         None
     };
@@ -123,20 +126,19 @@ fn run_suites(
         suites.push(artifact_report(baseline));
     }
     if matches!(requested, BenchSuite::Isolate | BenchSuite::All) {
-        let report = match release_worker {
+        suites.push(Progress::run_plain("Measure isolate benchmark", || match release_worker {
             Some(worker) => run_isolate_with_worker(scale, worker),
             None => run_isolate(scale),
-        };
-        suites.push(report.context("run isolate benchmark")?);
+        })?);
     }
     if matches!(requested, BenchSuite::Task | BenchSuite::All) {
-        suites.push(run_task(scale).context("run task benchmark")?);
+        suites.push(Progress::run_plain("Measure task benchmark", || run_task(scale))?);
     }
     if matches!(requested, BenchSuite::Durable | BenchSuite::All) {
-        suites.push(run_durable(scale).context("run durable benchmark")?);
+        suites.push(Progress::run_plain("Measure durable benchmark", || run_durable(scale))?);
     }
     if matches!(requested, BenchSuite::Http | BenchSuite::All) {
-        suites.push(run_http(scale).context("run HTTP benchmark")?);
+        suites.push(Progress::run_plain("Measure http benchmark", || run_http(scale))?);
     }
     Ok(suites)
 }

@@ -16,6 +16,7 @@ use tysel_distribution::{
 
 use crate::integrity::hash_file;
 use crate::platform;
+use crate::progress::Progress;
 use crate::release;
 
 const DEFAULT_DOWNLOAD_BASE: &str = "https://github.com/wangcch/tysel/releases";
@@ -67,7 +68,7 @@ pub fn run(options: Options) -> Result<()> {
     let _lock = UpgradeLock::acquire(layout.upgrade_lock(), Duration::from_secs(5))?;
     let state_bytes = fs::read(layout.state_file()).context("read managed state.json")?;
     let state = InstallState::from_json(&state_bytes)?;
-    validate_active_install(&layout, &state)?;
+    Progress::run("Verify active installation", || validate_active_install(&layout, &state))?;
     if options.rollback {
         return rollback(&layout, &state, &state_bytes, &options);
     }
@@ -185,28 +186,43 @@ fn upgrade(
 
     anyhow::ensure!(asset.byte_size as usize <= MAX_ARCHIVE_BYTES, "release archive is oversized");
     let archive = staging.join(format!("tysel-{}-{}.tar.gz", manifest.version, state.target));
-    download_to(&client, &asset.archive_url, &archive, MAX_ARCHIVE_BYTES)?;
-    anyhow::ensure!(fs::metadata(&archive)?.len() == asset.byte_size, "archive size mismatch");
-    anyhow::ensure!(hash_file(&archive)? == asset.sha256, "archive SHA-256 mismatch");
+    download_with_size(
+        &client,
+        &asset.archive_url,
+        &archive,
+        MAX_ARCHIVE_BYTES,
+        Some(asset.byte_size),
+    )?;
+    Progress::run("Verify archive checksum", || {
+        anyhow::ensure!(fs::metadata(&archive)?.len() == asset.byte_size, "archive size mismatch");
+        anyhow::ensure!(hash_file(&archive)? == asset.sha256, "archive SHA-256 mismatch");
+        Ok(())
+    })?;
     let signature = archive.with_file_name(format!(
         "{}.sig.json",
         archive.file_name().and_then(|value| value.to_str()).context("archive filename")?
     ));
     download_to(&client, &asset.signature.url, &signature, 1024 * 1024)?;
-    tysel_build::verify_release_artifact_signature(
-        &archive,
-        &refreshed_trust,
-        state.target.canonical(),
-        now_unix()?,
-    )?;
+    Progress::run("Verify archive signature", || {
+        tysel_build::verify_release_artifact_signature(
+            &archive,
+            &refreshed_trust,
+            state.target.canonical(),
+            now_unix()?,
+        )
+    })?;
 
-    let extracted = extract_archive(&archive, staging, &manifest.version, state.target)?;
-    release::verify_installation(
-        &manifest_path,
-        &extracted,
-        state.target.canonical(),
-        &manifest.version,
-    )?;
+    let extracted = Progress::run("Extract release archive", || {
+        extract_archive(&archive, staging, &manifest.version, state.target)
+    })?;
+    Progress::run("Verify extracted installation", || {
+        release::verify_installation(
+            &manifest_path,
+            &extracted,
+            state.target.canonical(),
+            &manifest.version,
+        )
+    })?;
     fs::copy(&manifest_path, extracted.join("release-manifest.json"))?;
     let selected_manifest_bytes = fs::read(&manifest_path)?;
     let selected_manifest_sha = hash_file(&extracted.join("release-manifest.json"))?;
@@ -259,6 +275,7 @@ fn upgrade(
         install_method: InstallMethod::Upgrade,
         manifest_sha256: selected_manifest_sha,
     };
+    let activation_progress = Progress::start("Activate release and check health");
     let activation = replace_link(layout, &next)
         .and_then(|()| write_state(layout, &new_state))
         .and_then(|()| {
@@ -275,6 +292,7 @@ fn upgrade(
         }
         return Err(error).context("upgrade activation failed; previous release was restored");
     }
+    activation_progress.finish();
     emit(
         options,
         UpgradeReport {
@@ -327,6 +345,7 @@ fn rollback(
     let previous = state.previous_version.as_deref().context("no retained previous version")?;
     let previous_version = Version::parse(previous).context("parse previous version")?;
     confirm(options, &state.active_semver()?, &previous_version)?;
+    let progress = Progress::start("Verify and activate previous release");
     let manifest_path = layout.version_manifest(&previous_version);
     let previous_manifest = ReleaseManifest::from_json(&fs::read(&manifest_path)?)?;
     release::verify_installation(
@@ -352,6 +371,7 @@ fn rollback(
         let _ = write_bytes_atomically(&layout.state_file(), state_bytes);
         return Err(error).context("rollback activation failed; original release was restored");
     }
+    progress.finish();
     emit(
         options,
         UpgradeReport {
@@ -454,15 +474,84 @@ pub(crate) fn download_to(
     destination: &Path,
     limit: usize,
 ) -> Result<()> {
-    let mut response = client.get(url).send()?.error_for_status()?;
-    if response.content_length().is_some_and(|length| length > limit as u64) {
-        anyhow::bail!("download exceeds {limit} bytes");
-    }
-    let mut file = OpenOptions::new().write(true).create_new(true).open(destination)?;
-    let copied = io::copy(&mut response.by_ref().take(limit as u64 + 1), &mut file)?;
-    anyhow::ensure!(copied <= limit as u64, "download exceeds {limit} bytes");
-    file.sync_all()?;
+    download_with_size(client, url, destination, limit, None)
+}
+
+pub(crate) fn download_with_size(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    destination: &Path,
+    limit: usize,
+    expected: Option<u64>,
+) -> Result<()> {
+    let name = destination.file_name().and_then(|value| value.to_str()).unwrap_or("release file");
+    let label = match name {
+        "refreshed-trust.json" => "Fetch trust policy",
+        "refreshed-trust.json.sig.json" => "Fetch trust signature",
+        "channel-pointer.json" => "Fetch release channel",
+        "channel-pointer.json.sig.json" => "Fetch channel signature",
+        "selected-release-manifest.json" => "Fetch release manifest",
+        "selected-release-manifest.json.sig.json" => "Fetch manifest signature",
+        _ if name.ends_with(".tar.gz") => "Download release archive",
+        _ if name.ends_with(".tar.gz.sig.json") => "Fetch archive signature",
+        _ => "Download release file",
+    };
+    let progress = Progress::start(label);
+    let result = (|| -> Result<()> {
+        anyhow::ensure!(
+            expected.is_none_or(|size| size <= limit as u64),
+            "download exceeds {limit} bytes"
+        );
+        let mut response = client
+            .get(url)
+            .send()
+            .map_err(reqwest::Error::without_url)
+            .context("connect to release server / wait for response")?
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)
+            .context("release server returned an HTTP error")?;
+        let total = expected.or(response.content_length());
+        anyhow::ensure!(
+            response.content_length().is_none_or(|length| length <= limit as u64),
+            "download exceeds {limit} bytes"
+        );
+        progress.bytes(0, total);
+        let mut file = OpenOptions::new().write(true).create_new(true).open(destination)?;
+        let copied =
+            copy_download(&mut response, &mut file, limit, |bytes| progress.bytes(bytes, total))
+                .context("transfer release file")?;
+        anyhow::ensure!(total.is_none_or(|total| total == copied), "download size mismatch");
+        file.sync_all().context("sync downloaded file")?;
+        Ok(())
+    })();
+    result.context(label)?;
+    progress.finish();
     Ok(())
+}
+
+fn copy_download(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    limit: usize,
+    mut update: impl FnMut(u64),
+) -> Result<u64> {
+    let mut reader = reader.take(limit as u64 + 1);
+    let mut buffer = [0u8; 64 * 1024];
+    let mut copied = 0;
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if count == 0 {
+            break;
+        }
+        copied += count as u64;
+        anyhow::ensure!(copied <= limit as u64, "download exceeds {limit} bytes");
+        writer.write_all(&buffer[..count])?;
+        update(copied);
+    }
+    Ok(copied)
 }
 
 pub(crate) fn extract_archive(
@@ -773,10 +862,14 @@ impl UpgradeLock {
         writeln!(candidate_file, "{}", std::process::id())?;
         candidate_file.sync_all()?;
         let started = std::time::Instant::now();
+        let mut progress = None;
         loop {
             match fs::hard_link(&candidate, &path) {
                 Ok(()) => {
                     fs::remove_file(&candidate)?;
+                    if let Some(progress) = progress {
+                        Progress::finish(progress);
+                    }
                     return Ok(Self(path));
                 }
                 Err(error)
@@ -787,6 +880,8 @@ impl UpgradeLock {
                         let _ = fs::remove_file(&path);
                         continue;
                     }
+                    progress
+                        .get_or_insert_with(|| Progress::start("Wait for managed operation lock"));
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -834,6 +929,81 @@ impl Drop for UpgradeLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_copy_reports_bytes_and_enforces_limits() {
+        let source = vec![42u8; 150_000];
+        let mut output = Vec::new();
+        let mut updates = Vec::new();
+        let copied =
+            copy_download(&mut source.as_slice(), &mut output, source.len(), |n| updates.push(n))
+                .unwrap();
+        assert_eq!(copied, source.len() as u64);
+        assert_eq!(output, source);
+        assert!(updates.len() > 1);
+        assert!(updates.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(updates.last(), Some(&copied));
+        let mut output = Vec::new();
+        let error = copy_download(&mut source.as_slice(), &mut output, 100, |_| {}).unwrap_err();
+        assert!(error.to_string().contains("exceeds 100 bytes"));
+        assert!(output.len() <= 100);
+    }
+
+    #[test]
+    fn download_copy_does_not_report_unwritten_bytes() {
+        struct BrokenWriter;
+        impl Write for BrokenWriter {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("disk full"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut updates = Vec::new();
+        let error =
+            copy_download(&mut b"payload".as_slice(), &mut BrokenWriter, 100, |n| updates.push(n))
+                .unwrap_err();
+        assert!(error.to_string().contains("disk full"));
+        assert!(updates.is_empty());
+    }
+
+    #[test]
+    fn http_download_handles_chunking_truncation_and_errors() {
+        use std::net::TcpListener;
+        for (index, (response, expected, success)) in [
+            ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\n\r\n", None, true),
+            ("HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc", Some(3), true),
+            ("HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nabc", None, false),
+            ("HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc", Some(4), false),
+            ("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n", None, false),
+            ("HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", None, false),
+        ].into_iter().enumerate() {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/asset?token=download-secret", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut request = [0; 4096];
+                let _ = socket.read(&mut request);
+                let _ = socket.write_all(response.as_bytes());
+            });
+            let directory = root(&format!("http-{index}"));
+            fs::create_dir_all(&directory).unwrap();
+            let destination = directory.join("asset");
+            let client = reqwest::blocking::Client::builder().no_proxy().timeout(Duration::from_secs(2)).build().unwrap();
+            let result = download_with_size(&client, &url, &destination, 100, expected);
+            assert_eq!(result.is_ok(), success, "case {index}: {result:?}");
+            if success { assert_eq!(fs::read(&destination).unwrap(), b"abc"); }
+            else {
+                let chain = format!("{:#}", result.unwrap_err());
+                assert!(chain.contains("Download release file"));
+                assert!(!chain.contains("download-secret"), "{chain}");
+            }
+            server.join().unwrap();
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
 
     fn root(label: &str) -> PathBuf {
         env::temp_dir().join(format!(

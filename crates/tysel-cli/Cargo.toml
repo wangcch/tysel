@@ -19,6 +19,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 dialoguer.workspace = true
+console = "0.16.4"
 json-strip-comments.workspace = true
 tokio.workspace = true
 tysel-distribution.workspace = true

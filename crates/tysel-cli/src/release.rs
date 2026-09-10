@@ -13,6 +13,7 @@ use tysel_distribution::{
 
 use crate::integrity::hash_file;
 use crate::platform;
+use crate::progress::Progress;
 
 #[derive(Subcommand)]
 pub enum ReleaseCommand {
@@ -124,11 +125,15 @@ pub enum ReleaseCommand {
 pub fn run(command: ReleaseCommand) -> Result<()> {
     match command {
         ReleaseCommand::Sign { artifact, key } => {
-            let signature = tysel_build::sign_release_evidence(&artifact, key, now_unix()?)?;
+            let signature = Progress::run("Hash and sign release evidence", || {
+                tysel_build::sign_release_evidence(&artifact, key, now_unix()?)
+            })?;
             println!("Signature        {}", signature.display());
         }
         ReleaseCommand::Verify { artifact, trust } => {
-            let signature = tysel_build::verify_release_signature(&artifact, trust, now_unix()?)?;
+            let signature = Progress::run("Verify release evidence and signature", || {
+                tysel_build::verify_release_signature(&artifact, trust, now_unix()?)
+            })?;
             println!("Verified         {}", artifact.display());
             println!("Key ID           {}", signature.key_id);
         }
@@ -146,45 +151,56 @@ pub fn run(command: ReleaseCommand) -> Result<()> {
             commands,
             output,
         } => {
-            let evidence = tysel_build::compare_reproducible_builds(
-                first,
-                second,
-                &source_commit,
-                &target,
-                &toolchain,
-                &commands,
-                lockfile,
-            )?;
-            let output = tysel_build::write_reproducible_build_evidence(output, &evidence)?;
+            let evidence = Progress::run("Compare release archive hashes", || {
+                tysel_build::compare_reproducible_builds(
+                    first,
+                    second,
+                    &source_commit,
+                    &target,
+                    &toolchain,
+                    &commands,
+                    lockfile,
+                )
+            })?;
+            let output = Progress::run("Write reproducibility evidence", || {
+                tysel_build::write_reproducible_build_evidence(output, &evidence)
+            })?;
             println!("Reproducible      {}", evidence.artifact.sha256);
             println!("Evidence          {}", output.display());
         }
         ReleaseCommand::VerifyReproducibility { artifact, evidence, lockfile, target } => {
-            let evidence = tysel_build::verify_reproducible_build_evidence(
-                &artifact, evidence, lockfile, &target,
-            )?;
+            let evidence = Progress::run("Verify reproducibility evidence", || {
+                tysel_build::verify_reproducible_build_evidence(
+                    &artifact, evidence, lockfile, &target,
+                )
+            })?;
             println!("Verified         {}", artifact.display());
             println!("Target           {}", evidence.target);
             println!("Commit           {}", evidence.source_commit);
         }
         ReleaseCommand::SignArtifact { artifact, target, key } => {
-            let signature =
-                tysel_build::sign_release_artifact(&artifact, &target, key, now_unix()?)?;
+            let signature = Progress::run("Hash and sign release archive", || {
+                tysel_build::sign_release_artifact(&artifact, &target, key, now_unix()?)
+            })?;
             println!("Signature        {}", signature.display());
         }
         ReleaseCommand::VerifyArtifact { artifact, trust, target } => {
-            let signature = tysel_build::verify_release_artifact_signature(
-                &artifact,
-                trust,
-                &target,
-                now_unix()?,
-            )?;
+            let signature = Progress::run("Verify archive hash and signature", || {
+                tysel_build::verify_release_artifact_signature(
+                    &artifact,
+                    trust,
+                    &target,
+                    now_unix()?,
+                )
+            })?;
             println!("Verified         {}", artifact.display());
             println!("Target           {}", signature.target);
             println!("Key ID           {}", signature.key_id);
         }
         ReleaseCommand::VerifyInstallation { manifest, root, target, version } => {
-            verify_installation(&manifest, &root, &target, &version)?;
+            Progress::run("Verify installation files and binary identities", || {
+                verify_installation(&manifest, &root, &target, &version)
+            })?;
             println!("Verified         {}", root.display());
             println!("Target           {target}");
             println!("Version          {version}");
@@ -233,16 +249,20 @@ pub fn run(command: ReleaseCommand) -> Result<()> {
             println!("Verified         forward-only trust transition");
         }
         ReleaseCommand::VerifyMetadata { document, signature, trust } => {
-            tysel_build::verify_release_metadata_signature(
-                &document,
-                &signature,
-                &trust,
-                now_unix()?,
-            )?;
+            Progress::run("Verify metadata signature", || {
+                tysel_build::verify_release_metadata_signature(
+                    &document,
+                    &signature,
+                    &trust,
+                    now_unix()?,
+                )
+            })?;
             println!("Verified         {}", document.display());
         }
         ReleaseCommand::SignMetadata { document, key } => {
-            let signature = tysel_build::sign_release_metadata(&document, &key, now_unix()?)?;
+            let signature = Progress::run("Sign release metadata", || {
+                tysel_build::sign_release_metadata(&document, &key, now_unix()?)
+            })?;
             println!("Signature        {}", signature.display());
         }
     }

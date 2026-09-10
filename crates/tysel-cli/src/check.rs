@@ -28,8 +28,10 @@ fn run_with_options(manifest_path: &Path, require_types: bool) -> Result<()> {
             .with_context(|| format!("failed to validate Component {}", entry.display()))?;
         ("component", source.len(), Typecheck::Skipped("Wasm Component"))
     } else {
-        let (bundle, _map) = tysel_build::read_bundle(&entry)
-            .with_context(|| format!("failed to bundle {}", entry.display()))?;
+        let (bundle, _map) = crate::progress::Progress::run("Bundle application", || {
+            tysel_build::read_bundle(&entry)
+        })
+        .with_context(|| format!("failed to bundle {}", entry.display()))?;
         ("bundle", bundle.len(), typecheck(root))
     };
     print!("{}", manifest.inspect_report());
@@ -74,9 +76,13 @@ pub(crate) fn typecheck(root: &Path) -> Typecheck {
     let Some(tsc) = find_tsc(root) else {
         return Typecheck::Skipped("typescript not found");
     };
+    let progress = crate::progress::Progress::start("Check TypeScript types");
     let output = Command::new(&tsc).args(["--noEmit", "-p"]).arg(&tsconfig).output();
     match output {
-        Ok(output) if output.status.success() => Typecheck::Ok,
+        Ok(output) if output.status.success() => {
+            progress.finish();
+            Typecheck::Ok
+        }
         Ok(output) => {
             let mut text = String::from_utf8_lossy(&output.stderr).into_owned();
             text.push_str(&String::from_utf8_lossy(&output.stdout));

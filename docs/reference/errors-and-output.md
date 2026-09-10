@@ -149,3 +149,12 @@ See [Component ABI](component/abi.md) and
 See [Debug service failures](../guides/debugging.md),
 [Application module](runtime/application.md), [Application limits](manifest/limits.md),
 and [Production operations](../operations/production.md).
+
+## Progress output
+
+Human-readable progress is written to stderr; command results remain on stdout.
+Interactive terminals may show animated progress, while redirected output uses
+plain text.
+
+`--json`, `bench --format json`, and `--error-format json` suppress progress
+messages. Progress text is not a stable interface for automation.

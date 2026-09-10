@@ -25,6 +25,7 @@ mod init;
 mod integrity;
 mod node_scan;
 mod platform;
+mod progress;
 mod project;
 mod release;
 mod task;
@@ -416,6 +417,21 @@ fn main() -> ExitCode {
     }
     let cli = Cli::parse();
     let error_format = cli.error_format;
+    progress::configure(
+        error_format == ErrorFormat::Human
+            && !matches!(
+                &cli.command,
+                Commands::Upgrade { json: true, .. }
+                    | Commands::Doctor { json: true, .. }
+                    | Commands::Test { json: true, .. }
+                    | Commands::Init { json: true, .. }
+                    | Commands::Compat { json: true, .. }
+                    | Commands::Bench { format: bench::BenchFormat::Json, .. }
+                    | Commands::Mcp { .. }
+                    | Commands::Queue { .. }
+                    | Commands::Durable { .. }
+            ),
+    );
     match run(cli) {
         Ok(code) => code,
         Err(err) => {

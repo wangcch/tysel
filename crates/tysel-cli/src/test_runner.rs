@@ -112,8 +112,23 @@ pub fn run(
     }
 
     let mut reports = Vec::new();
-    for file in &files {
-        reports.push(run_file(file, root, &manifest, timeout_ms, list_only, filter)?);
+    for (index, file) in files.iter().enumerate() {
+        let label = format!(
+            "{} test file [{}/{}] {}",
+            if list_only { "Discover" } else { "Run" },
+            index + 1,
+            files.len(),
+            file.strip_prefix(root).unwrap_or(file).display()
+        );
+        let report = crate::progress::Progress::run_plain(&label, || {
+            run_file(file, root, &manifest, timeout_ms, list_only, filter)
+        })?;
+        if !json_output && !list_only {
+            print_file(&report);
+            use std::io::Write;
+            std::io::stdout().flush().context("flush test file results")?;
+        }
+        reports.push(report);
     }
     let discovered = reports.iter().map(|report| count(&report["discovered"])).sum::<u64>();
     if filter.is_some() && discovered == 0 {
@@ -142,7 +157,7 @@ pub fn run(
     if json_output {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        print_human(&report);
+        println!("\n{} passed, {} failed", report["passed"], report["failed"]);
     }
     if failed > 0 {
         return Err(anyhow!("{failed} test(s) failed"));
@@ -486,20 +501,17 @@ fn engine_value_to_json(value: Value) -> JsonValue {
     }
 }
 
-fn print_human(report: &JsonValue) {
-    for file in report["files"].as_array().into_iter().flatten() {
-        println!("{}", file["path"].as_str().unwrap_or("test"));
-        for test in file["tests"].as_array().into_iter().flatten() {
-            let status = if test["status"] == "passed" { "ok" } else { "fail" };
-            println!("  {status:<4} {}", test["name"].as_str().unwrap_or("unnamed test"));
-            if let Some(error) = test["error"].as_str() {
-                for line in error.lines() {
-                    println!("       {line}");
-                }
+fn print_file(file: &JsonValue) {
+    println!("{}", file["path"].as_str().unwrap_or("test"));
+    for test in file["tests"].as_array().into_iter().flatten() {
+        let status = if test["status"] == "passed" { "ok" } else { "fail" };
+        println!("  {status:<4} {}", test["name"].as_str().unwrap_or("unnamed test"));
+        if let Some(error) = test["error"].as_str() {
+            for line in error.lines() {
+                println!("       {line}");
             }
         }
     }
-    println!("\n{} passed, {} failed", report["passed"], report["failed"]);
 }
 
 fn print_list(report: &JsonValue) {

@@ -16,6 +16,7 @@ use tysel_manifest::Manifest;
 use crate::check::{self, Typecheck};
 use crate::integrity::hash_file;
 use crate::platform;
+use crate::progress::Progress;
 
 pub const DOCTOR_SCHEMA_VERSION: u32 = 1;
 
@@ -86,7 +87,9 @@ pub fn run(options: Options) -> Result<bool> {
 fn collect(options: &Options) -> Result<Report> {
     let mut checks = Vec::new();
     let target = Target::current();
+    let progress = Progress::start("Check installation");
     collect_installation(&mut checks, target);
+    progress.finish();
     collect_platform(&mut checks, target);
     if options.install_only {
         checks.push(skip("project.manifest", "project checks disabled by --install"));
@@ -486,7 +489,7 @@ fn collect_project(checks: &mut Vec<Check>, selected: Option<&Path>) -> Result<(
     let entry = root.join(&manifest.app.entry);
     if entry.is_file() {
         let bundle_ok = entry.extension().and_then(|value| value.to_str()) == Some("wasm")
-            || tysel_build::read_bundle(&entry).is_ok();
+            || Progress::run("Check project bundle", || tysel_build::read_bundle(&entry)).is_ok();
         checks.push(if bundle_ok {
             pass("project.entry", "entry and non-executing bundle scan passed")
         } else {
@@ -599,7 +602,7 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
         Err(error) => {
             checks.push(fail(
                 "network.channel",
-                format!("release trust stream could not be authenticated: {error}"),
+                format!("release trust stream could not be authenticated: {error:#}"),
                 "run tysel upgrade while the installed trust policy is valid, or reinstall from the official HTTPS bootstrap",
             ));
             checks.push(skip("network.manifest", "trust authentication failed"));
@@ -613,7 +616,7 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
         Err(error) => {
             checks.push(fail(
                 "network.channel",
-                format!("{channel_name} channel is unreachable: {error}"),
+                format!("{channel_name} channel is unreachable: {error:#}"),
                 "check DNS, TLS, proxy settings, and TYSEL_DOWNLOAD_BASE",
             ));
             checks.push(skip("network.manifest", "channel check failed"));
@@ -724,8 +727,14 @@ fn collect_network(checks: &mut Vec<Check>, enabled: bool, target: Target) {
         ));
         return;
     };
+    let progress = Progress::start("Check release archive availability");
     let available =
         client.head(&asset.archive_url).send().is_ok_and(|response| response.status().is_success());
+    if available {
+        progress.finish();
+    } else {
+        drop(progress);
+    }
     checks.push(if available {
         pass("network.asset", format!("{} archive is reachable", target.canonical()))
     } else {
@@ -760,14 +769,34 @@ fn channel_pointer_url(base: &str, channel: Channel) -> String {
 }
 
 fn get_bounded(client: &reqwest::blocking::Client, url: &str, limit: usize) -> Result<Vec<u8>> {
-    let mut response = client.get(url).send()?.error_for_status()?;
-    if response.content_length().is_some_and(|length| length > limit as u64) {
-        anyhow::bail!("response exceeds {limit} bytes");
-    }
-    let mut bytes = Vec::new();
-    response.by_ref().take(limit as u64 + 1).read_to_end(&mut bytes)?;
-    anyhow::ensure!(bytes.len() <= limit, "response exceeds {limit} bytes");
-    Ok(bytes)
+    let label = if url.contains("trust.json") {
+        "Check release trust metadata"
+    } else if url.contains("channel-pointer") {
+        "Check release channel metadata"
+    } else {
+        "Check release manifest metadata"
+    };
+    Progress::run(label, || {
+        let mut response = client
+            .get(url)
+            .send()
+            .map_err(reqwest::Error::without_url)
+            .context("connect to release server / wait for response")?
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)
+            .context("release server returned an HTTP error")?;
+        if response.content_length().is_some_and(|length| length > limit as u64) {
+            anyhow::bail!("response exceeds {limit} bytes");
+        }
+        let mut bytes = Vec::new();
+        response
+            .by_ref()
+            .take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .context("read release metadata")?;
+        anyhow::ensure!(bytes.len() <= limit, "response exceeds {limit} bytes");
+        Ok(bytes)
+    })
 }
 
 fn authenticate_network_trust(
@@ -968,6 +997,22 @@ fn status_label(status: Status) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_error_chains_do_not_expose_url_credentials() {
+        let client = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+        let error = get_bounded(
+            &client,
+            "ftp://example.invalid/private-path-token/trust.json?token=query-secret",
+            1024,
+        )
+        .unwrap_err();
+        let chain = format!("{error:#}");
+        assert!(chain.contains("connect to release server"));
+        for secret in ["private-path-token", "query-secret", "example.invalid"] {
+            assert!(!chain.contains(secret), "{chain}");
+        }
+    }
 
     #[test]
     fn report_summary_and_json_are_stable_and_secret_free() {

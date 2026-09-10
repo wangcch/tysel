@@ -8,7 +8,7 @@ use tysel_distribution::{
     Channel, ExpectedFile, ManagedLayout, ReleaseAsset, ReleaseManifest, Target,
 };
 
-use crate::{integrity::hash_file, upgrade};
+use crate::{integrity::hash_file, progress::Progress, upgrade};
 
 const MANIFEST: &str = ".tysel-release-manifest.json";
 const MANIFEST_SIGNATURE: &str = ".tysel-release-manifest.json.sig.json";
@@ -29,7 +29,10 @@ fn resolve_with_layout(layout: &ManagedLayout, target: Target, offline: bool) ->
     let version = Version::parse(env!("CARGO_PKG_VERSION"))?;
     let cache =
         layout.root().join("build-targets").join(format!("v{version}")).join(target.canonical());
-    if let Ok(stub) = verify_cache(&cache, &installed_trust, &version, target) {
+    let progress = Progress::start(format!("Check {target} runtime cache"));
+    let cached = verify_cache(&cache, &installed_trust, &version, target);
+    progress.finish();
+    if let Ok(stub) = cached {
         return Ok(stub);
     }
     anyhow::ensure!(!offline, "no verified cached runtime for {target}; rerun without --offline");
@@ -76,7 +79,7 @@ fn download(
     target: Target,
 ) -> Result<PathBuf> {
     let client = upgrade::release_client()?;
-    eprintln!("Downloading verified Tysel {version} runtime for {target}...");
+
     let trust = upgrade::resolve_trust_policy(&client, installed_trust, staging)?;
     let (manifest, manifest_path) = upgrade::resolve_manifest(
         &client,
@@ -90,22 +93,35 @@ fn download(
     anyhow::ensure!(version >= &minimum, "target runtime requires tysel {minimum} or newer");
     let asset = asset(&manifest, target)?;
     let archive = staging.join(format!("tysel-{version}-{target}.tar.gz"));
-    upgrade::download_to(&client, &asset.archive_url, &archive, upgrade::MAX_ARCHIVE_BYTES)?;
-    anyhow::ensure!(fs::metadata(&archive)?.len() == asset.byte_size, "archive size mismatch");
-    anyhow::ensure!(hash_file(&archive)? == asset.sha256, "archive SHA-256 mismatch");
+    upgrade::download_with_size(
+        &client,
+        &asset.archive_url,
+        &archive,
+        upgrade::MAX_ARCHIVE_BYTES,
+        Some(asset.byte_size),
+    )?;
+    Progress::run("Verify runtime checksum", || {
+        anyhow::ensure!(fs::metadata(&archive)?.len() == asset.byte_size, "archive size mismatch");
+        anyhow::ensure!(hash_file(&archive)? == asset.sha256, "archive SHA-256 mismatch");
+        Ok(())
+    })?;
     let archive_signature = archive.with_file_name(format!(
         "{}.sig.json",
         archive.file_name().and_then(|name| name.to_str()).context("archive filename")?
     ));
     upgrade::download_to(&client, &asset.signature.url, &archive_signature, 1024 * 1024)?;
-    tysel_build::verify_release_artifact_signature(
-        &archive,
-        &trust,
-        target.canonical(),
-        upgrade::now_unix()?,
-    )?;
-    let extracted = upgrade::extract_archive(&archive, staging, &manifest.version, target)?;
-    verify_files(&extracted, asset)?;
+    Progress::run("Verify runtime signature", || {
+        tysel_build::verify_release_artifact_signature(
+            &archive,
+            &trust,
+            target.canonical(),
+            upgrade::now_unix()?,
+        )
+    })?;
+    let extracted = Progress::run("Extract target runtime", || {
+        upgrade::extract_archive(&archive, staging, &manifest.version, target)
+    })?;
+    Progress::run("Verify target runtime", || verify_files(&extracted, asset))?;
     fs::copy(&manifest_path, extracted.join(MANIFEST))?;
     fs::copy(
         staging.join("selected-release-manifest.json.sig.json"),
