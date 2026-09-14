@@ -25,7 +25,8 @@ The option is global and can appear before or after the command:
 tysel --error-format json check
 ```
 
-Fatal errors are one JSON object on stderr. Build failures also include a
+Each fatal error is one JSON object on stderr. Configuration warning events may
+precede it, so parse stderr line by line. Build failures also include a
 `diagnostics` array with original-source positions when Oxc supplies a span:
 
 ```json
@@ -68,13 +69,41 @@ source rather than emitted JavaScript. Erased type-only imports are excluded.
 TypeScript typecheck output itself remains compiler text, not this structured
 protocol.
 
+## Configuration warnings
+
+Project commands that load a valid manifest report ignored or potentially
+mistyped settings on stderr. Warnings preserve existing behavior and do not
+change the exit status. `config path` and `config schema` do not validate a
+manifest. `config show` and `config convert` keep their serialization on stdout.
+
+With `--error-format json`, warnings use a separate object with
+`schemaVersion: 1`, `event: "diagnostics"`, and a `diagnostics` array. Each item
+has severity `warning`, phase `manifest`, a canonical file path, and the
+original field-value range. One-shot commands omit `generation`; dev includes
+warnings in its successful generation snapshots. Warning messages do not echo
+configured values or endpoints. Explicit configuration serialization still
+contains the user's supplied values.
+
+| Code | Meaning |
+| --- | --- |
+| `TYSEL_CONFIG_UNSUPPORTED_STORE` | `durable.store` is not exactly `sqlite`; the application SQLite capability is disabled. Host durable-store overrides still apply. |
+| `TYSEL_CONFIG_JSON_LOGS_DISABLED` | `observability.logs` disables the JSON logger without selecting an alternative formatter. |
+| `TYSEL_CONFIG_IGNORED_TRACES` | Non-null manifest trace configuration is ignored. |
+| `TYSEL_CONFIG_IGNORED_METRICS` | Non-null manifest metric configuration is ignored. |
+
+See [Durable storage and observability](/reference/manifest/durable-observability) for
+the effective behavior and environment-variable precedence in each execution
+path. A later validation or build error can follow warnings and still exits
+non-zero; consumers must check the final process status.
 
 ## Development diagnostic stream
 
 `tysel --error-format json dev` writes one JSON object per diagnostic update to
 stderr while the server continues running. A failed reload publishes a
-non-empty array; the next successful reload publishes an empty array so an
-editor can clear stale diagnostics. `generation` increases for each reload
+non-empty error array; startup and successful reloads publish the current
+configuration warnings, or an empty array when no warnings remain. Each snapshot
+replaces the previous one so an editor can clear stale diagnostics without
+discarding current warnings. `generation` increases for each reload
 attempt, and `schemaVersion` is currently `1`.
 
 Unhandled handler failures publish a separate `runtimeDiagnostic` event
@@ -152,3 +181,12 @@ See [Component ABI](/reference/component/abi) and
 See [Debug service failures](/docs/guides/debugging),
 [Application module](/reference/runtime/application), [Application limits](/reference/manifest/limits),
 and [Production operations](/docs/operations/production).
+
+## Progress output
+
+Human-readable progress is written to stderr; command results remain on stdout.
+Interactive terminals may show animated progress, while redirected output uses
+plain text.
+
+`--json`, `bench --format json`, and `--error-format json` suppress progress
+messages. Progress text is not a stable interface for automation.

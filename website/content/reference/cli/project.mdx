@@ -82,13 +82,19 @@ Locate, validate, inspect, convert, or print the schema for a manifest.
 | --- | --- | --- |
 | `path` | `tysel config path [--manifest FILE]` | Print the discovered path. It can locate a malformed manifest. |
 | `validate` | `tysel config validate [--manifest FILE]` | Load and validate configuration. |
-| `show` | `tysel config show [--format toml|json] [--manifest FILE]` | Print effective configuration with omitted defaults expanded. |
+| `show` | `tysel config show [--format toml|json] [--manifest FILE]` | Print manifest values with omitted defaults expanded; does not resolve deployment environment overrides. |
 | `convert` | `tysel config convert --to toml|json [-o FILE] [--manifest FILE]` | Convert a validated manifest. Defaults to stdout. |
 | `schema` | `tysel config schema` | Print the bundled Draft 2020-12 JSON Schema; no project is required. |
 
 `config convert --output` uses create-new semantics: it never overwrites a
 file, the parent directory must already exist, and the filename extension must
 match `--to`.
+
+Schema-valid settings that are ignored or disable a capability produce
+non-fatal warnings on stderr. Use `--error-format json` for warning codes and
+source locations; stdout remains the requested manifest serialization. See
+[Durable storage and observability](/reference/manifest/durable-observability) for
+effective logging, storage, and telemetry behavior.
 
 ```sh
 tysel config validate

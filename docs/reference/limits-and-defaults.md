@@ -38,6 +38,17 @@ their cumulative body size exceeds the limit.
 The isolated-profile body ceiling is stricter than the default manifest
 request limit. The smaller applicable bound wins.
 
+Each QuickJS isolate also admits at most **256 outstanding host I/O operations**
+and **32 MiB of charged native I/O buffers**. Queued, running and completed but
+unconsumed operations share this budget. Submission over the bound throws a
+`RangeError` containing `host I/O budget exceeded`; an oversized completion
+rejects its Promise. Consume results and limit concurrency before retrying.
+These fixed implementation bounds supplement the JavaScript heap limit;
+they are not a cap on total process RSS or temporary allocations inside a
+capability. Canceled operations keep their reservation until completion is
+discarded. Clearing a timer releases its callback references and cancels any
+started native wait; a timer cleared in the same turn submits no native wait.
+
 ## Data capabilities
 
 | Surface | Current implementation bound |
@@ -72,6 +83,15 @@ request limit. The smaller applicable bound wins.
 | MCP tool name | 128 bytes |
 | MCP description | 4 KiB |
 | MCP arguments | 32 KiB |
+
+The ordinary task broker keeps terminal input, metadata and results for up to
+**60 seconds**, with at most **1,024 records** and **8 MiB of charged retained
+memory**. The oldest records are evicted sooner under count or byte pressure;
+larger individual records are not retained. Historical lookup then returns no
+record. Active tasks are separate from this history, and MCP callers receive
+their result directly even if the history entry is evicted before consumption.
+Idle service worker polling also prunes expired history. This in-memory policy
+does not change Durable storage retention or provide persistent idempotency.
 
 ## Durable bounds
 

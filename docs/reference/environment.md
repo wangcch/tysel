@@ -63,6 +63,9 @@ The secret named by `TYSEL_LLM_SECRET` must also be present in
 
 ## OpenTelemetry
 
+These variables control export in packaged services. Local `tysel run` /
+`tysel dev` and Component tasks do not initialize an OTLP exporter.
+
 | Variable | Meaning |
 | --- | --- |
 | `OTEL_SDK_DISABLED=true` | Disable trace and metric export, even when endpoints remain set. |
@@ -72,7 +75,8 @@ The secret named by `TYSEL_LLM_SECRET` must also be present in
 
 A signal-specific endpoint overrides or supplements the shared exporter
 configuration according to the OpenTelemetry exporter. Manifest `traces` and
-`metrics` fields are not yet propagated to packaged execution. Endpoints must be
+`metrics` fields are ignored and produce CLI warnings when non-null. Build-time
+environment values are not embedded in the package. Endpoints must be
 HTTP(S), at most 2 KiB, and contain no userinfo, query, or fragment. Put
 collector credentials in the standard OTLP headers configuration, never in the
 URL.

@@ -2154,8 +2154,8 @@
       "status": "reviewed"
     },
     "reference/component/runtime.mdx": {
-      "sourceHash": "2f032dbdbb521886a3aad260016b942ac73f6c5708aaebdead4037e60d763f14",
-      "translationHash": "f47c98a5620f7553a5450b6960921bca646bde79e0669838b5f2c1b5a1a83c11",
+      "sourceHash": "6f8e6d98e9189b101b59eda76644cd5757d03426bbfb6885613b16153060e188",
+      "translationHash": "3598505e08ab51da72cb908ef4208c385012dfa55383124f8f399c3c7a067a5b",
       "status": "reviewed"
     },
     "reference/component/rust-sdk.mdx": {
@@ -2164,8 +2164,8 @@
       "status": "reviewed"
     },
     "reference/manifest/durable-observability.mdx": {
-      "sourceHash": "8117f2c1f41ee9966ddae45e97e340360179d77855c29260060dd161060b36a4",
-      "translationHash": "4603d51e9202861a8ece85c83641d5ecae3eb7eb6f59b172444b37f09a4d71ab",
+      "sourceHash": "594498f1e24dff3460bc46645eab957784aa37616ae16a158d8d515fc8aa9cc1",
+      "translationHash": "88b778b21b4eec0c6915e8686b79f5df2f3b571bf485e91458cd9b876b5ce921",
       "status": "reviewed"
     },
     "reference/manifest/limits.mdx": {
@@ -2204,8 +2204,8 @@
       "status": "reviewed"
     },
     "reference/environment.mdx": {
-      "sourceHash": "1af65b78116439af012302f640e484d7a6a782b1156b8d2f7c675aabd959a622",
-      "translationHash": "63e00ad319b9a9486e998e53ffa19a8850b2dd69c8a4a2812a39d314f790731a",
+      "sourceHash": "8755033e68819c531e8a49d4c4ec85a1ce5d6bdfaffba5e1eaceb70821bea9fa",
+      "translationHash": "d6733c11e1c7bab9bc65842670285a6d188b20726c5353d1880bbac487e06d61",
       "status": "reviewed"
     },
     "reference/index.mdx": {
@@ -2214,8 +2214,8 @@
       "status": "reviewed"
     },
     "reference/limits-and-defaults.mdx": {
-      "sourceHash": "951c391759a22096f12d0a65d9764609fa2157a7a49d251c3bdc7840d96e3091",
-      "translationHash": "0f5df081759e031e2f80fb14cbbfc7080da36f60052faac97b35de559db9dbfd",
+      "sourceHash": "7d3f1d6eb22fec602c6aaafca77a454ab0d0a232e7526ddedff73d95fa8d9a09",
+      "translationHash": "6ec2b8135d340c9f2112dc4cc6093ab6229cd66cfc844237fd4c569b8178caac",
       "status": "reviewed"
     },
     "reference/runtime/durable.mdx": {
@@ -2239,8 +2239,8 @@
       "status": "reviewed"
     },
     "reference/errors-and-output.mdx": {
-      "sourceHash": "f9aa1cf2c38fd09657a70bc67135a39379337ca35fcb37f2446bd76ebb23b64a",
-      "translationHash": "9d1895380ec7313941825e0fab6033a9b375d6e860e802b6b0cb3efbc6c14c2b",
+      "sourceHash": "02bcc3e77ef54ddf7291856e8411d9503bfe58f4b1f81059563293c24e66284f",
+      "translationHash": "32dddb06b2f8b12d240a5ef02723ebd9c20da957a1f4a3674ff7f1d3d2a8abd5",
       "status": "reviewed"
     },
     "reference/runtime/application.mdx": {
@@ -2314,13 +2314,13 @@
       "status": "reviewed"
     },
     "docs/guides/observability.mdx": {
-      "sourceHash": "660a17eaca7a226fb4f54d28d31b8a94d8369d90bdf974680cf01940ef0ed3f9",
-      "translationHash": "54e0462264673cb9a3c3ae0ccfb60ad135fb51a2c8188fe87d6141c0c3871ff4",
+      "sourceHash": "d196b4f5c9a1c4fb18cb2acb52f9242d6804333e5afab2f18e04c6d96f43eb6f",
+      "translationHash": "3652a317bd8a9afe7b74f0b2271666bf6e7a476b2de96ab95b774345c7cff158",
       "status": "reviewed"
     },
     "reference/cli/project.mdx": {
-      "sourceHash": "c9eecfd943d692c18fccfdd27303a677b7bfb1242da764620bf4de0b57ba75f1",
-      "translationHash": "07b0c467ac2892ef6c67601318b1597568329889ff4f93102871e1ba9a515304",
+      "sourceHash": "27130357f84a378de1ff79ead1f0cec38a33e960521730a8cd8af584898bedf5",
+      "translationHash": "bc5cd17766aa1430e4b62e45f710ac62999016cd76d5dbdc39711558de0007fe",
       "status": "reviewed"
     },
     "blog/why-tysel-is-not-another-nodejs-runtime.mdx": {

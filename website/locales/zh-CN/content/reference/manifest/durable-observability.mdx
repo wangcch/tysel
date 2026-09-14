@@ -1,15 +1,15 @@
 ---
 title: "持久存储与可观测性"
-description: "可选的 durable 表选择持久处理程序使用的事件存储。"
+description: "可选的 durable 表配置应用 SQLite 能力，并用于推导默认持久事件日志路径。"
 ---
 
 ## `[durable]`
 
-可选的 `durable` 表选择持久处理程序使用的事件存储。
+可选的 `durable` 表配置应用 SQLite 能力，并用于推导默认持久事件日志路径。
 
 | 字段 | 默认值 | 当前实现 |
 | --- | --- | --- |
-| `store` | `sqlite` | `sqlite` 启用应用 SQLite 能力。其他字符串可以通过 schema 验证，但不会配置由清单支持的存储。 |
+| `store` | `sqlite` | 只有精确匹配 `sqlite` 才启用应用 SQLite 能力。其他字符串仍然有效，但会产生 `TYSEL_CONFIG_UNSUPPORTED_STORE` 告警并禁用此能力，不会选择另一种后端。 |
 | `path` | `./data/tysel.db` | 相对于运行时的应用 SQLite 数据库路径。 |
 
 ```toml
@@ -20,7 +20,7 @@ path = "./data/workflows.db"
 
 在项目命令中，相对路径从清单目录解析。在打包后的可执行文件中，相对路径从进程工作目录解析。模块导出持久处理程序时，默认持久事件日志位于该应用数据库旁，名称为 `durable-events.db`。设置 `TYSEL_DURABLE_SQLITE_PATH` 可以明确选择持久事件日志文件。
 
-宿主通过 `TYSEL_DURABLE_POSTGRES_URL` 配置时，运行时也可使用由 Postgres 支持的持久存储。这属于宿主配置，不是版本 1 清单中的 `store` 值。
+宿主通过 `TYSEL_DURABLE_POSTGRES_URL` 配置时，运行时也可使用由 Postgres 支持的持久存储。这属于宿主配置，不是版本 1 清单中的 `store` 值。对于含持久处理程序的模块，依次采用第一个非空白宿主覆盖配置：`TYSEL_DURABLE_POSTGRES_URL`、`TYSEL_DURABLE_SQLITE_PATH`，最后使用应用数据库旁的默认事件日志。如果应用路径为空或为 `:memory:`，则没有默认事件日志，必须提供宿主覆盖配置。非 `sqlite` 的 store 值不会禁用这些宿主覆盖配置。
 
 回放和备份要求请参阅[持久 API](/reference/runtime/durable)、[持久执行](/docs/concepts/durable-execution)和[生产运维](/docs/operations/production)。
 
@@ -28,17 +28,23 @@ path = "./data/workflows.db"
 
 | 字段 | 默认值 | 当前实现 |
 | --- | --- | --- |
-| `logs` | `json` | 不区分大小写的 `json` 启用结构化运行时日志；其他字符串会禁用该 JSON 日志记录器。 |
-| `traces` | 未设置 | 清单 schema 记录的可空端点意图。 |
-| `metrics` | 未设置 | 清单 schema 记录的可空端点意图。 |
+| `logs` | `json` | 不区分大小写的 `json` 启用结构化运行时日志；其他字符串会禁用该 JSON 日志记录器，并产生 `TYSEL_CONFIG_JSON_LOGS_DISABLED` 告警，不会选择其他格式。 |
+| `traces` | 未设置 | 保留字段；所有非 null 值（包括空字符串）都会产生 `TYSEL_CONFIG_IGNORED_TRACES` 告警。 |
+| `metrics` | 未设置 | 保留字段；所有非 null 值（包括空字符串）都会产生 `TYSEL_CONFIG_IGNORED_METRICS` 告警。 |
 
 ```toml
 [observability]
 logs = "json"
-traces = "http://otel-collector:4318/v1/traces"
-metrics = "http://otel-collector:4318/v1/metrics"
 ```
 
-当前包清单会携带 `logs`，但尚未将 `traces` 或 `metrics` 传递给打包后的运行时。请使用标准 OpenTelemetry 环境变量配置实际导出。参考文档有意区分这两点：这些字段可以通过 schema 验证，但当前运维控制仍是环境配置。不要把身份验证令牌放入清单；请使用包含密钥的部署配置。
+当前包清单会携带 `logs`，但不会传递 `traces` 或 `metrics`。这两个字段在本地命令和打包执行中均不生效。为保持兼容，仍接受这些字段；告警不会使验证、运行或构建失败，也不会启用导出器。省略字段（或在 JSON 中使用 `null`）即可清除告警。不要把身份验证令牌放入清单；请使用包含密钥的部署配置。
+
+| 执行路径 | 日志 | 追踪和指标导出 |
+| --- | --- | --- |
+| `tysel run` / `tysel dev` 服务 | 清单中的 `logs` 值 | 不初始化 OTLP 导出器，即使已设置宿主端点变量。 |
+| 打包服务 | 构建时嵌入的 `logs` 值 | 部署环境：信号专用端点优先于共享端点；`OTEL_SDK_DISABLED=true` 禁用两种信号。 |
+| Component 任务 | 没有 HTTP 服务日志记录器 | 不初始化 OTLP 导出器。 |
+
+构建机器的环境变量值不会嵌入产物。项目命令在 stderr 上报告告警；人类可读模式和 `--error-format json` 模式使用相同的 TOML/JSON 源码位置。`config show` 展开清单默认值并保留用户提供的值，它不是部署环境报告。诊断码和流处理方式请参阅[错误与机器可读输出](/reference/errors-and-output)。
 
 支持的 OpenTelemetry 控制请参阅[环境变量](/reference/environment)，采集器和监控指南请参阅[生产运维](/docs/operations/production)。

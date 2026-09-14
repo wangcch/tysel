@@ -18,15 +18,15 @@ logs = "json"
 
 日志记录器会省略查询字符串、请求与响应头、正文、SQL、文件系统路径、出站 URL 和密钥值。能力、操作和结果标签使用固定白名单；意外值会变为 `redacted`。即便如此仍应限制日志访问，因为路由名称和时间信息也属于运维数据。
 
-除不区分大小写的 `json` 外，其他 `logs` 值都会禁用这些 JSON 行，但不会禁用 OTLP。
+除不区分大小写的 `json` 外，其他 `logs` 值都会禁用这些 JSON 行。CLI 会对此发出告警；该设置不会选择另一种格式或禁用 OTLP。
 
 ## 启用 OTLP 导出
 
-当前实际运维控制使用标准环境变量，而非清单中的 `observability.traces` 和 `observability.metrics` 字段。通过 OTLP/HTTP 采集器启用两种信号：
+打包服务使用标准环境变量初始化导出器。清单中的 `observability.traces` 和 `observability.metrics` 字段被忽略，设置后会产生 CLI 告警。本地 `tysel run` / `tysel dev` 和 Component 任务不初始化导出器。先构建服务，再在启动可执行文件时设置部署变量：
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-tysel run
+tysel build --output dist/observed-service
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 ./dist/observed-service
 ```
 
 只启用一种信号时，只设置对应端点：
@@ -79,9 +79,10 @@ otelcol-contrib --config examples/filesystem-transform/otel-collector.yaml
 cd examples/filesystem-transform
 mkdir -p input output
 printf '%s\n' '{"items":["alpha","beta"]}' > input/jobs.json
+tysel build --output dist/filesystem-transform
 export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
 export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
-tysel run
+./dist/filesystem-transform
 ```
 
 从第三个终端调用路由：

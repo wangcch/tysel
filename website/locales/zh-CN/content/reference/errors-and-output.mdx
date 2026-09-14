@@ -22,7 +22,7 @@ Tysel 将人类可读诊断与稳定 JSON 信封分离。自动化流程应明�
 tysel --error-format json check
 ```
 
-致命错误以单个 JSON 对象写入 stderr。当 Oxc 提供 span 时，构建失败还会包含带原始源码位置的 `diagnostics` 数组：
+每个致命错误以一个 JSON 对象写入 stderr。配置告警事件可能先于该对象出现，因此应逐行解析 stderr。当 Oxc 提供 span 时，构建失败还会包含带原始源码位置的 `diagnostics` 数组：
 
 ```json
 {
@@ -55,9 +55,24 @@ tysel --error-format json check
 
 清单诊断使用 `manifest` 阶段；导入诊断使用 `resolve`。清单验证报告第一个失败，并在可用时提供字段范围。缺失字段可能没有范围，解析器错误也可能指向插入位置或所在表。导入诊断覆盖构建解析器可达的模块，包括依赖，并指向原始 TypeScript 源码，而非生成的 JavaScript。已擦除的纯类型导入不会包含在内。TypeScript 类型检查输出仍是编译器文本，不属于该结构化协议。
 
+## 配置告警
+
+加载有效清单的项目命令会在 stderr 上报告被忽略或可能拼写错误的配置。告警保留现有行为，不改变退出状态。`config path` 和 `config schema` 不验证清单；`config show` 和 `config convert` 仍将序列化结果写入 stdout。
+
+使用 `--error-format json` 时，告警采用独立对象，包含 `schemaVersion: 1`、`event: "diagnostics"` 和 `diagnostics` 数组。每项诊断的严重程度为 `warning`，阶段为 `manifest`，并包含规范文件路径及原始字段值范围。一次性命令省略 `generation`；dev 在成功的代次快照中包含告警。告警消息不会回显配置值或端点；显式配置序列化仍包含用户提供的值。
+
+| 诊断码 | 含义 |
+| --- | --- |
+| `TYSEL_CONFIG_UNSUPPORTED_STORE` | `durable.store` 不精确等于 `sqlite`，应用 SQLite 能力被禁用。宿主持久存储覆盖配置仍生效。 |
+| `TYSEL_CONFIG_JSON_LOGS_DISABLED` | `observability.logs` 禁用 JSON 日志记录器，但不会选择其他格式。 |
+| `TYSEL_CONFIG_IGNORED_TRACES` | 清单中非 null 的追踪配置被忽略。 |
+| `TYSEL_CONFIG_IGNORED_METRICS` | 清单中非 null 的指标配置被忽略。 |
+
+各执行路径的实际行为和环境变量优先级请参阅[持久存储与可观测性](/reference/manifest/durable-observability)。告警后仍可能出现验证或构建错误，并以非零状态退出；消费者必须检查最终进程状态。
+
 ## 开发诊断流
 
-服务器持续运行期间，`tysel --error-format json dev` 会在每次诊断更新时向 stderr 写入一个 JSON 对象。重新加载失败时发布非空数组；下一次成功重新加载会发布空数组，使编辑器可以清除过期诊断。`generation` 随每次重新加载尝试递增，当前 `schemaVersion` 为 `1`。
+服务器持续运行期间，`tysel --error-format json dev` 会在每次诊断更新时向 stderr 写入一个 JSON 对象。重新加载失败时发布非空错误数组；启动和成功重新加载时发布当前配置告警，没有剩余告警时发布空数组。每个快照替换前一个，使编辑器可以清除过期诊断，同时保留当前告警。`generation` 随每次重新加载尝试递增，当前 `schemaVersion` 为 `1`。
 
 未处理的处理程序失败会发布独立的 `runtimeDiagnostic` 事件，其中包含一项经过源码映射的诊断和十六进制 `requestId`。它表示一次事件，并不会替换当前构建诊断快照。运行时堆栈限制为 64 KiB，并通过容量为 64 项的有界队列传递。队列溢出时，Tysel 会在恢复输出后发出 `TYSEL_DIAGNOSTICS_DROPPED`。行号和列号从一开始；编译器提供的 `byteOffset` 是从零开始的 UTF-8 偏移量。
 

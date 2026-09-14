@@ -68,12 +68,19 @@ Host-specific optimization metadata, when present, is accepted only when it is
 bound to:
 
 - Component ABI version;
+- exact Wasmtime version, generated from the workspace dependency pin and
+  checked against the lockfile during the Tysel build;
 - runtime engine compatibility identity;
 - host architecture and operating system;
 - SHA-256 of the portable source.
 
-The runtime rejects incompatible or tampered optimization metadata and can
-execute from the retained portable Component. Portability and correctness are
+The runtime rejects incompatible or tampered optimization metadata. Older
+artifacts labeled `32.0.1` fail the version check against the current engine;
+rebuild with the current Tysel toolchain to regenerate their metadata. The
+runtime currently compiles and executes the retained portable Component even
+when AOT metadata is compatible; native AOT loading requires a separate
+authenticated trust handoff. Version checks do not replace engine compatibility
+hash, source hash, target, ABI, size, or artifact-kind checks. Portability and correctness are
 defined by the portable Component contract; optional host-specific metadata
 does not imply a startup-performance guarantee.
 

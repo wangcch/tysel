@@ -24,17 +24,20 @@ result labels use fixed allowlists; unexpected values become `redacted`.
 Restrict log access anyway: route names and timing remain operational data.
 
 Any `logs` value other than case-insensitive `json` disables these JSON lines.
-This does not disable OTLP.
+The CLI warns about this setting; it does not select a different formatter or
+disable OTLP.
 
 ## Enable OTLP export
 
-The current operational controls are standard environment variables, not the
-manifest `observability.traces` and `observability.metrics` fields. To enable
-both signals through an OTLP/HTTP collector:
+Packaged services initialize the exporter from standard environment variables.
+The manifest `observability.traces` and `observability.metrics` fields are
+ignored and produce CLI warnings when set. Local `tysel run` / `tysel dev` and
+Component tasks do not initialize an exporter. Build the service, then set
+deployment variables when launching the executable:
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-tysel run
+tysel build --output dist/observed-service
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 ./dist/observed-service
 ```
 
 To enable only one signal, set only its endpoint:
@@ -105,9 +108,10 @@ capability telemetry:
 cd examples/filesystem-transform
 mkdir -p input output
 printf '%s\n' '{"items":["alpha","beta"]}' > input/jobs.json
+tysel build --output dist/filesystem-transform
 export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
 export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
-tysel run
+./dist/filesystem-transform
 ```
 
 Call the route from a third terminal:

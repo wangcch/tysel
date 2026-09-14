@@ -52,6 +52,8 @@ description: "环境变量用于配置宿主和安装，而不是应用 JavaScri
 
 ## OpenTelemetry
 
+这些变量控制打包服务中的导出。本地 `tysel run` / `tysel dev` 和 Component 任务不初始化 OTLP 导出器。
+
 | 变量 | 含义 |
 | --- | --- |
 | `OTEL_SDK_DISABLED=true` | 即使端点仍已设置，也禁用追踪和指标导出。 |
@@ -59,7 +61,7 @@ description: "环境变量用于配置宿主和安装，而不是应用 JavaScri
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | 追踪专用端点。 |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | 指标专用端点。 |
 
-按信号指定的端点会根据 OpenTelemetry exporter 规则覆盖或补充共享导出配置。清单中的 `traces` 和 `metrics` 字段尚未传递到打包执行环境。端点必须使用 HTTP(S)，最长 2 KiB，且不能包含用户信息、查询参数或片段。采集器凭据应放入标准 OTLP headers 配置，绝不能写入 URL。
+按信号指定的端点会根据 OpenTelemetry exporter 规则覆盖或补充共享导出配置。清单中的 `traces` 和 `metrics` 字段被忽略，非 null 值会产生 CLI 告警。构建时的环境变量值不会嵌入包中。端点必须使用 HTTP(S)，最长 2 KiB，且不能包含用户信息、查询参数或片段。采集器凭据应放入标准 OTLP headers 配置，绝不能写入 URL。
 
 ## 高级宿主集成
 

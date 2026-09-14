@@ -56,11 +56,13 @@ tysel init tool --template mcp --package-json none --no-tests --yes
 | --- | --- | --- |
 | `path` | `tysel config path [--manifest FILE]` | 打印发现的路径。即使清单格式错误也可以定位。 |
 | `validate` | `tysel config validate [--manifest FILE]` | 加载并验证配置。 |
-| `show` | `tysel config show [--format toml\|json] [--manifest FILE]` | 打印实际配置，并展开省略的默认值。 |
+| `show` | `tysel config show [--format toml\|json] [--manifest FILE]` | 打印清单值并展开省略的默认值，不解析部署环境覆盖配置。 |
 | `convert` | `tysel config convert --to toml\|json [-o FILE] [--manifest FILE]` | 转换已验证的清单。默认写入 stdout。 |
 | `schema` | `tysel config schema` | 打印附带的 Draft 2020-12 JSON Schema；无需项目。 |
 
 `config convert --output` 使用仅新建语义：绝不覆盖文件，父目录必须已经存在，文件扩展名必须与 `--to` 匹配。
+
+通过 schema 验证但被忽略或禁用某项能力的配置会在 stderr 上产生非致命告警。使用 `--error-format json` 可获取诊断码和源码位置；stdout 仍保留所请求的清单序列化结果。实际日志、存储和遥测行为请参阅[持久存储与可观测性](/reference/manifest/durable-observability)。
 
 ```sh
 tysel config validate

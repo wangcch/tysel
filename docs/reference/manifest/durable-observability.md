@@ -2,11 +2,12 @@
 
 ## `[durable]`
 
-The optional durable table selects the event store used by durable handlers.
+The optional durable table configures the application SQLite capability and
+the location from which the default durable event-log path is derived.
 
 | Field | Default | Current implementation |
 | --- | --- | --- |
-| `store` | `sqlite` | `sqlite` enables the application SQLite capability. Other strings are schema-valid but do not configure a manifest-backed store. |
+| `store` | `sqlite` | Exactly `sqlite` enables the application SQLite capability. Other strings remain valid, emit `TYSEL_CONFIG_UNSUPPORTED_STORE`, and disable this capability. They do not select another backend. |
 | `path` | `./data/tysel.db` | Runtime-relative application SQLite database path. |
 
 ```toml
@@ -23,7 +24,12 @@ module exports durable handlers, the default durable event log is named
 
 The runtime can also use a Postgres-backed durable store when configured by the
 host with `TYSEL_DURABLE_POSTGRES_URL`. This is host configuration, not a
-version-1 manifest `store` value.
+version-1 manifest `store` value. For modules with durable handlers, the first
+nonblank host override wins: `TYSEL_DURABLE_POSTGRES_URL`, then
+`TYSEL_DURABLE_SQLITE_PATH`, then the default event log beside the application
+database. If that application path is empty or `:memory:`, there is no default
+event log; a host override is required. A non-`sqlite` store value does not
+disable these host overrides.
 
 See [Durable API](../runtime/durable.md), [Durable execution](../../concepts/durable-execution.md),
 and [Production operations](../../operations/production.md) for replay and
@@ -33,23 +39,34 @@ backup requirements.
 
 | Field | Default | Current implementation |
 | --- | --- | --- |
-| `logs` | `json` | Case-insensitive `json` enables structured runtime logs; other strings disable that JSON logger. |
-| `traces` | Unset | Nullable endpoint intent recorded by the manifest schema. |
-| `metrics` | Unset | Nullable endpoint intent recorded by the manifest schema. |
+| `logs` | `json` | Case-insensitive `json` enables structured runtime logs; other strings disable that JSON logger and emit `TYSEL_CONFIG_JSON_LOGS_DISABLED`. No alternative formatter is selected. |
+| `traces` | Unset | Reserved; every non-null value, including an empty string, emits `TYSEL_CONFIG_IGNORED_TRACES`. |
+| `metrics` | Unset | Reserved; every non-null value, including an empty string, emits `TYSEL_CONFIG_IGNORED_METRICS`. |
 
 ```toml
 [observability]
 logs = "json"
-traces = "http://otel-collector:4318/v1/traces"
-metrics = "http://otel-collector:4318/v1/metrics"
 ```
 
-The current package manifest carries `logs` but does not yet propagate
-`traces` or `metrics` into the packaged runtime. Configure active export with
-the standard OpenTelemetry environment variables. This distinction is
-intentional in the reference: the fields are schema-valid, but environment
-configuration is the current operational control. Do not place authentication
-tokens in the manifest; use secret-bearing deployment configuration.
+The current package manifest carries `logs` but does not propagate `traces` or
+`metrics`. Their values have no effect in local commands or packaged execution.
+The fields remain accepted for compatibility; warnings do not fail validation,
+run, or build, and do not enable exporters. Omit them (or use JSON `null`) to
+remove the warnings. Do not place authentication tokens in the manifest; use
+secret-bearing deployment configuration.
+
+| Execution path | Logs | Trace and metric export |
+| --- | --- | --- |
+| `tysel run` / `tysel dev` service | Manifest `logs` value | No OTLP exporter is initialized, including when host endpoint variables are set. |
+| Packaged service | `logs` value embedded at build time | Deployment environment: signal-specific endpoint before shared endpoint; `OTEL_SDK_DISABLED=true` disables both. |
+| Component task | No HTTP service logger | No OTLP exporter is initialized. |
+
+Environment values on the build machine are not embedded in the artifact.
+Project commands report warnings on stderr, with the same TOML/JSON source
+locations in human and `--error-format json` modes. `config show` expands
+manifest defaults and preserves supplied values; it is not a deployment
+environment report. See [Errors and machine output](../errors-and-output.md)
+for diagnostic codes and stream handling.
 
 See [Environment variables](../environment.md) for supported OpenTelemetry
 controls and [Production operations](../../operations/production.md) for
