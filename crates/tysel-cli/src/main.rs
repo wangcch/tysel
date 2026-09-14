@@ -23,6 +23,7 @@ mod durable_admin;
 mod image;
 mod init;
 mod integrity;
+mod manifest_diagnostics;
 mod node_scan;
 mod platform;
 mod progress;
@@ -457,12 +458,16 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode> {
     let error_format = cli.error_format;
+    let dev_diagnostics = matches!(&cli.command, Commands::Dev { .. });
     let invocation_dir = std::env::current_dir().context("resolve current directory")?;
     let project_dir = cli
         .project_dir
         .map(|path| if path.is_absolute() { path } else { invocation_dir.join(path) });
     let context = |manifest: Option<&Path>| -> Result<project::ProjectContext> {
         let project = project::ProjectContext::discover(project_dir.as_deref(), manifest)?;
+        if !dev_diagnostics {
+            manifest_diagnostics::report(error_format, &project.warnings, None);
+        }
         std::env::set_current_dir(&project.root)
             .with_context(|| format!("switch to project directory {}", project.root.display()))?;
         Ok(project)
@@ -616,7 +621,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Commands::Task { name, list, manifest } => {
             let project = context(manifest.as_deref())?;
-            task::run(&project, name.as_deref(), list)
+            task::run(&project, name.as_deref(), list, error_format)
         }
         Commands::Test { paths, manifest, timeout_ms, json, list, filter } => {
             let project = context(manifest.as_deref())?;

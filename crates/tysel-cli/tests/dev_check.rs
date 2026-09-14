@@ -1688,6 +1688,49 @@ fn dev_syncs_types_preserves_them_on_manifest_errors_and_recovers() {
 }
 
 #[test]
+fn dev_configuration_warnings_survive_reload_and_clear_when_fixed() {
+    let dir = temp_app("dev-config-warnings");
+    write_js_app(&dir, "export default {fetch() {return new Response('ok')}};\n");
+    let manifest = dir.join("tysel.toml");
+    let clean = fs::read_to_string(&manifest).unwrap();
+    fs::write(&manifest, format!("{clean}\n[observability]\ntraces = 'ignored'\n")).unwrap();
+    let mut child = ManagedChild::spawn(
+        Command::new(cli_exe())
+            .args(["--error-format", "json", "dev", "--manifest", manifest.to_str().unwrap()])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        "dev configuration warnings",
+    );
+    let (addr, log) = wait_listen(&mut child, Duration::from_secs(10));
+    for generation in 0..=2 {
+        wait_log(&log, &format!("\"generation\":{generation}"), Duration::from_secs(5));
+        let captured = log.lock().unwrap().clone();
+        let event = captured
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|event| event["generation"] == generation)
+            .unwrap();
+        if generation < 2 {
+            assert_eq!(event["diagnostics"].as_array().unwrap().len(), 1);
+            assert_eq!(event["diagnostics"][0]["code"], "TYSEL_CONFIG_IGNORED_TRACES");
+            assert_eq!(event["diagnostics"][0]["severity"], "warning");
+        } else {
+            assert_eq!(event["diagnostics"], serde_json::json!([]));
+        }
+        assert!(http_get(&addr).contains("ok"));
+        match generation {
+            0 => fs::write(
+                dir.join("src/index.js"),
+                "export default {fetch() {return new Response('ok after reload')}};\n",
+            )
+            .unwrap(),
+            1 => fs::write(&manifest, &clean).unwrap(),
+            _ => {}
+        }
+    }
+}
+
+#[test]
 fn dev_json_diagnostics_are_replaced_after_a_successful_reload() {
     let dir = temp_app("dev-json-diagnostics");
     fs::create_dir_all(dir.join("src")).unwrap();

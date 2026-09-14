@@ -35,6 +35,7 @@ struct Watch {
 }
 
 struct Loaded {
+    warnings: Vec<tysel_build::BuildDiagnostic>,
     isolate: AppIsolate,
     max_request_bytes: usize,
     max_response_bytes: usize,
@@ -214,7 +215,11 @@ async fn serve(
     reload: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
-    let loaded = load_for_serve(&manifest_path, entry.as_deref(), reload)?;
+    let loaded = if reload {
+        load_for_serve(&manifest_path, entry.as_deref())?
+    } else {
+        load(&manifest_path, entry.as_deref())?
+    };
     let shutdown = HttpShutdown::default();
     let mut grace = loaded.isolate.request_timeout().saturating_add(Duration::from_secs(1));
     let pool = SharedPool::with_http_limits(
@@ -248,7 +253,7 @@ async fn serve(
     print!("{}", listen_announcement(bound));
     io::stdout().flush()?;
     let result = if let Some(mut changes) = changes {
-        report_diagnostics_clear(error_format, 0);
+        crate::manifest_diagnostics::report(error_format, &loaded.warnings, Some(0));
         let mut diagnostic_generation = 0u64;
         loop {
             tokio::select! {
@@ -261,14 +266,14 @@ async fn serve(
                 }
                 _ = wait_change(&mut changes.rx) => {
                     diagnostic_generation = diagnostic_generation.saturating_add(1);
-                    match load_for_serve(&manifest_path, entry.as_deref(), true) {
+                    match load_for_serve(&manifest_path, entry.as_deref()) {
                     Ok(next) => {
                         task_generation = task_generation.saturating_add(1);
                         match start_task_service(next.task.clone(), task_generation).await {
                             Ok(next_tasks) => {
                                 match start_dev_durable(next.durable.clone()).await {
                                     Ok(next_durable) => {
-                                        report_diagnostics_clear(error_format, diagnostic_generation);
+                                        crate::manifest_diagnostics::report(error_format, &next.warnings, Some(diagnostic_generation));
                                         if error_format == ErrorFormat::Human {
                                             eprintln!("tysel reload");
                                         }
@@ -407,20 +412,6 @@ fn report_dev_error(format: ErrorFormat, generation: u64, error: &anyhow::Error)
     }
 }
 
-fn report_diagnostics_clear(format: ErrorFormat, generation: u64) {
-    if format == ErrorFormat::Json {
-        eprintln!(
-            "{}",
-            serde_json::json!({
-                "schemaVersion": 1,
-                "event": "diagnostics",
-                "generation": generation,
-                "diagnostics": []
-            })
-        );
-    }
-}
-
 fn report_runtime_diagnostic(diagnostic: RuntimeDiagnostic) {
     let stack = truncate_diagnostic(&diagnostic.message);
     let message = stack.lines().next().unwrap_or("runtime error");
@@ -487,18 +478,12 @@ fn listen_announcement(bound: std::net::SocketAddr) -> String {
     format!("tysel listen {bound}\ntysel url http://{bound}\n")
 }
 
-fn load_for_serve(manifest_path: &Path, entry: Option<&Path>, sync_types: bool) -> Result<Loaded> {
-    let manifest = Manifest::from_path(manifest_path)
-        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-    if sync_types {
-        crate::typegen::sync(
-            manifest_path.parent().unwrap_or(Path::new(".")),
-            &manifest,
-            None,
-            false,
-        )?;
-    }
-    load_manifest(manifest_path, entry, manifest)
+fn load_for_serve(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
+    let (manifest, warnings) = crate::manifest_diagnostics::load(manifest_path)?;
+    crate::typegen::sync(manifest_path.parent().unwrap_or(Path::new(".")), &manifest, None, false)?;
+    let mut loaded = load_manifest(manifest_path, entry, manifest)?;
+    loaded.warnings = warnings;
+    Ok(loaded)
 }
 
 fn load(manifest_path: &Path, entry: Option<&Path>) -> Result<Loaded> {
@@ -581,6 +566,7 @@ fn load_manifest(manifest_path: &Path, entry: Option<&Path>, manifest: Manifest)
         secret_names: tap.manifest.secret_names.clone(),
     });
     Ok(Loaded {
+        warnings: Vec::new(),
         isolate: pool,
         max_request_bytes: tap.manifest.max_request_bytes,
         max_response_bytes: tap.manifest.max_response_bytes,

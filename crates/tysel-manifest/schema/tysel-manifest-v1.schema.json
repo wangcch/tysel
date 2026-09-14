@@ -128,7 +128,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "store": { "type": "string", "default": "sqlite" },
+        "store": { "type": "string", "default": "sqlite", "description": "Exactly sqlite enables the application SQLite capability. Other strings remain accepted with a CLI warning and do not select another backend. Durable event stores use host environment configuration." },
         "path": { "type": "string", "default": "./data/tysel.db" }
       }
     },
@@ -136,9 +136,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "logs": { "type": "string", "default": "json" },
-        "traces": { "type": ["string", "null"] },
-        "metrics": { "type": ["string", "null"] }
+        "logs": { "type": "string", "default": "json", "description": "Case-insensitive json enables the runtime JSON logger. Other strings disable it with a CLI warning; they do not select an alternative formatter." },
+        "traces": { "type": ["string", "null"], "description": "Reserved and ignored; non-null values produce a CLI warning. Packaged services export via OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT. Local run/dev and Component tasks do not initialize an exporter." },
+        "metrics": { "type": ["string", "null"], "description": "Reserved and ignored; non-null values produce a CLI warning. Packaged services export via OTEL_EXPORTER_OTLP_METRICS_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT. Local run/dev and Component tasks do not initialize an exporter." }
       }
     },
     "tasks": {

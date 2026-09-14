@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 mod diagnostic;
-pub use diagnostic::ManifestSourceError;
+pub use diagnostic::{ManifestSourceError, ManifestWarning};
 
 pub const MAX_FILESYSTEM_ROOTS_PER_OPERATION: usize = 64;
 pub const JSON_SCHEMA: &str = include_str!("../schema/tysel-manifest-v1.schema.json");
@@ -263,12 +263,28 @@ fn default_logs() -> String {
 
 impl Manifest {
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ManifestError> {
+        Self::read_from_path(path.as_ref()).map(|(manifest, _, _)| manifest)
+    }
+
+    /// Validate and diagnose the same source snapshot without rejecting legacy settings.
+    pub fn from_path_with_warnings(
+        path: impl AsRef<Path>,
+    ) -> Result<(Self, Vec<ManifestWarning>), ManifestError> {
         let path = path.as_ref();
+        let (manifest, raw, format) = Self::read_from_path(path)?;
+        let warnings = diagnostic::warnings(&manifest, path, &raw, format);
+        Ok((manifest, warnings))
+    }
+
+    fn read_from_path(path: &Path) -> Result<(Self, String, ManifestFormat), ManifestError> {
         let format = ManifestFormat::from_path(path)?;
         let raw = fs::read_to_string(path)?;
-        Self::parse_with_format(&raw, format).map_err(|error| {
-            ManifestError::Located(Box::new(ManifestSourceError::new(path, raw, format, error)))
-        })
+        match Self::parse_with_format(&raw, format) {
+            Ok(manifest) => Ok((manifest, raw, format)),
+            Err(error) => Err(ManifestError::Located(Box::new(ManifestSourceError::new(
+                path, raw, format, error,
+            )))),
+        }
     }
 
     /// Parse a TOML manifest. Kept for callers embedding existing TOML fixtures.

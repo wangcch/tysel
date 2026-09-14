@@ -65,19 +65,20 @@ pub struct ProjectContext {
     pub manifest_path: PathBuf,
     pub manifest_format: ManifestFormat,
     pub manifest: Manifest,
+    pub warnings: Vec<tysel_build::BuildDiagnostic>,
     pub package_json: Option<PathBuf>,
 }
 
 impl ProjectContext {
     pub fn discover(project_dir: Option<&Path>, manifest: Option<&Path>) -> Result<Self> {
         let location = ProjectLocation::discover(project_dir, manifest)?;
-        let loaded = Manifest::from_path(&location.manifest_path)
-            .with_context(|| format!("failed to read {}", location.manifest_path.display()))?;
+        let (loaded, warnings) = crate::manifest_diagnostics::load(&location.manifest_path)?;
         Ok(Self {
             root: location.root,
             manifest_path: location.manifest_path,
             manifest_format: location.manifest_format,
             manifest: loaded,
+            warnings,
             package_json: location.package_json,
         })
     }

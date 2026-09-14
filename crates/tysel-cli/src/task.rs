@@ -3,9 +3,15 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow};
 
+use crate::ErrorFormat;
 use crate::project::ProjectContext;
 
-pub fn run(project: &ProjectContext, name: Option<&str>, list: bool) -> Result<()> {
+pub fn run(
+    project: &ProjectContext,
+    name: Option<&str>,
+    list: bool,
+    error_format: ErrorFormat,
+) -> Result<()> {
     if list || name.is_none() {
         return print_tasks(project);
     }
@@ -19,7 +25,7 @@ pub fn run(project: &ProjectContext, name: Option<&str>, list: bool) -> Result<(
     }
 
     let mut completed = BTreeSet::new();
-    execute_task(project, name, &mut completed)?;
+    execute_task(project, name, &mut completed, error_format)?;
     println!("task {name} completed");
     Ok(())
 }
@@ -48,19 +54,30 @@ fn execute_task(
     project: &ProjectContext,
     name: &str,
     completed: &mut BTreeSet<String>,
+    error_format: ErrorFormat,
 ) -> Result<()> {
     if completed.contains(name) {
         return Ok(());
     }
     let task = &project.manifest.tasks[name];
     for dependency in &task.depends {
-        execute_task(project, dependency, completed)?;
+        execute_task(project, dependency, completed, error_format)?;
     }
 
     for (index, step) in task.steps.iter().enumerate() {
         println!("task {name} [{}/{}] tysel {}", index + 1, task.steps.len(), step.join(" "));
         let executable = std::env::current_exe().context("resolve current Tysel executable")?;
         let mut command = Command::new(executable);
+        // Inherit the parent's format unless the step explicitly selects its own.
+        if !step[1..]
+            .iter()
+            .any(|argument| argument == "--error-format" || argument.starts_with("--error-format="))
+        {
+            command.arg("--error-format").arg(match error_format {
+                ErrorFormat::Human => "human",
+                ErrorFormat::Json => "json",
+            });
+        }
         command
             .arg(&step[0])
             .args(&step[1..])
