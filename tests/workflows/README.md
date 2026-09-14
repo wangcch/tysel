@@ -27,7 +27,13 @@ The isolated deployment case first verifies that omitting `tysel-worker` fails
 clearly, then copies the matching worker beside the executable and verifies
 network and filesystem denial. This is not a single-file isolation claim.
 
-The acceptance run uses debug artifacts on the current host. It does not certify
+By default, the standalone runner uses debug artifacts on the current host. It does not certify
 release signing, cross-platform packaging, Linux security enforcement, or live
 LLM provider compatibility. The editor extension test fixture remains separate
 in `tests/editor`; no production editor extension is installed or developed here.
+
+The default standalone runner still uses `target/debug`. Set `TYSEL_GATE_BIN_DIR`
+to select another matched tool directory. CI and Linux releases invoke this
+fixture through the [deployment acceptance runner](../acceptance/README.md),
+which records binary/source provenance, enforces a timeout, retains logs on
+failure, and selects debug or exact release tools as appropriate.

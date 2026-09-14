@@ -16,9 +16,10 @@ import threading
 import time
 
 REPO = Path(__file__).resolve().parents[2]
-CLI = REPO / "target/debug/tysel"
-SERVICE = REPO / "target/debug/tysel-service"
-WORKER = REPO / "target/debug/tysel-worker"
+BIN = Path(os.environ.get("TYSEL_GATE_BIN_DIR", str(REPO / "target/debug"))).resolve()
+CLI = BIN / "tysel"
+SERVICE = BIN / "tysel-service"
+WORKER = BIN / "tysel-worker"
 
 
 def wait_for(read, accept=bool, timeout=15):
@@ -37,17 +38,23 @@ class Running:
         self.lines, self.events = [], []
         self.child = subprocess.Popen([str(x) for x in command], cwd=root, env=env,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        def drain(pipe):
-            for line in pipe:
-                self.lines.append(line.rstrip())
-                try:
-                    event = json.loads(line)
-                    if isinstance(event, dict) and event.get("event") == "diagnostics":
-                        self.events.append(event)
-                except ValueError:
-                    pass
-        for pipe in [self.child.stdout, self.child.stderr]:
-            threading.Thread(target=drain, args=(pipe,), daemon=True).start()
+        def drain(pipe, path):
+            with path.open("w") as log:
+                for line in pipe:
+                    log.write(line)
+                    log.flush()
+                    self.lines.append(line.rstrip())
+                    try:
+                        event = json.loads(line)
+                        if isinstance(event, dict) and event.get("event") == "diagnostics":
+                            self.events.append(event)
+                    except ValueError:
+                        pass
+        self.readers = []
+        for label, pipe in [("stdout", self.child.stdout), ("stderr", self.child.stderr)]:
+            reader = threading.Thread(target=drain, args=(pipe, root / f"process-{self.child.pid}-{label}.log"), daemon=True)
+            reader.start()
+            self.readers.append(reader)
 
     def address(self):
         def read():
@@ -66,6 +73,8 @@ class Running:
             except subprocess.TimeoutExpired:
                 self.child.kill()
                 self.child.wait()
+        for reader in self.readers:
+            reader.join(timeout=2)
 
     def request(self, route="/", method="GET", body=None):
         connection = http.client.HTTPConnection(self.address(), timeout=10)
@@ -114,6 +123,7 @@ class Provider(BaseHTTPRequestHandler):
 
 def run_command(root, env, *args, success=True):
     result = subprocess.run([str(CLI), *args], cwd=root, env=env, capture_output=True, text=True, timeout=60)
+    (root / f"command-{time.time_ns()}.log").write_text(result.stdout + result.stderr)
     assert (result.returncode == 0) == success, result.stdout + result.stderr
     return result
 
@@ -177,7 +187,7 @@ def verify(name, base, env):
     assert "Type check       passed" in result.stdout
     if name == "isolated-plugin":
         assert "matching tysel-worker required" in result.stdout
-    stages.append("native development artifact builds with typecheck enabled")
+    stages.append("native artifact builds with typecheck enabled")
     # Run from a deployment directory containing no TS source, node_modules, or manifest.
     deploy = root / "deployment"
     deploy.mkdir()
@@ -220,12 +230,13 @@ def main():
     base = Path(tempfile.mkdtemp(prefix="tysel-workflows-")).resolve()
     print(f"Workflow fixtures: {base}", flush=True)
     env = {key: value for key, value in os.environ.items()
-           if not key.startswith(("TYSEL_", "OPENAI_"))}
+           if not key.startswith(("TYSEL_", "OPENAI_", "OTEL_"))}
+    env["OTEL_SDK_DISABLED"] = "true"
     provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     threading.Thread(target=provider.serve_forever, daemon=True).start()
     env.update(TYSEL_LLM_ENDPOINT=f"http://127.0.0.1:{provider.server_port}/v1/responses",
                TYSEL_LLM_MODEL="workflow-test", OPENAI_API_KEY="local-test-key")
-    report = {"timestamp": datetime.now(timezone.utc).isoformat(), "platform": os.uname().sysname, "architecture": os.uname().machine, "scope": "Local debug tools/artifacts; fake local LLM; no release or Linux isolation claim", "projects": []}
+    report = {"timestamp": datetime.now(timezone.utc).isoformat(), "platform": os.uname().sysname, "architecture": os.uname().machine, "scope": "Selected local tools/artifacts; fake local LLM; build provenance is recorded by the acceptance runner", "binDir": str(BIN), "projects": []}
     try:
         for name in ["hello-service", "isolated-plugin", "durable-agent"]:
             try:

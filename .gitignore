@@ -27,5 +27,6 @@ examples/*/data/
 
 # Test / bench artifacts
 /tmp
+__pycache__/
 *.profraw
 *.profdata

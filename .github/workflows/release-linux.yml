@@ -59,6 +59,7 @@ jobs:
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
       - name: Run target production acceptance suite
         run: |
+          python3 tests/acceptance/test_runner.py
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo test --locked --workspace --all-targets
       - name: Build and package two independent release trees
@@ -66,6 +67,26 @@ jobs:
         run: >-
           bash .github/scripts/package-release-target.sh
           "${{ inputs.target }}" "$SOURCE_DATE_EPOCH"
+      - name: Install PostgreSQL acceptance client
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
+      - name: Gate the exact release tools on deployment and crash recovery
+        id: acceptance
+        timeout-minutes: 20
+        env:
+          TYSEL_GATE_POSTGRES_URL: postgres://tysel:tysel@127.0.0.1:5432/tysel
+        run: >-
+          python3 tests/acceptance/run.py --suite release
+          --bin-dir target/repro-1/release --profile release
+          --target "${{ inputs.target }}" --require-build-commit
+          --output target/deployment-acceptance
+      - name: Retain release deployment acceptance diagnostics
+        if: ${{ always() && steps.acceptance.outcome != 'skipped' && steps.acceptance.outcome != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployment-acceptance-${{ inputs.target }}
+          path: target/deployment-acceptance
+          if-no-files-found: error
+          retention-days: 90
       - name: Run local installer fixture
         shell: bash
         run: |

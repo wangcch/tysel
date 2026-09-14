@@ -18,9 +18,10 @@ import time
 
 REPO = Path(__file__).resolve().parents[2]
 ROOT = Path(tempfile.mkdtemp(prefix='tysel-assessment-'))
-CLI = REPO / 'target/debug/tysel'
-STUB = REPO / 'target/debug/tysel-service'
-results = {'source_commit': '28aa78f + P1 working changes', 'fixture': str(ROOT)}
+BIN = Path(os.environ.get('TYSEL_GATE_BIN_DIR', str(REPO / 'target/debug'))).resolve()
+CLI = BIN / 'tysel'
+STUB = BIN / 'tysel-service'
+results = {'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(), 'fixture': str(ROOT)}
 source = '''export default {
   durable: {
     async done(ctx, input) { return {done: true}; },
@@ -65,11 +66,16 @@ for key in list(env):
     if key.startswith('TYSEL_DURABLE_') or key.startswith('OTEL_'):
         del env[key]
 env['OTEL_SDK_DISABLED'] = 'true'
-build = subprocess.run([str(CLI), '-C', str(ROOT), 'build', '--stub', str(STUB), '--output', str(ROOT / 'app')], capture_output=True, text=True, env=env)
-results['build'] = {'returncode': build.returncode, 'stdout': build.stdout, 'stderr': build.stderr}
-if build.returncode:
-    print(json.dumps(results, indent=2))
-    raise SystemExit(1)
+if os.environ.get('TYSEL_P1_USE_RUN'):
+    command = [str(CLI), '-C', str(ROOT), 'run']
+    results['build'] = {'status': 'skipped', 'reason': 'CLI run executes the source directly'}
+else:
+    build = subprocess.run([str(CLI), '-C', str(ROOT), 'build', '--stub', str(STUB), '--output', str(ROOT / 'app')], capture_output=True, text=True, env=env)
+    results['build'] = {'returncode': build.returncode, 'stdout': build.stdout, 'stderr': build.stderr}
+    if build.returncode:
+        print(json.dumps(results, indent=2))
+        raise SystemExit(1)
+    command = [str(ROOT / 'app')]
 
 def request(path):
     started = time.monotonic()
@@ -84,7 +90,7 @@ def request(path):
         conn.close()
 
 log = open(ROOT / 'service.log', 'w')
-process = subprocess.Popen(([str(CLI), '-C', str(ROOT), 'run'] if os.environ.get('TYSEL_P1_USE_RUN') else [str(ROOT / 'app')]), cwd=ROOT, stdout=log, stderr=log, env=env)
+process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, env=env)
 try:
     for _ in range(100):
         if request('/') .get('status') == 200:
@@ -137,7 +143,7 @@ results['service_log'] = (ROOT / 'service.log').read_text()
 
 # Start a fresh instance so the shutdown observation is independent of the fault injection.
 log = open(ROOT / 'shutdown.log', 'w')
-process = subprocess.Popen(([str(CLI), '-C', str(ROOT), 'run'] if os.environ.get('TYSEL_P1_USE_RUN') else [str(ROOT / 'app')]), cwd=ROOT, stdout=log, stderr=log, env=env)
+process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, env=env)
 try:
     for _ in range(100):
         if request('/').get('status') == 200:

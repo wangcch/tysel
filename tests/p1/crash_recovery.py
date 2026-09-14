@@ -5,6 +5,7 @@ reconciles a committed operation using its stable identity. Database inspection
 is read-only; both CLI and standalone run against the same files after restart.
 """
 import concurrent.futures
+import contextlib
 import http.client
 import http.server
 import json
@@ -17,18 +18,58 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 REPO = Path(__file__).resolve().parents[2]
 BIN = Path(os.environ.get('TYSEL_GATE_BIN_DIR', str(REPO / 'target/debug'))).resolve()
 PG_URL = os.environ.get('TYSEL_GATE_POSTGRES_URL')
-PG_CONTAINER = os.environ.get('TYSEL_GATE_POSTGRES_CONTAINER')
+PSQL = os.environ.get('TYSEL_GATE_PSQL', 'psql')
 INSTANCES = int(os.environ.get('TYSEL_GATE_INSTANCES', '1'))
 assert INSTANCES in (1, 2)
 
 def pg_query(sql):
-    assert PG_CONTAINER, 'dedicated PostgreSQL fixture container required'
-    result = subprocess.run(['podman', 'exec', PG_CONTAINER, 'psql', '-U', 'postgres', '-d', 'tysel_validation', '-qAt', '-v', 'ON_ERROR_STOP=1', '-c', sql], check=True, capture_output=True, text=True)
+    assert PG_URL, 'dedicated PostgreSQL fixture URL required'
+    # Credentials stay out of command arguments and evidence. Ignore user psqlrc.
+    url = urlsplit(PG_URL)
+    assert url.scheme in ('postgres', 'postgresql'), 'invalid PostgreSQL fixture URL scheme'
+    env = {key: value for key, value in os.environ.items() if not key.startswith('PG')}
+    env.update(PGHOST=url.hostname or '127.0.0.1', PGPORT=str(url.port or 5432),
+               PGDATABASE=unquote(url.path.lstrip('/')), PGUSER=unquote(url.username or ''),
+               PGPASSWORD=unquote(url.password or ''), PGCONNECT_TIMEOUT='5')
+    for key, value in parse_qsl(url.query):
+        assert key in ('sslmode', 'sslrootcert', 'sslcert', 'sslkey', 'channel_binding'), 'unsupported fixture URL option'
+        env['PG' + key.upper().replace('_', '')] = value
+    result = subprocess.run([PSQL, '-X', '-w', '-qAt', '-v', 'ON_ERROR_STOP=1'],
+                            input=sql, env=env, capture_output=True, text=True, timeout=15)
+    if result.returncode:
+        detail = result.stderr.replace(PG_URL, '[redacted connection]')
+        if env['PGPASSWORD']:
+            detail = detail.replace(env['PGPASSWORD'], '[redacted password]')
+        raise RuntimeError(f'PostgreSQL fixture query failed (psql exit {result.returncode}): {detail.strip()}')
     return result.stdout.strip()
+
+
+@contextlib.contextmanager
+def database_schema():
+    if not PG_URL:
+        yield None
+        return
+    schema = 'tysel_gate_' + uuid.uuid4().hex
+    pg_query('CREATE SCHEMA ' + schema)
+    try:
+        yield schema
+    finally:
+        pg_query('DROP SCHEMA ' + schema + ' CASCADE')
+
+
+def scoped_postgres_url(schema):
+    url = urlsplit(PG_URL)
+    assert url.scheme in ('postgres', 'postgresql'), 'fixture URL must use postgres:// or postgresql://'
+    query = parse_qsl(url.query, keep_blank_values=True)
+    assert not any(key == 'options' for key, _ in query), 'fixture URL must not override PostgreSQL options'
+    query.append(('options', '-csearch_path=' + schema))
+    return urlunsplit((url.scheme, url.netloc, url.path, urlencode(query), url.fragment))
 
 ROOT = Path(tempfile.mkdtemp(prefix='tysel-g12-crash-'))
 print('FIXTURE='+str(ROOT), flush=True)
@@ -68,7 +109,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('content-length',str(len(data)));self.end_headers();self.wfile.write(data)
         except (BrokenPipeError,ConnectionResetError):pass
 
-def run(mode,standalone):
+def run(mode,standalone,schema=None):
     root=ROOT/(('standalone-' if standalone else 'run-')+mode+'-'+str(time.time_ns()));root.mkdir()
     provider=Provider(mode);thread=threading.Thread(target=provider.serve_forever,daemon=True);thread.start()
     origin='http://127.0.0.1:'+str(provider.server_port)
@@ -112,7 +153,9 @@ workers=2
 [permissions]
 fetch=["127.0.0.1"]
 [limits]
-request_timeout_ms=1000
+# Leave time to start the second instance while the provider holds the effect.
+# A short request deadline would test task timeout instead of active-process death.
+request_timeout_ms=5000
 cpu_ms_per_turn=500
 [durable]
 store="sqlite"
@@ -122,13 +165,11 @@ logs="json"
 ''')
     env={k:v for k,v in os.environ.items() if not k.startswith(('TYSEL_DURABLE_','OTEL_'))}
     env['OTEL_SDK_DISABLED']='true'
-    schema = 'gate_' + str(time.time_ns())
     if PG_URL:
-        pg_query('CREATE SCHEMA ' + schema)
-        env['TYSEL_DURABLE_POSTGRES_URL'] = PG_URL + ('&' if '?' in PG_URL else '?') + 'options=-csearch_path%3D' + schema
+        env['TYSEL_DURABLE_POSTGRES_URL'] = scoped_postgres_url(schema)
 
     if standalone:
-        subprocess.run([str(BIN/'tysel'),'-C',str(root),'build','--stub',str(BIN/'tysel-service'),'--output',str(root/'app')],env=env,check=True,capture_output=True)
+        subprocess.run([str(BIN/'tysel'),'-C',str(root),'build','--stub',str(BIN/'tysel-service'),'--output',str(root/'app')],env=env,check=True,capture_output=True,timeout=60)
         env['PATH']='';command=[str(root/'app')]
     else:command=[str(BIN/'tysel'),'-C',str(root),'run']
     def request(path,data=None):
@@ -146,7 +187,7 @@ logs="json"
     executor=concurrent.futures.ThreadPoolExecutor(1)
     try:
         process=subprocess.Popen(command,cwd=root,env=env,stdout=log,stderr=log);wait_for(healthy)
-        # Prepare the peer artifact before holding a one-second effect open.
+        # Prepare the peer artifact before holding the effect open.
         if INSTANCES == 2:
             assert PG_URL, 'multi-instance gate requires shared PostgreSQL'
             peer_root=root/'peer';peer_root.mkdir()
@@ -155,7 +196,7 @@ logs="json"
             (peer_root/'tysel.toml').write_text((root/'tysel.toml').read_text().replace(str(port),str(peer_port)))
             peer_command=[str(BIN/'tysel'),'-C',str(peer_root),'run']
             if standalone:
-                subprocess.run([str(BIN/'tysel'),'-C',str(peer_root),'build','--stub',str(BIN/'tysel-service'),'--output',str(peer_root/'app')],env={**env,'PATH':os.environ.get('PATH','')},check=True,capture_output=True)
+                subprocess.run([str(BIN/'tysel'),'-C',str(peer_root),'build','--stub',str(BIN/'tysel-service'),'--output',str(peer_root/'app')],env={**env,'PATH':os.environ.get('PATH','')},check=True,capture_output=True,timeout=60)
                 peer_command=[str(peer_root/'app')]
         # The initial request is deliberately left unacknowledged in two cases.
         pending=executor.submit(request,'/start')
@@ -184,6 +225,7 @@ logs="json"
                     return response.status==200 and body==b'healthy'
                 except OSError:return False
             wait_for(peer_ready)
+        assert rows('SELECT state FROM durable_executions')[0][0]=='running', 'crash window expired before SIGKILL'
         process.send_signal(signal.SIGKILL);process.wait(timeout=5)
         provider.release.set()
         try:pending.result(timeout=3)
@@ -226,9 +268,13 @@ logs="json"
                 assert 'panicked at' not in content, f'Runtime panic: {service_log}'
 
 if __name__=='__main__':
+    all_modes=('initial_admission','before_effect','after_commit','after_return','after_record','projection_wait')
+    modes=tuple(os.environ.get('TYSEL_GATE_CRASH_MODES', ','.join(all_modes)).split(','))
+    assert modes and len(set(modes))==len(modes) and set(modes)<=set(all_modes), 'invalid crash modes'
     results=[]
     for standalone in ((True,) if os.environ.get('TYSEL_GATE_STANDALONE_ONLY') else (False,True)):
-        for mode in ('initial_admission','before_effect','after_commit','after_return','after_record','projection_wait'):
-            results.append(run(mode,standalone))
+        for mode in modes:
+            with database_schema() as schema:
+                results.append(run(mode,standalone,schema))
             (ROOT/'results.json').write_text(json.dumps(results,indent=2))
     print('RESULT_PATH='+str(ROOT/'results.json'),flush=True)
