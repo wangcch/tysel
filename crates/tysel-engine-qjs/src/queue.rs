@@ -19,6 +19,9 @@ use tysel_engine::{InterruptReason, Value};
 use tysel_policy::Cap;
 
 pub const STREAM_WINDOW: usize = 16;
+pub const MAX_PENDING_IO_OPS: usize = 256;
+pub const MAX_PENDING_IO_BYTES: usize = 32 * 1024 * 1024;
+const IO_BUDGET_ERROR: &str = "host I/O budget exceeded";
 
 type BodyRx = mpsc::Receiver<Result<Vec<u8>, String>>;
 
@@ -78,6 +81,35 @@ pub enum IoRequest {
 }
 
 impl IoRequest {
+    fn retained_bytes(&self) -> usize {
+        let buffers = match self {
+            Self::Echo { value, .. } => value.capacity(),
+            Self::SecretRef { name, .. } => name.capacity(),
+            Self::HttpGet { url, method, headers_json, body, .. } => {
+                url.capacity() + method.capacity() + headers_json.capacity() + body.len()
+            }
+            Self::ResponseWrite { bytes, .. } => bytes.capacity(),
+            Self::WsSend { data, .. } | Self::WsClientSend { data, .. } => data.capacity(),
+            Self::WsConnect { url, .. } => url.capacity(),
+            Self::SqliteExec { sql, params_json, .. }
+            | Self::SqliteQuery { sql, params_json, .. }
+            | Self::PostgresExec { sql, params_json, .. }
+            | Self::PostgresQuery { sql, params_json, .. } => {
+                sql.capacity() + params_json.capacity()
+            }
+            Self::RedisGet { key, .. }
+            | Self::RedisExists { key, .. }
+            | Self::RedisExpire { key, .. } => key.capacity(),
+            Self::RedisSet { key, value, .. } => key.capacity() + value.capacity(),
+            Self::RedisDel { keys_json, .. } => keys_json.capacity(),
+            Self::FsRead { path, .. } => path.capacity(),
+            Self::FsWrite { path, data, .. } => path.capacity() + data.capacity(),
+            Self::LlmGenerate { request_json, .. } => request_json.capacity(),
+            _ => 0,
+        };
+        size_of::<Self>() + buffers
+    }
+
     pub fn id(&self) -> OpId {
         match self {
             Self::Sleep { id, .. }
@@ -633,7 +665,7 @@ pub struct IoHandle {
     tx: UnboundedSender<IoWork>,
     next_id: Arc<AtomicU64>,
     request_id: Arc<AtomicU64>,
-    operation_cancels: Arc<StdMutex<HashMap<OpId, OperationControl>>>,
+    operation_cancels: Arc<StdMutex<OperationRegistry>>,
     pub inbound: StreamSlot,
     pub outbound: StreamRegistry,
     pub ws_in: StreamSlot,
@@ -645,6 +677,109 @@ pub struct IoHandle {
 struct OperationControl {
     request_id: u64,
     cancel: Arc<AtomicBool>,
+    bytes: usize,
+    completed: bool,
+}
+
+#[derive(Default)]
+struct OperationRegistry {
+    operations: HashMap<OpId, OperationControl>,
+    bytes: usize,
+}
+
+/// Completion admission uses the same reservation as submission. A completed
+/// operation still occupies its slot until the isolate consumes/discards it.
+#[derive(Clone)]
+pub struct IoCompletionSender {
+    tx: std::sync::mpsc::Sender<IoCompletion>,
+    operations: Arc<StdMutex<OperationRegistry>>,
+}
+
+impl IoCompletionSender {
+    /// Execute an admitted bridge Sleep on the shared I/O runtime so it cannot
+    /// block later timers or capability forwarding. Cancellation and completion
+    /// retain the operation's existing budget reservation until consumption.
+    pub fn spawn_sleep(
+        &self,
+        id: OpId,
+        millis: u64,
+        cancel: crate::IsolateCancel,
+        deadline: Instant,
+    ) {
+        let operation_cancel = self
+            .operations
+            .lock()
+            .expect("operation cancellation registry")
+            .operations
+            .get(&id)
+            .filter(|operation| !operation.completed)
+            .map(|operation| operation.cancel.clone());
+        let Some(operation_cancel) = operation_cancel else {
+            return;
+        };
+        let completions = self.clone();
+        let isolate_cancel = cancel.flag();
+        io_handle().spawn(async move {
+            let result = tokio::select! {
+                biased;
+                () = cancellation_flagged(&isolate_cancel) => Err(InterruptReason::Cancelled),
+                result = wait(Duration::from_millis(millis), &operation_cancel, deadline) => result,
+            };
+            let _ = completions.send(IoCompletion { id, result: result.map_err(io_err) });
+        });
+    }
+
+    pub fn send(
+        &self,
+        mut completion: IoCompletion,
+    ) -> Result<(), std::sync::mpsc::SendError<IoCompletion>> {
+        let mut registry = self.operations.lock().expect("operation cancellation registry");
+        if let Some(operation) = registry.operations.get(&completion.id) {
+            if operation.completed {
+                return Ok(());
+            }
+            let old = operation.bytes;
+            let bytes = size_of::<IoCompletion>()
+                + match &completion.result {
+                    Ok(value) => value_bytes(value),
+                    Err(error) => error.capacity(),
+                };
+            let extra = bytes.saturating_sub(old);
+            if extra > MAX_PENDING_IO_BYTES.saturating_sub(registry.bytes) {
+                completion.result = Err(IO_BUDGET_ERROR.into());
+            } else {
+                registry.bytes += extra;
+                registry.operations.get_mut(&completion.id).expect("registered operation").bytes +=
+                    extra;
+            }
+            registry.operations.get_mut(&completion.id).expect("registered operation").completed =
+                true;
+        } else {
+            // Ignore late/unknown bridge replies instead of accumulating
+            // completions which no isolate operation can consume.
+            return Ok(());
+        }
+        drop(registry);
+        self.tx.send(completion)
+    }
+}
+
+fn value_bytes(value: &Value) -> usize {
+    match value {
+        Value::String(value) => value.capacity(),
+        Value::Bytes(value) => value.capacity(),
+        Value::Array(values) => {
+            values.capacity() * size_of::<Value>() + values.iter().map(value_bytes).sum::<usize>()
+        }
+        Value::Record(values) => {
+            values.capacity() * size_of::<(String, Value)>()
+                + values
+                    .iter()
+                    .map(|(key, value)| key.capacity() + value_bytes(value))
+                    .sum::<usize>()
+        }
+        _ => 0,
+    }
 }
 
 /// One host I/O op plus the HTTP request id that submitted it.
@@ -658,22 +793,49 @@ impl IoHandle {
         self.request_id.store(request_id, Ordering::Relaxed);
     }
 
-    pub fn submit(&self, request: impl FnOnce(OpId) -> IoRequest) -> OpId {
+    pub fn check_capacity(&self, bytes: usize) -> Result<(), &'static str> {
+        let registry = self.operation_cancels.lock().expect("operation cancellation registry");
+        if registry.operations.len() >= MAX_PENDING_IO_OPS
+            || bytes > MAX_PENDING_IO_BYTES.saturating_sub(registry.bytes)
+        {
+            return Err(IO_BUDGET_ERROR);
+        }
+        Ok(())
+    }
+
+    pub fn submit(&self, request: impl FnOnce(OpId) -> IoRequest) -> Result<OpId, &'static str> {
+        self.check_capacity(0)?;
         let id = OpId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let request_id = self.request_id.load(Ordering::Relaxed);
-        self.operation_cancels
-            .lock()
-            .expect("operation cancellation registry")
-            .insert(id, OperationControl { request_id, cancel: Arc::new(AtomicBool::new(false)) });
-        if self.tx.send(IoWork { request: request(id), request_id }).is_err() {
-            self.finish(id);
+        let request = request(id);
+        let bytes = request.retained_bytes();
+        let mut registry = self.operation_cancels.lock().expect("operation cancellation registry");
+        if registry.operations.len() >= MAX_PENDING_IO_OPS
+            || bytes > MAX_PENDING_IO_BYTES.saturating_sub(registry.bytes)
+        {
+            return Err(IO_BUDGET_ERROR);
         }
-        id
+        registry.operations.insert(
+            id,
+            OperationControl {
+                request_id,
+                cancel: Arc::new(AtomicBool::new(false)),
+                bytes,
+                completed: false,
+            },
+        );
+        registry.bytes += bytes;
+        drop(registry);
+        if self.tx.send(IoWork { request, request_id }).is_err() {
+            self.finish(id);
+            return Err("host I/O reactor stopped");
+        }
+        Ok(id)
     }
 
     pub fn cancel(&self, id: OpId) -> bool {
         let cancels = self.operation_cancels.lock().expect("operation cancellation registry");
-        let Some(operation) = cancels.get(&id) else {
+        let Some(operation) = cancels.operations.get(&id) else {
             return false;
         };
         operation.cancel.store(true, Ordering::SeqCst);
@@ -687,6 +849,7 @@ impl IoHandle {
     pub fn cancel_request(&self, request_id: u64) -> Vec<OpId> {
         let operations = self.operation_cancels.lock().expect("operation cancellation registry");
         operations
+            .operations
             .iter()
             .filter(|(_, operation)| operation.request_id == request_id)
             .map(|(id, operation)| {
@@ -697,7 +860,10 @@ impl IoHandle {
     }
 
     pub fn finish(&self, id: OpId) {
-        self.operation_cancels.lock().expect("operation cancellation registry").remove(&id);
+        let mut registry = self.operation_cancels.lock().expect("operation cancellation registry");
+        if let Some(operation) = registry.operations.remove(&id) {
+            registry.bytes -= operation.bytes;
+        }
     }
 }
 
@@ -712,9 +878,10 @@ pub fn spawn_reactor(cancel: Arc<AtomicBool>, deadline: Instant) -> Reactor {
     let ws_in = StreamSlot::new();
     let ws_out = SendSlot::new();
     let client_ws = ClientWebSocketSlot::default();
-    let operation_cancels = Arc::new(StdMutex::new(HashMap::new()));
+    let operation_cancels = Arc::new(StdMutex::new(OperationRegistry::default()));
     let (req_tx, req_rx) = unbounded_channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let done_tx = IoCompletionSender { tx: done_tx, operations: operation_cancels.clone() };
     let inbound_task = inbound.clone();
     let outbound_task = outbound.clone();
     let ws_in_task = ws_in.clone();
@@ -760,11 +927,11 @@ pub fn spawn_reactor_until_cancel(cancel: Arc<AtomicBool>) -> Reactor {
 }
 
 /// Split I/O so a process-isolated worker can proxy host calls over IPC.
-pub fn open_bridge() -> (Reactor, UnboundedReceiver<IoWork>, std::sync::mpsc::Sender<IoCompletion>)
-{
+pub fn open_bridge() -> (Reactor, UnboundedReceiver<IoWork>, IoCompletionSender) {
     let (req_tx, req_rx) = unbounded_channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let operation_cancels = Arc::new(StdMutex::new(HashMap::new()));
+    let operation_cancels = Arc::new(StdMutex::new(OperationRegistry::default()));
+    let done_tx = IoCompletionSender { tx: done_tx, operations: operation_cancels.clone() };
     (
         Reactor {
             io: IoHandle {
@@ -795,17 +962,18 @@ struct IoSlots {
 
 async fn run_reactor(
     mut requests: UnboundedReceiver<IoWork>,
-    completions: std::sync::mpsc::Sender<IoCompletion>,
+    completions: IoCompletionSender,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
     slots: IoSlots,
-    operation_cancels: Arc<StdMutex<HashMap<OpId, OperationControl>>>,
+    operation_cancels: Arc<StdMutex<OperationRegistry>>,
 ) {
     while let Some(work) = requests.recv().await {
         let operation_id = work.request.id();
         let operation_cancel = operation_cancels
             .lock()
             .expect("operation cancellation registry")
+            .operations
             .get(&operation_id)
             .map(|operation| operation.cancel.clone())
             .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
@@ -1477,6 +1645,117 @@ async fn pump_http_body(
 #[cfg(test)]
 mod queue_tests {
     use super::*;
+
+    #[test]
+    fn bridge_sleep_observes_operation_cancel_isolate_cancel_and_deadline() {
+        for scenario in ["operation cancel", "isolate cancel", "deadline"] {
+            let (reactor, mut requests, complete) = open_bridge();
+            let id = reactor.io.submit(|id| IoRequest::Sleep { id, millis: 60_000 }).unwrap();
+            let work = requests.try_recv().unwrap();
+            assert_eq!(work.request.id(), id);
+            let cancel = crate::IsolateCancel::new();
+            let deadline = if scenario == "deadline" {
+                Instant::now()
+            } else {
+                Instant::now() + Duration::from_secs(60)
+            };
+            if scenario == "operation cancel" {
+                reactor.io.cancel(id);
+            }
+            complete.spawn_sleep(id, 60_000, cancel.clone(), deadline);
+            if scenario == "isolate cancel" {
+                cancel.cancel();
+            }
+            let result = reactor.completions.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(result.id, id);
+            let expected = if scenario == "deadline" { "Timeout" } else { "Cancelled" };
+            assert_eq!(result.result, Err(expected.into()), "{scenario}");
+            reactor.io.finish(id);
+            let registry = reactor.io.operation_cancels.lock().unwrap();
+            assert!(registry.operations.is_empty());
+            assert_eq!(registry.bytes, 0);
+        }
+    }
+
+    #[test]
+    fn io_slots_cover_queued_running_and_unconsumed_completions() {
+        let (reactor, mut requests, complete) = open_bridge();
+        for _ in 0..MAX_PENDING_IO_OPS {
+            reactor.io.submit(|id| IoRequest::Sleep { id, millis: 1000 }).unwrap();
+        }
+        assert_eq!(
+            reactor.io.submit(|id| IoRequest::Sleep { id, millis: 1 }),
+            Err(IO_BUDGET_ERROR)
+        );
+        while let Ok(work) = requests.try_recv() {
+            complete.send(IoCompletion { id: work.request.id(), result: Ok(Value::Null) }).unwrap();
+            complete.send(IoCompletion { id: work.request.id(), result: Ok(Value::Null) }).unwrap();
+        }
+        assert_eq!(
+            reactor.io.submit(|id| IoRequest::Sleep { id, millis: 1 }),
+            Err(IO_BUDGET_ERROR)
+        );
+        let mut consumed = 0;
+        while let Ok(completion) = reactor.completions.try_recv() {
+            reactor.io.finish(completion.id);
+            consumed += 1;
+        }
+        assert_eq!(consumed, MAX_PENDING_IO_OPS);
+        let registry = reactor.io.operation_cancels.lock().unwrap();
+        assert!(registry.operations.is_empty());
+        assert_eq!(registry.bytes, 0);
+        drop(registry);
+        assert!(reactor.io.submit(|id| IoRequest::Sleep { id, millis: 1 }).is_ok());
+    }
+
+    #[test]
+    fn io_byte_budget_includes_results_and_recovers_after_cancellation() {
+        let (reactor, mut requests, complete) = open_bridge();
+        reactor.io.bind_request(42);
+        let first = reactor
+            .io
+            .submit(|id| IoRequest::Echo { id, value: "x".repeat(MAX_PENDING_IO_BYTES / 2) })
+            .unwrap();
+        assert_eq!(
+            reactor
+                .io
+                .submit(|id| IoRequest::Echo { id, value: "x".repeat(MAX_PENDING_IO_BYTES / 2) }),
+            Err(IO_BUDGET_ERROR)
+        );
+        let second = reactor.io.submit(|id| IoRequest::Sleep { id, millis: 1 }).unwrap();
+        complete
+            .send(IoCompletion {
+                id: second,
+                result: Ok(Value::String("x".repeat(MAX_PENDING_IO_BYTES / 2))),
+            })
+            .unwrap();
+        let result = reactor.completions.try_recv().unwrap();
+        assert_eq!(result.result, Err(IO_BUDGET_ERROR.into()));
+        reactor.io.finish(result.id);
+        let canceled = reactor.io.cancel_request(42);
+        assert_eq!(canceled, vec![first]);
+        while requests.try_recv().is_ok() {}
+        complete.send(IoCompletion { id: first, result: Err("canceled".into()) }).unwrap();
+        reactor.io.finish(reactor.completions.try_recv().unwrap().id);
+        let registry = reactor.io.operation_cancels.lock().unwrap();
+        assert!(registry.operations.is_empty());
+        assert_eq!(registry.bytes, 0);
+        drop(registry);
+        // Large results from small requests consume the same aggregate budget.
+        let id = reactor.io.submit(|id| IoRequest::FsRead { id, path: "test".into() }).unwrap();
+        complete
+            .send(IoCompletion {
+                id,
+                result: Ok(Value::Bytes(vec![0; MAX_PENDING_IO_BYTES - 1024])),
+            })
+            .unwrap();
+        assert_eq!(
+            reactor.io.submit(|id| IoRequest::Echo { id, value: "x".repeat(2048) }),
+            Err(IO_BUDGET_ERROR)
+        );
+        reactor.io.finish(reactor.completions.try_recv().unwrap().id);
+        assert!(reactor.io.submit(|id| IoRequest::Echo { id, value: "ok".into() }).is_ok());
+    }
 
     fn active_operation() -> (Arc<AtomicBool>, Instant) {
         (Arc::new(AtomicBool::new(false)), Instant::now() + Duration::from_secs(1))

@@ -217,12 +217,7 @@ fn eval_source(
             while let Some(work) = requests.blocking_recv() {
                 match work.request {
                     IoRequest::Sleep { id, millis } => {
-                        let result = wait_interruptible(
-                            Duration::from_millis(millis),
-                            &cancel_caps,
-                            deadline,
-                        );
-                        let _ = complete_caps.send(IoCompletion { id, result });
+                        complete_caps.spawn_sleep(id, millis, cancel_caps.clone(), deadline);
                     }
                     other => {
                         if let Some(message) = cap_call(&other) {
@@ -289,30 +284,6 @@ fn eval_source(
                 return Err(IsolateError::Worker("stdin closed".into()));
             }
         }
-    }
-}
-
-fn wait_interruptible(
-    duration: Duration,
-    cancel: &IsolateCancel,
-    deadline: Instant,
-) -> Result<Value, String> {
-    let sleep_until = Instant::now() + duration;
-    loop {
-        if cancel.is_cancelled() {
-            return Err(format!("{:?}", InterruptReason::Cancelled));
-        }
-        if Instant::now() >= deadline {
-            return Err(format!("{:?}", InterruptReason::Timeout));
-        }
-        let now = Instant::now();
-        if now >= sleep_until {
-            return Ok(Value::Null);
-        }
-        let slice = (sleep_until - now)
-            .min(deadline.saturating_duration_since(now))
-            .min(Duration::from_millis(5));
-        thread::sleep(slice);
     }
 }
 

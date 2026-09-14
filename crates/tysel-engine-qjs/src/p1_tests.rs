@@ -1,6 +1,85 @@
 use super::*;
 
 #[test]
+fn cleared_timers_release_captured_buffers_and_cancel_started_operations() {
+    let value = eval(
+        r#"(async () => {
+      let calls = 0;
+      for (let round = 0; round < 8; round++) {
+        for (let i = 0; i < 1000; i++) {
+          const data = new Uint8Array(65536);
+          const id = setTimeout(() => { calls += data[0] + 1; }, 60000);
+          if (i % 100 === 0) await Promise.resolve();
+          clearTimeout(id);
+        }
+        // Also cancel an operation whose native Sleep has already started.
+        const id = setTimeout(() => calls++, 60000);
+        await Promise.resolve();
+        clearTimeout(id);
+        await tysel.sleep(20);
+        if (Object.keys(globalThis.__tysel_pending).length !== 0) return false;
+      }
+      const interval = setInterval(() => calls++, 1);
+      await tysel.sleep(30);
+      clearInterval(interval);
+      const previous = calls;
+      await tysel.sleep(30);
+      return previous > 0 && calls === previous;
+    })()"#,
+        IsolateConfig {
+            memory_limit_bytes: 16 * 1024 * 1024,
+            cpu_ms_per_turn: 2000,
+            request_timeout_ms: 5000,
+        },
+    )
+    .unwrap();
+    assert_eq!(value, Value::Bool(true));
+}
+
+#[test]
+fn io_burst_is_rejected_at_budget_and_recovers_after_consumption() {
+    let value = eval(
+        r#"(async () => {
+      for (let round = 0; round < 3; round++) {
+        const pending = []; const payload = 'x'.repeat(65536);
+        let rejected = false;
+        try { for (let i=0; i<2000; i++) pending.push(tysel.echo(payload)); }
+        catch (error) { rejected = String(error).includes('host I/O budget exceeded'); }
+        if (!rejected || pending.length === 0 || pending.length > 256) return false;
+        await Promise.all(pending);
+        if (Object.keys(globalThis.__tysel_pending).length !== 0) return false;
+        if (await tysel.echo('ok') !== 'ok') return false;
+      }
+      return true;
+    })()"#,
+        IsolateConfig {
+            memory_limit_bytes: 32 * 1024 * 1024,
+            cpu_ms_per_turn: 2000,
+            request_timeout_ms: 5000,
+        },
+    )
+    .unwrap();
+    assert_eq!(value, Value::Bool(true));
+}
+
+#[test]
+fn timer_admission_failure_does_not_silently_discard_callbacks() {
+    let error = eval(
+        r#"(async () => {
+      for (let i = 0; i < 1000; i++) setTimeout(() => {}, 60000);
+      await tysel.sleep(100);
+    })()"#,
+        IsolateConfig {
+            memory_limit_bytes: 16 * 1024 * 1024,
+            cpu_ms_per_turn: 2000,
+            request_timeout_ms: 1000,
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("host I/O budget exceeded"), "{error}");
+}
+
+#[test]
 fn p1_utilities_and_abort_composition() {
     let value = eval(r#"(async () => {
       const order = [];

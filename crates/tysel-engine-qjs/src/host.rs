@@ -35,7 +35,13 @@ fn install_inner(
 
     let tysel = Object::new(ctx.clone())?;
     tysel.set("isolateId", isolate_id)?;
+    let timer_origin = std::time::Instant::now();
+    tysel.set(
+        "_timerNow",
+        Function::new(ctx.clone(), move || timer_origin.elapsed().as_secs_f64() * 1000.0)?,
+    )?;
     let io_sleep = io.clone();
+    let io_sleep_op = io.clone();
     let io_echo = io.clone();
     let io_secret = io.clone();
     let io_body = io.clone();
@@ -77,6 +83,15 @@ fn install_inner(
         })?,
     )?;
     tysel.set(
+        "_sleepOp",
+        Function::new(ctx.clone(), move |ctx, millis: f64| {
+            submit_cancellable(ctx, &io_sleep_op, |id| IoRequest::Sleep {
+                id,
+                millis: millis.max(0.0) as u64,
+            })
+        })?,
+    )?;
+    tysel.set(
         "echo",
         Function::new(ctx.clone(), move |ctx, value: String| {
             submit(ctx, &io_echo, |id| IoRequest::Echo { id, value })
@@ -111,6 +126,11 @@ fn install_inner(
         Function::new(
             ctx.clone(),
             move |ctx, url: String, method: String, headers_json: String, body: TypedArray<u8>| {
+                io_http_start
+                    .check_capacity(
+                        body.len() + url.capacity() + method.capacity() + headers_json.capacity(),
+                    )
+                    .map_err(|error| Exception::throw_range(&ctx, error))?;
                 let body = bytes::Bytes::copy_from_slice(
                     body.as_bytes()
                         .ok_or_else(|| Exception::throw_type(&ctx, "request body is detached"))?,
@@ -479,7 +499,7 @@ fn submit_operation<'js>(
     request: impl FnOnce(OpId) -> IoRequest,
 ) -> rquickjs::Result<(Promise<'js>, OpId)> {
     let (promise, resolve, reject) = Promise::new(&ctx)?;
-    let id = io.submit(request);
+    let id = io.submit(request).map_err(|error| Exception::throw_range(&ctx, error))?;
     let entry = Object::new(ctx.clone())?;
     entry.set("resolve", resolve)?;
     entry.set("reject", reject)?;

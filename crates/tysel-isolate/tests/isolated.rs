@@ -146,6 +146,69 @@ fn isolated_sleep_resolves_without_broker() {
 }
 
 #[test]
+fn isolated_timer_fires_while_a_longer_sleep_is_pending() {
+    let mut supervisor = supervisor();
+    let value = supervisor
+        .eval(
+            r#"(async () => {
+                let fired = false;
+                setTimeout(() => { fired = true; }, 10);
+                await tysel.sleep(150);
+                return fired;
+            })()"#,
+        )
+        .expect("concurrent timer and sleep");
+    assert_eq!(value, Value::Bool(true));
+}
+
+#[test]
+fn isolated_sleep_allows_broker_calls_and_operation_cancellation() {
+    let mut supervisor = supervisor();
+    let value = supervisor
+        .eval(
+            r#"(async () => {
+                const operation = tysel._sleepOp(60000);
+                const result = operation.promise.then(() => "resolved", error => String(error));
+                const echo = await tysel.echo("ready");
+                tysel._cancelOp(operation.id);
+                return echo === "ready" && (await result).includes("Cancelled");
+            })()"#,
+        )
+        .expect("broker call and canceled sleep");
+    assert_eq!(value, Value::Bool(true));
+}
+
+#[test]
+fn isolated_cleared_timers_release_io_capacity() {
+    let mut supervisor = supervisor();
+    let worker = supervisor.worker_pid();
+    let value = supervisor
+        .eval(
+            r#"(async () => {
+                let fired = 0;
+                const pendingCount = () => Object.keys(globalThis.__tysel_pending).length;
+                // More than 256 operations in one eval, recycled in bounded batches.
+                for (let round = 0; round < 10; round++) {
+                    const timers = Array.from({length: 32}, () => setTimeout(() => fired++, 60000));
+                    const interval = setInterval(() => fired++, 60000);
+                    await tysel.sleep(10);
+                    timers.forEach(clearTimeout);
+                    clearInterval(interval);
+                    for (let retry = 0; retry < 100 && pendingCount() > 0; retry++) {
+                        await tysel.sleep(5);
+                    }
+                    if (pendingCount() !== 0) throw new Error("canceled timers retained I/O slots");
+                }
+                return fired;
+            })()"#,
+        )
+        .expect("clear timers and reuse I/O capacity");
+    assert_eq!(value, Value::Number(0.0));
+    assert_eq!(supervisor.eval("tysel.echo('next')").unwrap(), Value::String("next".into()));
+    assert_eq!(supervisor.worker_pid(), worker, "successful evals must reuse the worker");
+}
+
+#[test]
 fn sqlite_is_denied_in_isolated_worker() {
     let mut supervisor = supervisor();
     let value = supervisor
