@@ -36,7 +36,8 @@ pub const MAX_COMPONENT_ERROR_BYTES: usize = 4 * 1024;
 pub const MAX_COMPONENT_INPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_COMPONENT_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_AOT_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
-pub const WASMTIME_VERSION: &str = "32.0.1";
+/// Generated from the exact workspace dependency pin, checked against Cargo.lock.
+pub const WASMTIME_VERSION: &str = env!("TYSEL_WASMTIME_VERSION");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComponentEngineConfig {
@@ -848,6 +849,7 @@ mod tests {
         let source = component(ECHO_COMPONENT);
         let artifact = engine.precompile(&source).unwrap();
         assert_eq!(artifact.component_abi_version, COMPONENT_ABI_VERSION);
+        assert_eq!(artifact.wasmtime_version, WASMTIME_VERSION);
         assert_eq!(Engine::detect_precompiled(&artifact.bytes), Some(Precompiled::Component));
         engine.validate_aot(&artifact, &source).unwrap();
 
@@ -857,6 +859,23 @@ mod tests {
             engine.validate_aot(&tampered, &source),
             Err(ComponentError::IncompatibleAot)
         ));
+
+        let mut legacy = artifact.clone();
+        legacy.wasmtime_version = "32.0.1".into();
+        assert!(matches!(
+            engine.validate_aot(&legacy, &source),
+            Err(ComponentError::IncompatibleAot)
+        ));
+
+        let mut incompatible = artifact.clone();
+        incompatible.engine_compatibility_hash ^= 1;
+        assert!(matches!(
+            engine.validate_aot(&incompatible, &source),
+            Err(ComponentError::IncompatibleAot)
+        ));
+
+        // New metadata remains accepted after each independent rejection.
+        engine.validate_aot(&artifact, &source).unwrap();
     }
 
     #[test]

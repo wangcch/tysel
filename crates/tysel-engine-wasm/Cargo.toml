@@ -21,5 +21,8 @@ tysel-package.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 
+[build-dependencies]
+toml.workspace = true
+
 [dev-dependencies]
 wat = "1"

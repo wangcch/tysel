@@ -1,6 +1,6 @@
 {
   "inventory_version": 1,
-  "cargo_lock_sha256": "001add1e9594e03c8b8d168ca98df5d5eaf323b5c8be6f012accfecb9b382bde",
+  "cargo_lock_sha256": "67cf6c741753cb0b64147b0a978ce5c46326cf3d7573186a51eb7263fb374f55",
   "roots": [
     "tysel-cli",
     "tysel-isolate",

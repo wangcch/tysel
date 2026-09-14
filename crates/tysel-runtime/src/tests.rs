@@ -90,7 +90,9 @@ fn packaged_component_runs_through_the_portable_runtime_path() {
 "#,
     )
     .unwrap();
-    let tap = Tap::new(component_manifest(), Vec::new(), Vec::new()).with_components(vec![
+    let engine = tysel_engine_wasm::WasmComponentEngine::new(Default::default()).unwrap();
+    let aot = engine.precompile(&source).unwrap();
+    let mut tap = Tap::new(component_manifest(), Vec::new(), Vec::new()).with_components(vec![
         PackagedComponent {
             name: "echo".into(),
             abi_version: "0.4.0".into(),
@@ -99,6 +101,15 @@ fn packaged_component_runs_through_the_portable_runtime_path() {
         },
     ]);
     assert_eq!(crate::invoke_component_tap(&tap, r#"{"value":42}"#).unwrap(), r#"{"value":42}"#);
+    tap.components[0].aot.push(tysel_package::PackagedAot {
+        target: aot.target,
+        wasmtime_version: "32.0.1".into(),
+        engine_compatibility_hash: aot.engine_compatibility_hash,
+        source_sha256: aot.source_sha256,
+        bytes: aot.bytes,
+    });
+    // Legacy AOT metadata cannot prevent a valid portable payload from running.
+    assert_eq!(crate::invoke_component_tap(&tap, r#"{"value":43}"#).unwrap(), r#"{"value":43}"#);
 }
 
 #[test]
