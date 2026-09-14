@@ -83,6 +83,45 @@ async fn packaged_stub_serves_embedded_bundle() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn packaged_otlp_disable_takes_precedence_over_invalid_host_endpoint() {
+    let _permit = PACKAGE_SEMAPHORE.acquire().await.unwrap();
+    let packaged = package_stub();
+    let command = |disabled: &str| {
+        let mut command = Command::new(packaged.path());
+        for (key, _) in std::env::vars() {
+            if key.starts_with("OTEL_") {
+                command.env_remove(key);
+            }
+        }
+        command
+            .env("OTEL_EXPORTER_OTLP_ENDPOINT", "invalid-host-endpoint")
+            .env("OTEL_SDK_DISABLED", disabled)
+            .kill_on_drop(true);
+        command
+    };
+    let invalid = tokio::time::timeout(Duration::from_secs(5), command("false").output())
+        .await
+        .expect("invalid endpoint must fail promptly")
+        .unwrap();
+    assert!(!invalid.status.success());
+    let error = String::from_utf8_lossy(&invalid.stderr);
+    assert!(error.contains("OTLP endpoint configuration is invalid"), "{error}");
+    assert!(!error.contains("invalid-host-endpoint"));
+
+    let mut child = command("TRUE").stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let stderr = collect_stderr(child.stderr.take().unwrap());
+    let addr =
+        tokio::time::timeout(Duration::from_secs(5), read_listen(child.stdout.take().unwrap()))
+            .await
+            .expect("disabled exporter must not prevent readiness")
+            .unwrap_or_else(|error| panic!("{error}; stderr={}", stderr_text(&stderr)));
+    assert_eq!(request(addr, "/hello").await.0, 200);
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn packaged_stub_exits_cleanly_on_sigterm() {
     let _permit = PACKAGE_SEMAPHORE.acquire().await.expect("package semaphore");
     let packaged = package_stub();

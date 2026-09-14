@@ -356,18 +356,60 @@ mod tests {
         if std::env::var_os("TYSEL_OTLP_CHILD").is_some() {
             return;
         }
+        verify_http_export(false);
+        verify_http_export(true);
+    }
+
+    fn verify_http_export(signal_override: bool) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind collector");
+        listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        let mut child = Command::new(std::env::current_exe().unwrap())
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        for (key, _) in std::env::vars() {
+            if key.starts_with("OTEL_") {
+                command.env_remove(key);
+            }
+        }
+        command
             .args(["--exact", "otlp::tests::otlp_child_export", "--nocapture"])
             .env("TYSEL_OTLP_CHILD", "1")
-            .env("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
-            .spawn()
-            .expect("spawn OTLP producer");
+            .env("OTEL_METRIC_EXPORT_INTERVAL", "3600000")
+            .env("OTEL_EXPORTER_OTLP_ENDPOINT", &endpoint);
+        if signal_override {
+            command
+                .env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", format!("{endpoint}/trace-specific"))
+                .env("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", format!("{endpoint}/metric-specific"));
+        }
+        struct Producer(std::process::Child);
+        impl Drop for Producer {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = Producer(command.spawn().expect("spawn OTLP producer"));
 
         let mut bodies = Vec::new();
+        let mut paths = std::collections::BTreeSet::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         for _ in 0..2 {
-            let (mut stream, _) = listener.accept().expect("accept OTLP export");
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "timed out waiting for OTLP export"
+                        );
+                        assert!(
+                            child.0.try_wait().unwrap().is_none(),
+                            "OTLP producer exited before exporting"
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept OTLP export: {error}"),
+                }
+            };
             stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
             let mut request = Vec::new();
             let mut chunk = [0u8; 4096];
@@ -381,6 +423,9 @@ mod tests {
                 }
             };
             let headers = std::str::from_utf8(&request[..header_end]).expect("HTTP headers");
+            paths.insert(
+                headers.lines().next().unwrap().split_whitespace().nth(1).unwrap().to_owned(),
+            );
             let content_length = headers
                 .lines()
                 .find_map(|line| {
@@ -399,7 +444,20 @@ mod tests {
                 .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
                 .expect("reply to exporter");
         }
-        assert!(child.wait().expect("wait for producer").success());
+        loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "OTLP producer did not exit");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let expected = if signal_override {
+            ["/trace-specific", "/metric-specific"]
+        } else {
+            ["/v1/traces", "/v1/metrics"]
+        };
+        assert_eq!(paths, expected.into_iter().map(str::to_owned).collect());
         let payload = String::from_utf8_lossy(&bodies);
         assert!(payload.contains("http.server.request"));
         assert!(payload.contains("tysel.capability"));
