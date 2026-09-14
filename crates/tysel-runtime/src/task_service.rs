@@ -307,46 +307,40 @@ impl McpTaskEndpoint {
                         return Some(self.server.fail_tool_call(call, &error.to_string()));
                     }
                 };
-                let id =
-                    match self.ingress.enqueue_mcp(&call.name, call.arguments.clone(), now).await {
-                        Ok(id) => id,
-                        Err(error) => {
-                            return Some(self.server.fail_tool_call(call, &error.to_string()));
-                        }
-                    };
+                let result = match self
+                    .ingress
+                    .enqueue_mcp_waiting(&call.name, call.arguments.clone(), now)
+                    .await
+                {
+                    Ok(id) => id,
+                    Err(error) => {
+                        return Some(self.server.fail_tool_call(call, &error.to_string()));
+                    }
+                };
                 let outcome = tokio::time::timeout(
                     Duration::from_millis(self.ingress.request_timeout_ms()),
-                    wait_for_outcome(&self.ingress, id),
+                    result,
                 )
                 .await;
                 match outcome {
-                    Ok(TaskOutcome::Completed { result }) => {
+                    Ok(Ok(TaskOutcome::Completed { result })) => {
                         Some(self.server.complete_tool_call(call, result))
                     }
-                    Ok(TaskOutcome::Failed { error, .. }) => {
+                    Ok(Ok(TaskOutcome::Failed { error, .. })) => {
                         Some(self.server.fail_tool_call(call, &error))
                     }
-                    Ok(TaskOutcome::Canceled {}) => {
+                    Ok(Ok(TaskOutcome::Canceled {})) => {
                         Some(self.server.fail_tool_call(call, "tool call was canceled"))
                     }
-                    Ok(TaskOutcome::TimedOut {}) | Err(_) => {
+                    Ok(Ok(TaskOutcome::TimedOut {})) | Err(_) | Ok(Err(_)) => {
                         Some(self.server.fail_tool_call(call, "tool call timed out"))
                     }
-                    Ok(TaskOutcome::Suspended {}) => {
+                    Ok(Ok(TaskOutcome::Suspended {})) => {
                         Some(self.server.fail_tool_call(call, "tool call suspended"))
                     }
                 }
             }
         }
-    }
-}
-
-async fn wait_for_outcome(ingress: &TaskIngress, id: tysel_task::TaskId) -> TaskOutcome {
-    loop {
-        if let Some(outcome) = ingress.outcome(id).await {
-            return outcome;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 

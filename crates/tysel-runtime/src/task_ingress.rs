@@ -340,13 +340,30 @@ impl TaskIngress {
         input: Value,
         now_ms: u64,
     ) -> Result<TaskId, TaskIngressError> {
+        let task = self.mcp_task(tool, input, now_ms)?;
+        let id = task.meta.id;
+        self.broker.lock().await.enqueue(task)?;
+        Ok(id)
+    }
+
+    pub(crate) async fn enqueue_mcp_waiting(
+        &self,
+        tool: &str,
+        input: Value,
+        now_ms: u64,
+    ) -> Result<tokio::sync::oneshot::Receiver<TaskOutcome>, TaskIngressError> {
+        let task = self.mcp_task(tool, input, now_ms)?;
+        Ok(self.broker.lock().await.enqueue_waiting(task)?)
+    }
+
+    fn mcp_task(&self, tool: &str, input: Value, now_ms: u64) -> Result<Task, TaskIngressError> {
         if !self.registry.has_mcp_tool(tool) {
             return Err(TaskIngressError::UnknownMcpTool(tool.into()));
         }
         let id = TaskId(u128::from(self.reserve_task_ids(1)?));
         let deadline =
             now_ms.checked_add(self.request_timeout_ms).ok_or(TaskIngressError::Clock)?;
-        let task = Task::new(
+        Ok(Task::new(
             TaskMeta {
                 id,
                 application_id: self.application_id.clone(),
@@ -357,9 +374,7 @@ impl TaskIngress {
             TaskTrigger::Mcp { tool: tool.into() },
             Some(deadline),
         )
-        .with_input(input);
-        self.broker.lock().await.enqueue(task)?;
-        Ok(id)
+        .with_input(input))
     }
 
     /// Enqueue due registrations since the previous call. Catch-up is bounded

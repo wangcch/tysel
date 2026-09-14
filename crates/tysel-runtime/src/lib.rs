@@ -8,6 +8,7 @@ mod durable_plane;
 mod durable_poll;
 mod http;
 mod service;
+mod task_history;
 mod task_ingress;
 mod task_rpc;
 #[cfg(unix)]

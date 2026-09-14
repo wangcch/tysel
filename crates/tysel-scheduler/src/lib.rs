@@ -28,7 +28,8 @@ pub struct Scheduler {
     queue: VecDeque<TaskId>,
     tasks: HashMap<TaskId, Task>,
     claims: HashMap<TaskId, ActiveClaim>,
-    generations: HashMap<TaskId, u64>,
+    next_generation: u64,
+    terminal: VecDeque<TaskId>,
 }
 
 impl Scheduler {
@@ -41,7 +42,8 @@ impl Scheduler {
             queue: VecDeque::with_capacity(capacity),
             tasks: HashMap::new(),
             claims: HashMap::new(),
-            generations: HashMap::new(),
+            next_generation: 0,
+            terminal: VecDeque::new(),
         })
     }
 
@@ -100,14 +102,12 @@ impl Scheduler {
         let Some(task) = self.claim(now_ms)? else {
             return Ok(None);
         };
-        let Some(generation) =
-            self.generations.get(&task.meta.id).copied().unwrap_or(0).checked_add(1)
-        else {
+        let Some(generation) = self.next_generation.checked_add(1) else {
             self.transition(task.meta.id, TaskState::Retrying)?;
             self.transition(task.meta.id, TaskState::Queued)?;
             return Err(SchedulerError::GenerationExhausted);
         };
-        self.generations.insert(task.meta.id, generation);
+        self.next_generation = generation;
         let claim = ActiveClaim { generation, lease_owner: lease_owner.into(), lease_until_ms };
         self.claims.insert(task.meta.id, claim.clone());
         Ok(Some(TaskClaim {
@@ -256,6 +256,7 @@ impl Scheduler {
             self.queue.push_back(id);
         } else if next.is_terminal() {
             self.queue.retain(|queued| *queued != id);
+            self.terminal.push_back(id);
         }
         if matches!(next, TaskState::Queued | TaskState::Suspended | TaskState::Retrying)
             || next.is_terminal()
@@ -277,6 +278,15 @@ impl Scheduler {
 
     pub fn get(&self, id: TaskId) -> Option<&Task> {
         self.tasks.get(&id)
+    }
+
+    /// Transfer a finalized task to the owner's result retention policy.
+    /// Long-lived coordinators must drain this after scheduler mutations.
+    /// Generations are scheduler-wide, so removing and reusing an id cannot
+    /// authorize a lease from an earlier registration of that id.
+    pub fn take_terminal(&mut self) -> Option<Task> {
+        let id = self.terminal.pop_front()?;
+        self.tasks.remove(&id)
     }
 
     pub fn pending_len(&self) -> usize {
@@ -476,7 +486,7 @@ mod tests {
         let stale = scheduler.claim_with_lease(0, "worker-a", 10).unwrap().unwrap();
         assert_eq!(scheduler.requeue_expired(10, 1).unwrap(), vec![TaskId(11)]);
         let current = scheduler.claim_with_lease(10, "worker-b", 10).unwrap().unwrap();
-        assert_eq!(current.generation, stale.generation + 1);
+        assert!(current.generation > stale.generation);
         assert!(matches!(
             scheduler.finish_claim(&stale, 11, TaskState::Completed),
             Err(SchedulerError::LeaseLost)
@@ -586,7 +596,7 @@ mod tests {
 
         assert_eq!(scheduler.requeue_owner_claims("worker-a", 1, 10).unwrap(), vec![TaskId(30)]);
         let current = scheduler.claim_with_lease(1, "worker-c", 1_000).unwrap().unwrap();
-        assert_eq!(current.generation, stale.generation + 1);
+        assert!(current.generation > stale.generation);
         assert!(matches!(
             scheduler.finish_claim(&stale, 2, TaskState::Completed),
             Err(SchedulerError::LeaseLost)
@@ -595,5 +605,25 @@ mod tests {
             scheduler.finish_claim(&other, 2, TaskState::Completed).unwrap().state,
             TaskState::Completed
         );
+    }
+
+    #[test]
+    fn draining_terminal_tasks_frees_records_and_fences_reused_ids() {
+        let mut scheduler = Scheduler::new(1).unwrap();
+        scheduler.enqueue(task(1, None)).unwrap();
+        let stale = scheduler.claim_with_lease(0, "worker", 100).unwrap().unwrap();
+        scheduler.finish_claim(&stale, 1, TaskState::Completed).unwrap();
+        assert_eq!(scheduler.take_terminal().unwrap().meta.id, TaskId(1));
+        assert!(scheduler.tasks.is_empty());
+        assert!(scheduler.claims.is_empty());
+        assert!(scheduler.terminal.is_empty());
+        scheduler.enqueue(task(1, None)).unwrap();
+        let current = scheduler.claim_with_lease(1, "worker", 100).unwrap().unwrap();
+        assert!(current.generation > stale.generation);
+        assert!(matches!(
+            scheduler.finish_claim(&stale, 2, TaskState::Completed),
+            Err(SchedulerError::LeaseLost)
+        ));
+        scheduler.finish_claim(&current, 2, TaskState::Completed).unwrap();
     }
 }

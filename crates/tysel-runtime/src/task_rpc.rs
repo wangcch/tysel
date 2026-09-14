@@ -1,4 +1,6 @@
+use crate::task_history::TaskHistory;
 use std::collections::HashMap;
+use std::time::Instant;
 
 #[cfg(unix)]
 use std::{collections::HashSet, path::Path, sync::Arc, time::SystemTime};
@@ -33,6 +35,8 @@ use tysel_task_rpc::{MAX_TASK_RPC_FRAME, decode_message};
 pub struct TaskRpcBroker {
     scheduler: Scheduler,
     outcomes: HashMap<TaskId, TaskOutcome>,
+    history: TaskHistory,
+    waiters: HashMap<TaskId, tokio::sync::oneshot::Sender<TaskOutcome>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -45,10 +49,19 @@ pub enum TaskRpcBrokerError {
 
 impl TaskRpcBroker {
     pub fn new(capacity: usize) -> Result<Self, SchedulerError> {
-        Ok(Self { scheduler: Scheduler::new(capacity)?, outcomes: HashMap::new() })
+        Ok(Self {
+            scheduler: Scheduler::new(capacity)?,
+            outcomes: HashMap::new(),
+            history: TaskHistory::default(),
+            waiters: HashMap::new(),
+        })
     }
 
     pub fn enqueue(&mut self, task: Task) -> Result<(), TaskRpcBrokerError> {
+        self.history.prune(Instant::now());
+        if self.history.get(task.meta.id).is_some() {
+            return Err(SchedulerError::Duplicate(task.meta.id).into());
+        }
         // Reject tasks that cannot be represented on the wire before they can
         // leave the runnable queue under an undeliverable claim.
         let mut claimed_shape = task.clone();
@@ -66,11 +79,39 @@ impl TaskRpcBroker {
     }
 
     pub fn task(&self, task_id: TaskId) -> Option<&Task> {
-        self.scheduler.get(task_id)
+        self.scheduler.get(task_id).or_else(|| self.history.get(task_id).map(|entry| &entry.task))
     }
 
     pub fn outcome(&self, task_id: TaskId) -> Option<&TaskOutcome> {
-        self.outcomes.get(&task_id)
+        self.history.get(task_id).map(|entry| &entry.outcome)
+    }
+
+    /// Register a result receiver atomically with enqueue, before any worker
+    /// can complete the task or history pressure can evict its result.
+    pub(crate) fn enqueue_waiting(
+        &mut self,
+        task: Task,
+    ) -> Result<tokio::sync::oneshot::Receiver<TaskOutcome>, TaskRpcBrokerError> {
+        let id = task.meta.id;
+        self.enqueue(task)?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.waiters.insert(id, tx);
+        Ok(rx)
+    }
+
+    fn collect_terminal(&mut self) {
+        self.history.prune(Instant::now());
+        while let Some(task) = self.scheduler.take_terminal() {
+            let id = task.meta.id;
+            let outcome = self.outcomes.remove(&id).unwrap_or(match task.state {
+                TaskState::Canceled => TaskOutcome::Canceled {},
+                _ => TaskOutcome::TimedOut {},
+            });
+            if let Some(waiter) = self.waiters.remove(&id) {
+                let _ = waiter.send(outcome.clone());
+            }
+            self.history.insert(task, outcome);
+        }
     }
 
     pub fn remaining_capacity(&self) -> usize {
@@ -82,7 +123,9 @@ impl TaskRpcBroker {
         now_ms: u64,
         limit: usize,
     ) -> Result<Vec<TaskId>, SchedulerError> {
-        self.scheduler.requeue_expired(now_ms, limit)
+        let result = self.scheduler.requeue_expired(now_ms, limit);
+        self.collect_terminal();
+        result
     }
 
     pub fn disconnect_worker(
@@ -90,7 +133,9 @@ impl TaskRpcBroker {
         worker_id: &str,
         now_ms: u64,
     ) -> Result<Vec<TaskId>, SchedulerError> {
-        self.scheduler.requeue_owner_claims(worker_id, now_ms, usize::MAX)
+        let result = self.scheduler.requeue_owner_claims(worker_id, now_ms, usize::MAX);
+        self.collect_terminal();
+        result
     }
 
     /// Read, validate, handle, and write one bounded TaskRPC frame.
@@ -108,6 +153,7 @@ impl TaskRpcBroker {
     /// bounded v1 `error` messages; stale leases use the operation's explicit
     /// negative acknowledgement so workers can safely discard late results.
     pub fn handle(&mut self, now_ms: u64, envelope: Envelope) -> Envelope {
+        self.history.prune(Instant::now());
         let request_id = request_id(&envelope.message);
         if let Err(error) = envelope.validate() {
             let code = if matches!(error, TaskRpcError::UnsupportedVersion { .. }) {
@@ -143,6 +189,7 @@ impl TaskRpcBroker {
                 "TaskRPC response sent to scheduler",
             ),
         };
+        self.collect_terminal();
         Envelope::new(response)
     }
 
@@ -261,6 +308,12 @@ impl TaskRpcBroker {
         let Ok(task_id) = task_id.parse() else {
             return Message::Canceled { request_id, canceled: false };
         };
+        if let Some(entry) = self.history.get(task_id) {
+            return Message::Canceled {
+                request_id,
+                canceled: entry.task.state == TaskState::Canceled,
+            };
+        }
         match self.scheduler.cancel(task_id) {
             Ok(task) => {
                 if task.state == TaskState::Canceled {
@@ -1113,6 +1166,98 @@ mod tests {
         assert_eq!(response.message, Message::Committed { request_id: 3, accepted: true });
         assert_eq!(broker.task(TaskId(1)).unwrap().state, TaskState::Completed);
         assert_eq!(broker.outcome(TaskId(1)), Some(&outcome));
+    }
+
+    #[test]
+    fn completed_history_is_bounded_without_losing_waiting_results_or_fencing() {
+        let mut broker = TaskRpcBroker::new(1).unwrap();
+        let mut receiver = broker.enqueue_waiting(task(1)).unwrap();
+        let stale = claim(&mut broker, 0, "worker", 1).token;
+        let first = TaskOutcome::Completed { result: "first".into() };
+        broker.handle(
+            1,
+            Envelope::new(Message::Commit {
+                request_id: 2,
+                lease: stale.clone(),
+                outcome: first.clone(),
+            }),
+        );
+        for id in 2..=10_000 {
+            broker.enqueue(task(id).with_input("i".repeat(4096).into())).unwrap();
+            let lease = claim(&mut broker, 0, "worker", 1).token;
+            assert!(matches!(
+                broker
+                    .handle(
+                        1,
+                        Envelope::new(Message::Commit {
+                            request_id: 2,
+                            lease,
+                            outcome: TaskOutcome::Completed { result: "o".repeat(4096).into() },
+                        })
+                    )
+                    .message,
+                Message::Committed { accepted: true, .. }
+            ));
+            assert!(broker.scheduler.get(TaskId(id)).is_none());
+            assert!(broker.outcomes.is_empty() && broker.waiters.is_empty());
+        }
+        assert!(broker.task(TaskId(1)).is_none());
+        assert_eq!(receiver.try_recv().unwrap(), first);
+        let retained = (1..=10_000).filter(|id| broker.outcome(TaskId(*id)).is_some()).count();
+        assert!(retained > 0 && retained <= crate::task_history::MAX_HISTORY_TASKS);
+        broker.enqueue(task(1)).unwrap();
+        let current = claim(&mut broker, 1, "worker", 1).token;
+        assert!(current.generation > stale.generation);
+        assert!(matches!(
+            broker
+                .handle(
+                    2,
+                    Envelope::new(Message::Commit {
+                        request_id: 2,
+                        lease: stale,
+                        outcome: TaskOutcome::Canceled {},
+                    })
+                )
+                .message,
+            Message::Committed { accepted: false, .. }
+        ));
+        assert!(matches!(
+            broker
+                .handle(
+                    2,
+                    Envelope::new(Message::Commit {
+                        request_id: 3,
+                        lease: current,
+                        outcome: TaskOutcome::Canceled {},
+                    })
+                )
+                .message,
+            Message::Committed { accepted: true, .. }
+        ));
+    }
+
+    #[test]
+    fn scheduler_timeouts_notify_waiters_and_leave_no_active_records() {
+        let mut broker = TaskRpcBroker::new(2).unwrap();
+        let mut queued = broker.enqueue_waiting(task_with_deadline(1, Some(1))).unwrap();
+        let mut running = broker.enqueue_waiting(task_with_deadline(2, Some(1))).unwrap();
+        let lease = claim(&mut broker, 0, "worker", 1);
+        assert_eq!(lease.token.task_id, WireTaskId::new(TaskId(1)));
+        broker.requeue_expired(20, 2).unwrap();
+        broker.handle(
+            20,
+            Envelope::new(Message::Claim {
+                request_id: 2,
+                worker_id: "worker".into(),
+                lease_ms: 10,
+                limit: 2,
+            }),
+        );
+        assert_eq!(queued.try_recv().unwrap(), TaskOutcome::TimedOut {});
+        assert_eq!(running.try_recv().unwrap(), TaskOutcome::TimedOut {});
+        assert!(broker.scheduler.get(TaskId(1)).is_none());
+        assert!(broker.scheduler.get(TaskId(2)).is_none());
+        assert!(broker.waiters.is_empty());
     }
 
     #[test]
