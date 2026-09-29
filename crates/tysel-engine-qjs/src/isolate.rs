@@ -524,14 +524,27 @@ pub(crate) fn map_eval_error(
     if Instant::now() >= request_deadline || cpu.exhausted() {
         return EngineError::Interrupted(InterruptReason::Timeout);
     }
-    let message = js_error_message(ctx, err);
+    let message = match CaughtError::from_error(ctx, err) {
+        CaughtError::Error(rquickjs::Error::Allocation) => {
+            return EngineError::Interrupted(InterruptReason::MemoryLimit);
+        }
+        CaughtError::Exception(exception) => {
+            let message = exception.message().unwrap_or_else(|| "JavaScript exception".into());
+            // QuickJS reports OOM as InternalError with one of these exact
+            // messages. Ordinary error text and stack frames may mention
+            // memory too; they do not establish a resource-limit failure.
+            if matches!(message.as_str(), "out of memory" | "out of memory in regexp execution")
+                && exception.as_object().get::<_, String>("name").ok().as_deref()
+                    == Some("InternalError")
+            {
+                return EngineError::Interrupted(InterruptReason::MemoryLimit);
+            }
+            exception_message(&exception, message)
+        }
+        error => caught_error_message(error),
+    };
     if message.contains("request body exceeds limit") {
         return EngineError::BodyTooLarge;
-    }
-    if message.to_ascii_lowercase().contains("out of memory")
-        || message.to_ascii_lowercase().contains("memory")
-    {
-        return EngineError::Interrupted(InterruptReason::MemoryLimit);
     }
     EngineError::Isolate(message)
 }
@@ -541,17 +554,25 @@ pub(crate) fn js_err_ctx(ctx: &Ctx<'_>, err: rquickjs::Error) -> EngineError {
 }
 
 fn js_error_message(ctx: &Ctx<'_>, err: rquickjs::Error) -> String {
-    match CaughtError::from_error(ctx, err) {
+    caught_error_message(CaughtError::from_error(ctx, err))
+}
+
+fn caught_error_message(error: CaughtError<'_>) -> String {
+    match error {
         CaughtError::Exception(exception) => {
             let message = exception.message().unwrap_or_else(|| "JavaScript exception".into());
-            match exception.stack().filter(|stack| !stack.trim().is_empty()) {
-                Some(stack) if stack.contains(&message) => stack,
-                Some(stack) => format!("{message}\n{stack}"),
-                None => message.to_owned(),
-            }
+            exception_message(&exception, message)
         }
         CaughtError::Value(value) => format!("JavaScript threw {}", value.type_name()),
         CaughtError::Error(error) => error.to_string(),
+    }
+}
+
+fn exception_message(exception: &rquickjs::Exception<'_>, message: String) -> String {
+    match exception.stack().filter(|stack| !stack.trim().is_empty()) {
+        Some(stack) if stack.contains(&message) => stack,
+        Some(stack) => format!("{message}\n{stack}"),
+        None => message,
     }
 }
 

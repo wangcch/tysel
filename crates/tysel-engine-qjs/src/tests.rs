@@ -1611,6 +1611,49 @@ fn host_backed_array_buffer_rejects_resize_and_survives_cleanup() {
 }
 
 #[test]
+fn memory_classification_preserves_ordinary_messages_and_stacks() {
+    for source in [
+        "throw new Error('memory cache unavailable')",
+        "throw new Error('out of memory')",
+        "throw new SyntaxError('out of memory')",
+        "throw new InternalError('memory cache unavailable')",
+        "(function memory() { throw new Error('application failure'); })()",
+    ] {
+        let error = eval(source, config()).unwrap_err();
+        assert!(matches!(error, EngineError::Isolate(_)), "{source}: {error}");
+        let message = error.to_string();
+        assert!(message.contains("memory"), "exception detail was lost: {message}");
+    }
+}
+
+#[test]
+fn memory_classification_detects_engine_allocation_failures() {
+    let runtime = rquickjs::Runtime::new().unwrap();
+    let context = rquickjs::Context::full(&runtime).unwrap();
+    runtime.set_memory_limit(1024 * 1024);
+    let cpu = crate::cpu::CpuBudget::new(Duration::from_secs(5));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    context.with(|ctx| {
+        let error = ctx.eval::<(), _>("new ArrayBuffer(2 * 1024 * 1024)").unwrap_err();
+        for error in [error, rquickjs::Error::Allocation] {
+            let mapped =
+                crate::isolate::map_eval_error(&ctx, error, &IsolateCancel::new(), deadline, &cpu);
+            assert!(
+                matches!(mapped, EngineError::Interrupted(InterruptReason::MemoryLimit)),
+                "{mapped}"
+            );
+        }
+    });
+}
+
+#[test]
+fn memory_classification_does_not_guess_from_thrown_null() {
+    let error = eval("throw null", config()).unwrap_err();
+    assert!(matches!(error, EngineError::Isolate(_)), "{error}");
+    assert!(error.to_string().contains("JavaScript threw null"), "{error}");
+}
+
+#[test]
 fn memory_limit_rejects_large_allocation() {
     let err = eval(
         "(() => { const chunks = []; for (let i = 0; i < 64; i++) { chunks.push(new Uint8Array(1024 * 1024)); } return chunks.length; })()",

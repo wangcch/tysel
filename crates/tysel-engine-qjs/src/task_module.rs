@@ -64,6 +64,16 @@ enum TaskModuleOperation {
     Invoke { task_name: String, input_json: String, request_id: String, deadline_ms: u64 },
 }
 
+impl TaskModuleOperation {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Inspect => "task inspection",
+            Self::InspectDurable => "durable inspection",
+            Self::Invoke { .. } => "task invocation",
+        }
+    }
+}
+
 enum TaskModuleOutput {
     Definitions(Vec<ModuleTaskDefinition>),
     DurableExports(Vec<String>),
@@ -155,11 +165,14 @@ fn run_task_module(
     config: IsolateConfig,
     operation: TaskModuleOperation,
 ) -> Result<TaskModuleOutput, EngineError> {
+    let operation_name = operation.label();
     let cancel = IsolateCancel::new();
     let request_deadline = execution_deadline(&operation, config)?;
     let cpu = CpuBudget::new(Duration::from_millis(config.cpu_ms_per_turn.max(1)));
     let reactor = queue::spawn_reactor(cancel.flag(), request_deadline);
-    let runtime = Runtime::new().map_err(isolate::js_err)?;
+    let runtime = Runtime::new().map_err(|err| {
+        task_phase_error(operation_name, "runtime creation", isolate::js_err(err))
+    })?;
     runtime.set_memory_limit(config.memory_limit_bytes);
     {
         let cancel_flag = cancel.flag();
@@ -170,32 +183,49 @@ fn run_task_module(
                 || Instant::now() >= request_deadline
         })));
     }
-    let context = Context::full(&runtime).map_err(isolate::js_err)?;
+    let context = Context::full(&runtime).map_err(|err| {
+        task_phase_error(operation_name, "context creation", isolate::js_err(err))
+    })?;
+    // Capture JavaScript exceptions before their context is dropped. Initial
+    // host/module work uses the same interrupt classification as settled work.
+    let js_error = |ctx: &Ctx<'_>, phase, err| {
+        task_phase_error(
+            operation_name,
+            phase,
+            isolate::map_eval_error(ctx, err, &cancel, request_deadline, &cpu),
+        )
+    };
     context.with(|ctx| {
-        host::install(ctx.clone(), reactor.io.clone(), 0).map_err(isolate::js_err)?;
+        host::install(ctx.clone(), reactor.io.clone(), 0)
+            .map_err(|err| js_error(&ctx, "host initialization", err))?;
         if let TaskModuleOperation::Invoke { task_name, input_json, request_id, deadline_ms } =
             &operation
         {
-            ctx.globals().set("__tysel_task_name", task_name.as_str()).map_err(isolate::js_err)?;
+            ctx.globals()
+                .set("__tysel_task_name", task_name.as_str())
+                .map_err(|err| js_error(&ctx, "input publication", err))?;
             ctx.globals()
                 .set("__tysel_task_input_json", input_json.as_str())
-                .map_err(isolate::js_err)?;
+                .map_err(|err| js_error(&ctx, "input publication", err))?;
             ctx.globals()
                 .set("__tysel_task_request_id", request_id.as_str())
-                .map_err(isolate::js_err)?;
+                .map_err(|err| js_error(&ctx, "input publication", err))?;
             ctx.globals()
                 .set("__tysel_task_deadline_ms", *deadline_ms as f64)
-                .map_err(isolate::js_err)?;
+                .map_err(|err| js_error(&ctx, "input publication", err))?;
         }
-        Module::declare(ctx.clone(), "app.js", source).map_err(isolate::js_err)?;
+        Module::declare(ctx.clone(), "app.js", source)
+            .map_err(|err| js_error(&ctx, "module declaration", err))?;
         let boot = match operation {
             TaskModuleOperation::Inspect => BOOT_INSPECT,
             TaskModuleOperation::InspectDurable => BOOT_INSPECT_DURABLE,
             TaskModuleOperation::Invoke { .. } => BOOT_INVOKE,
         };
-        let promise =
-            Module::evaluate(ctx.clone(), "tysel-task-boot.js", boot).map_err(isolate::js_err)?;
-        ctx.globals().set("__tysel_result", promise).map_err(isolate::js_err)
+        let promise = Module::evaluate(ctx.clone(), "tysel-task-boot.js", boot)
+            .map_err(|err| js_error(&ctx, "module evaluation", err))?;
+        ctx.globals()
+            .set("__tysel_result", promise)
+            .map_err(|err| js_error(&ctx, "result publication", err))
     })?;
     isolate::wait_until_settled(
         &runtime,
@@ -205,22 +235,29 @@ fn run_task_module(
         request_deadline,
         &cpu,
         None,
-    )?;
+    )
+    .map_err(|err| task_phase_error(operation_name, "module settling", err))?;
 
     let output = context.with(|ctx| match operation {
         TaskModuleOperation::Inspect => {
-            let json: String =
-                ctx.globals().get("__tysel_task_manifest_json").map_err(isolate::js_err)?;
+            let json: String = ctx
+                .globals()
+                .get("__tysel_task_manifest_json")
+                .map_err(|err| js_error(&ctx, "metadata read", err))?;
             decode_definitions(&json).map(TaskModuleOutput::Definitions)
         }
         TaskModuleOperation::InspectDurable => {
-            let json: String =
-                ctx.globals().get("__tysel_durable_exports_json").map_err(isolate::js_err)?;
+            let json: String = ctx
+                .globals()
+                .get("__tysel_durable_exports_json")
+                .map_err(|err| js_error(&ctx, "metadata read", err))?;
             decode_durable_exports(&json).map(TaskModuleOutput::DurableExports)
         }
         TaskModuleOperation::Invoke { .. } => {
-            let json: String =
-                ctx.globals().get("__tysel_task_value_json").map_err(isolate::js_err)?;
+            let json: String = ctx
+                .globals()
+                .get("__tysel_task_value_json")
+                .map_err(|err| js_error(&ctx, "result read", err))?;
             if json.len() > MAX_TASK_RESULT_BYTES {
                 return Err(EngineError::Isolate(format!(
                     "task result exceeds {MAX_TASK_RESULT_BYTES} bytes"
@@ -252,6 +289,17 @@ fn run_task_module(
     runtime.set_interrupt_handler(None);
     runtime.run_gc();
     output
+}
+
+fn task_phase_error(operation: &str, phase: &str, error: EngineError) -> EngineError {
+    match error {
+        EngineError::Isolate(message) => {
+            EngineError::Isolate(format!("{operation} {phase} failed: {message}"))
+        }
+        // Preserve interrupt variants for callers and the IPC error-kind mapping.
+        // They have no context field, so they intentionally carry no label.
+        other => other,
+    }
 }
 
 fn execution_deadline(
@@ -445,6 +493,59 @@ export default {
             invoke_task_module(MODULE, "orders", "{}", "task-1", 1, IsolateConfig::default()),
             Err(EngineError::Interrupted(InterruptReason::Timeout))
         ));
+    }
+
+    #[test]
+    fn inspection_syntax_failure_preserves_detail_and_phase() {
+        let error = inspect_task_module("export default {", IsolateConfig::default()).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("task inspection module declaration"), "{message}");
+        assert!(message.contains("app.js"), "{message}");
+        assert!(!message.contains("Exception generated by QuickJS"), "{message}");
+    }
+
+    #[test]
+    fn memory_classification_preserves_undefined_export_errors() {
+        for name in ["missing", "memory", "memoryUsage", "Memory"] {
+            let error =
+                inspect_task_module(&format!("export {{ {name} }};"), IsolateConfig::default())
+                    .unwrap_err();
+            assert!(matches!(error, EngineError::Isolate(_)), "{name}: {error}");
+            let message = error.to_string();
+            assert!(message.contains("task inspection module declaration"), "{message}");
+            assert!(message.contains(&format!("'{name}' does not exist")), "{message}");
+        }
+    }
+
+    #[test]
+    fn inspection_metadata_failure_preserves_message_and_stack() {
+        let source = r#"
+Object.defineProperty(globalThis, "__tysel_task_manifest_json", {
+  configurable: true,
+  get: function rejectTaskMetadata() { throw new Error("task-metadata-probe"); },
+  set() {},
+});
+export default {};
+"#;
+        let error = inspect_task_module(source, IsolateConfig::default()).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("task-metadata-probe"), "{message}");
+        assert!(message.contains("rejectTaskMetadata"), "{message}");
+        assert!(message.contains("task inspection metadata read"), "{message}");
+    }
+
+    #[test]
+    fn inspection_initialization_preserves_cpu_interrupt_classification() {
+        let error = inspect_task_module(
+            "for (;;) {} export default {};",
+            IsolateConfig {
+                cpu_ms_per_turn: 1,
+                request_timeout_ms: 5_000,
+                ..IsolateConfig::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, EngineError::Interrupted(InterruptReason::Timeout)), "{error}");
     }
 
     fn unix_time_ms() -> u64 {

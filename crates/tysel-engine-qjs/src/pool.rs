@@ -352,7 +352,7 @@ fn run_worker(
     let context = Context::full(&runtime).map_err(isolate::js_err)?;
     let load_cpu = CpuBudget::new(Duration::from_secs(5));
     context.with(|ctx| {
-        host::install(ctx.clone(), reactor.io.clone(), id).map_err(isolate::js_err)?;
+        install_worker_host(ctx.clone(), reactor.io.clone(), id)?;
         fetch::load_fetch_handler(ctx, source)
     })?;
     isolate::wait_until_settled(
@@ -426,6 +426,19 @@ fn run_worker(
     runtime.set_interrupt_handler(None);
     runtime.run_gc();
     Ok(())
+}
+
+fn install_worker_host(
+    ctx: rquickjs::Ctx<'_>,
+    io: queue::IoHandle,
+    id: u32,
+) -> Result<(), EngineError> {
+    // Consume the exception while its context is still alive. Formatting only
+    // rquickjs::Error loses the message and stack needed to diagnose startup.
+    host::install(ctx.clone(), io, id).map_err(|err| {
+        let detail = isolate::js_err_ctx(&ctx, err);
+        EngineError::Isolate(format!("worker {id} host initialization failed: {detail}"))
+    })
 }
 
 fn teardown_scope(
@@ -739,6 +752,31 @@ export default {
         assert_eq!(metadata.task_definitions.len(), 1);
         assert_eq!(metadata.task_definitions[0].name, "events");
         assert_eq!(metadata.durable_exports, ["workflow"]);
+    }
+
+    #[test]
+    fn startup_host_failure_preserves_exception_message_and_stack() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+        let cancel = IsolateCancel::new();
+        let reactor = queue::spawn_reactor_until_cancel(cancel.flag());
+        let error = context.with(|ctx| {
+            ctx.eval::<(), _>(
+                r#"
+                Object.defineProperty(globalThis, "Headers", {
+                    configurable: true,
+                    set: function rejectHeaders() { throw new Error("startup-host-probe"); }
+                });
+                "#,
+            )
+            .unwrap();
+            install_worker_host(ctx, reactor.io.clone(), 7).unwrap_err()
+        });
+        cancel.cancel();
+        let message = error.to_string();
+        assert!(message.contains("startup-host-probe"), "{message}");
+        assert!(message.contains("rejectHeaders"), "{message}");
+        assert!(message.contains("worker 7 host initialization"), "{message}");
     }
 
     #[test]
