@@ -8,6 +8,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+mod bootstrap;
 mod control;
 mod cpu;
 mod durable;

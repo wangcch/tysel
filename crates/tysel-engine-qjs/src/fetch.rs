@@ -7,11 +7,12 @@ use crate::isolate::{js_err, js_err_ctx};
 use crate::pool::{OutgoingHttpBody, PreparedHttpResponse, ResponseSender};
 use crate::queue::{IoHandle, IoRequest, STREAM_WINDOW};
 
-const BOOTSTRAP: &str = include_str!("../../../runtime-js/web-api/runtime.js");
+static BOOTSTRAP: crate::bootstrap::CompiledScript =
+    crate::bootstrap::CompiledScript::new(include_str!("../../../runtime-js/web-api/runtime.js"));
 const REQUEST_FACTORY: &str = "__tysel_request_factory";
 
 pub fn install_web_api(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-    ctx.eval::<(), _>(BOOTSTRAP)?;
+    BOOTSTRAP.eval(&ctx)?;
     let factory: Function = ctx.eval("(url, init) => new Request(url, init)")?;
     ctx.globals().set(REQUEST_FACTORY, factory)
 }
