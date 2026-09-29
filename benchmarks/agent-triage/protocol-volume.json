@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "declaredAt": "2026-09-24T09:46:33.960432+00:00",
+  "scope": "Provisional internal engineering budgets for one local read-only ticket triage deployment; not a production SLO or cross-runtime ranking. Declared before P5 measurements.",
+  "environment": {
+    "host": "Apple M5 Pro; podman-machine-default libkrun, 8 vCPU, 8192 MiB",
+    "kernel": "6.19.7-200.fc43.aarch64",
+    "image": "localhost/tysel-ci-check:rust-1.97.1-node-22",
+    "imageSha256": "4ab9479dd3d4a491560654478371a6e3f461070385ff96ed3b68e760666f7bf2",
+    "toolchain": "1.97.1-aarch64-unknown-linux-gnu",
+    "profile": "Cargo release: opt-level=2, fat LTO, codegen-units=1, panic=abort, stripped",
+    "storage": "Podman local named volume tysel-agent-p52-state in existing Linux VM; packaged artifacts and normal namespaces both on volume; no dedicated-host or power-loss claim"
+  },
+  "sizes": [
+    {
+      "name": "small",
+      "tickets": 1,
+      "subjectChars": 64
+    },
+    {
+      "name": "bounded",
+      "tickets": 16,
+      "subjectChars": 500
+    }
+  ],
+  "variants": [
+    "direct",
+    "snapshot",
+    "lookup"
+  ],
+  "concurrency": [
+    1,
+    4
+  ],
+  "adapterDelayMs": [
+    0,
+    20
+  ],
+  "warmupRequests": 8,
+  "rounds": 3,
+  "requestsPerRound": 32,
+  "coldSamples": 20,
+  "coldSize": "small",
+  "coldAdapterDelayMs": 0,
+  "recoverySamples": 3,
+  "memoryIntervalMs": 50,
+  "statusPollMs": 5,
+  "budgets": {
+    "direct": {
+      "warmP95Ms": 50,
+      "coldP95Ms": 3000,
+      "minJobsPerSec": {
+        "1": 20,
+        "4": 60
+      },
+      "peakPssKiB": 262144
+    },
+    "snapshot": {
+      "warmP95Ms": 50,
+      "coldP95Ms": 3000,
+      "minJobsPerSec": {
+        "1": 20,
+        "4": 60
+      },
+      "peakPssKiB": 262144
+    },
+    "lookup": {
+      "warmP95Ms": 1000,
+      "coldP95Ms": 3000,
+      "minJobsPerSec": {
+        "1": 2,
+        "4": 6
+      },
+      "peakPssKiB": 524288
+    },
+    "recoveryMaxMs": 50000,
+    "healthyAdapterAttemptsPerLookup": 1,
+    "recoveryAdapterAttemptsPerLookup": 2,
+    "unexpectedDenials": 0,
+    "errors": 0
+  }
+}

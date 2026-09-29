@@ -50,6 +50,7 @@ cargo run -p tysel-cli --release -- bench all \
 | `task/` | Queue scaling, claim/commit, cancellation/deadline transitions, leases and backpressure |
 | `durable/` | SQLite/Postgres append, suspend/resume, replay, signals and restart recovery |
 | `http/` | HTTP/1.1 keep-alive, HTTP/2, JSON sizes, streaming, WebSocket, SSE and protocol-specific concurrency |
+| [`agent-triage/`](agent-triage/README.md) | P5 internal experiment: direct/snapshot/lookup, predeclared application budgets, stages, process-tree PSS and lease recovery |
 
 Cold start must be ≤15ms, idle memory ≤32MB, packaged binary ≤20MB, warm isolate
 creation ≤5ms, isolate reuse growth ≤16MiB, 10,000-task queue growth ≤32MiB, and

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "scope": "O4.1 local Linux ARM64 Podman named-volume capacity diagnostic, not a replacement for P5 budgets or production capacity certification",
+  "concurrency": [1, 2, 4, 8],
+  "retainedJobs": [0, 900],
+  "adapterDelayMs": [0, 20],
+  "rounds": 3,
+  "warmupRequests": 8,
+  "requestsPerRound": 64,
+  "size": {"name": "bounded", "tickets": 16, "subjectChars": 500},
+  "statusPollMs": 5,
+  "memoryIntervalMs": 50,
+  "limits": {"callMs": 5000, "jobMs": 120000, "perCustomer": 4, "active": 8, "retained": 1000},
+  "seedConcurrency": 8,
+  "phaseTimeoutSec": 240,
+  "selection": "Measure the unchanged O4 supervisors and current runtime. No production candidate is selected by this diagnostic. Freeze any later candidate and acceptance criteria before its A/B run."
+}

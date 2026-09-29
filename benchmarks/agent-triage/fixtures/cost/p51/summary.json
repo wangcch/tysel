@@ -1,0 +1,1188 @@
+{
+  "status": "budget_miss",
+  "protocolSha256": "62562d59185b04282aa10b15c81e981a883b27200cb23d532c10107e1d651fc1",
+  "system": {
+    "arch": "aarch64",
+    "cpu_model": "aarch64",
+    "os": "linux",
+    "os_version": "Debian GNU/Linux 12 (bookworm)"
+  },
+  "kernel": "6.19.7-200.fc43.aarch64",
+  "sourceCommit": "5e91e657a0d11e22213e216bcceddb2222f364b5",
+  "workspaceDirty": true,
+  "cells": [
+    {
+      "cell": "direct/small/c1/delay0",
+      "variant": "direct",
+      "size": "small",
+      "concurrency": 1,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 0.6840430432930589,
+        "p95": 0.9921279852278532
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 0.6840430432930589,
+        "p95": 0.9921279852278532
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "httpTransform": {
+          "p50": 0.6840430432930589,
+          "p95": 0.9921279852278532
+        }
+      },
+      "throughputJobsPerSec": [
+        1244.2608470231698,
+        1299.7984802588246,
+        1484.9288524237618
+      ],
+      "idlePssKiB": [
+        9284,
+        9284,
+        9284
+      ],
+      "peakPssKiB": 9556,
+      "processCounts": [
+        1
+      ],
+      "requestBytes": [
+        332
+      ],
+      "canonicalResponseBytes": [
+        274
+      ],
+      "resultBytes": [
+        120
+      ],
+      "adapterAttempts": 0,
+      "passed": true
+    },
+    {
+      "cell": "direct/small/c4/delay0",
+      "variant": "direct",
+      "size": "small",
+      "concurrency": 4,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 1.4300880138762295,
+        "p95": 2.187923004385084
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 1.4300880138762295,
+        "p95": 2.187923004385084
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "httpTransform": {
+          "p50": 1.4300880138762295,
+          "p95": 2.187923004385084
+        }
+      },
+      "throughputJobsPerSec": [
+        2038.7783289119043,
+        2883.176919976232,
+        2477.7079911013298
+      ],
+      "idlePssKiB": [
+        9260,
+        9280,
+        9280
+      ],
+      "peakPssKiB": 9752,
+      "processCounts": [
+        1
+      ],
+      "requestBytes": [
+        332
+      ],
+      "canonicalResponseBytes": [
+        274
+      ],
+      "resultBytes": [
+        120
+      ],
+      "adapterAttempts": 0,
+      "passed": true
+    },
+    {
+      "cell": "direct/bounded/c1/delay0",
+      "variant": "direct",
+      "size": "bounded",
+      "concurrency": 1,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 0.6925440393388271,
+        "p95": 0.8348779520019889
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 0.6925440393388271,
+        "p95": 0.8348779520019889
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "httpTransform": {
+          "p50": 0.6925440393388271,
+          "p95": 0.8348779520019889
+        }
+      },
+      "throughputJobsPerSec": [
+        1407.2436464875575,
+        1295.876981189911,
+        1455.1530461988036
+      ],
+      "idlePssKiB": [
+        9284,
+        9288,
+        9292
+      ],
+      "peakPssKiB": 9548,
+      "processCounts": [
+        1
+      ],
+      "requestBytes": [
+        1248
+      ],
+      "canonicalResponseBytes": [
+        710
+      ],
+      "resultBytes": [
+        556
+      ],
+      "adapterAttempts": 0,
+      "passed": true
+    },
+    {
+      "cell": "direct/bounded/c4/delay0",
+      "variant": "direct",
+      "size": "bounded",
+      "concurrency": 4,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 2.011881035286933,
+        "p95": 5.512517003808171
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 2.011881035286933,
+        "p95": 5.512517003808171
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "httpTransform": {
+          "p50": 2.011881035286933,
+          "p95": 5.512517003808171
+        }
+      },
+      "throughputJobsPerSec": [
+        1643.3978654139091,
+        917.2968590258968,
+        2713.6772739861703
+      ],
+      "idlePssKiB": [
+        9244,
+        9286,
+        9292
+      ],
+      "peakPssKiB": 9722,
+      "processCounts": [
+        1
+      ],
+      "requestBytes": [
+        1248
+      ],
+      "canonicalResponseBytes": [
+        710
+      ],
+      "resultBytes": [
+        556
+      ],
+      "adapterAttempts": 0,
+      "passed": true
+    },
+    {
+      "cell": "snapshot/small/c1/delay0",
+      "variant": "snapshot",
+      "size": "small",
+      "concurrency": 1,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 1.0020030313171446,
+        "p95": 2.0540900295600295
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 1.0020030313171446,
+        "p95": 2.0540900295600295
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "httpTransform": {
+          "p50": 1.0020030313171446,
+          "p95": 2.0540900295600295
+        }
+      },
+      "throughputJobsPerSec": [
+        625.1542494376876,
+        837.5457524627539,
+        1191.9434603940153
+      ],
+      "idlePssKiB": [
+        12320,
+        12336,
+        12294
+      ],
+      "peakPssKiB": 12580,
+      "processCounts": [
+        2
+      ],
+      "requestBytes": [
+        332
+      ],
+      "canonicalResponseBytes": [
+        274
+      ],
+      "resultBytes": [
+        120
+      ],
+      "adapterAttempts": 0,
+      "passed": true
+    },
+    {
+      "cell": "snapshot/small/c4/delay0",
+      "variant": "snapshot",
+      "size": "small",
+      "concurrency": 4,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 2.058297977782786,
+        "p95": 3.828137007076293
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 2.058297977782786,
+        "p95": 3.828137007076293
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "httpTransform": {
+          "p50": 2.058297977782786,
+          "p95": 3.828137007076293
+        }
+      },
+      "throughputJobsPerSec": [
+        1350.5842880004368,
+        1588.4983231847448,
+        2060.9919626849646
+      ],
+      "idlePssKiB": [
+        12308,
+        12384,
+        12364
+      ],
+      "peakPssKiB": 12876,
+      "processCounts": [
+        2
+      ],
+      "requestBytes": [
+        332
+      ],
+      "canonicalResponseBytes": [
+        274
+      ],
+      "resultBytes": [
+        120
+      ],
+      "adapterAttempts": 0,
+      "passed": true
+    },
+    {
+      "cell": "snapshot/bounded/c1/delay0",
+      "variant": "snapshot",
+      "size": "bounded",
+      "concurrency": 1,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 1.0188370360992849,
+        "p95": 1.9208399462513623
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 1.0188370360992849,
+        "p95": 1.9208399462513623
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "httpTransform": {
+          "p50": 1.0188370360992849,
+          "p95": 1.9208399462513623
+        }
+      },
+      "throughputJobsPerSec": [
+        843.824533180215,
+        686.515134539684,
+        1148.7875125579067
+      ],
+      "idlePssKiB": [
+        12362,
+        12392,
+        12380
+      ],
+      "peakPssKiB": 12624,
+      "processCounts": [
+        2
+      ],
+      "requestBytes": [
+        1248
+      ],
+      "canonicalResponseBytes": [
+        710
+      ],
+      "resultBytes": [
+        556
+      ],
+      "adapterAttempts": 0,
+      "passed": true
+    },
+    {
+      "cell": "snapshot/bounded/c4/delay0",
+      "variant": "snapshot",
+      "size": "bounded",
+      "concurrency": 4,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 2.2670910111628473,
+        "p95": 3.841761965304613
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 2.2670910111628473,
+        "p95": 3.841761965304613
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "httpTransform": {
+          "p50": 2.2670910111628473,
+          "p95": 3.841761965304613
+        }
+      },
+      "throughputJobsPerSec": [
+        1590.6994192982788,
+        1237.3786409430818,
+        1881.8816947721086
+      ],
+      "idlePssKiB": [
+        12340,
+        12282,
+        12380
+      ],
+      "peakPssKiB": 12920,
+      "processCounts": [
+        2
+      ],
+      "requestBytes": [
+        1248
+      ],
+      "canonicalResponseBytes": [
+        710
+      ],
+      "resultBytes": [
+        556
+      ],
+      "adapterAttempts": 0,
+      "passed": true
+    },
+    {
+      "cell": "lookup/small/c1/delay0",
+      "variant": "lookup",
+      "size": "small",
+      "concurrency": 1,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 272.15634600725025,
+        "p95": 586.4940719911829
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 272.15634600725025,
+        "p95": 586.4940719911829
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "queueToSelect": {
+          "p50": 89.0,
+          "p95": 304.0
+        },
+        "select": {
+          "p50": 20.0,
+          "p95": 36.0
+        },
+        "read": {
+          "p50": 15.0,
+          "p95": 27.0
+        },
+        "summarize": {
+          "p50": 16.0,
+          "p95": 26.0
+        },
+        "betweenStages": {
+          "p50": 88.0,
+          "p95": 149.0
+        },
+        "terminalCommit": {
+          "p50": 27.0,
+          "p95": 50.0
+        },
+        "persistedTotal": {
+          "p50": 257.0,
+          "p95": 565.0
+        }
+      },
+      "throughputJobsPerSec": [
+        2.644624634709003,
+        3.079950832956888,
+        3.619267648899761
+      ],
+      "idlePssKiB": [
+        38781,
+        39687,
+        39516
+      ],
+      "peakPssKiB": 42181,
+      "processCounts": [
+        3
+      ],
+      "requestBytes": [
+        46
+      ],
+      "canonicalResponseBytes": [
+        288
+      ],
+      "resultBytes": [
+        120
+      ],
+      "adapterAttempts": 96,
+      "passed": true
+    },
+    {
+      "cell": "lookup/small/c1/delay20",
+      "variant": "lookup",
+      "size": "small",
+      "concurrency": 1,
+      "adapterDelayMs": 20,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 399.6100330259651,
+        "p95": 645.7444650004618
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 379.50592901324853,
+        "p95": 624.2022729711607
+      },
+      "actualSleepMs": {
+        "p50": 20.163353998214006,
+        "p95": 20.33643401227891
+      },
+      "stagesMs": {
+        "queueToSelect": {
+          "p50": 179.0,
+          "p95": 326.0
+        },
+        "select": {
+          "p50": 20.0,
+          "p95": 37.0
+        },
+        "read": {
+          "p50": 36.0,
+          "p95": 53.0
+        },
+        "summarize": {
+          "p50": 16.0,
+          "p95": 29.0
+        },
+        "betweenStages": {
+          "p50": 88.0,
+          "p95": 157.0
+        },
+        "terminalCommit": {
+          "p50": 27.0,
+          "p95": 53.0
+        },
+        "persistedTotal": {
+          "p50": 384.0,
+          "p95": 624.0
+        }
+      },
+      "throughputJobsPerSec": [
+        2.105937587452194,
+        2.5345658211640223,
+        2.8599359538461546
+      ],
+      "idlePssKiB": [
+        39653,
+        39645,
+        41152
+      ],
+      "peakPssKiB": 43344,
+      "processCounts": [
+        3
+      ],
+      "requestBytes": [
+        46
+      ],
+      "canonicalResponseBytes": [
+        288
+      ],
+      "resultBytes": [
+        120
+      ],
+      "adapterAttempts": 96,
+      "passed": true
+    },
+    {
+      "cell": "lookup/small/c4/delay0",
+      "variant": "lookup",
+      "size": "small",
+      "concurrency": 4,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 862.0655839913525,
+        "p95": 1360.489893995691
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 862.0655839913525,
+        "p95": 1360.489893995691
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "queueToSelect": {
+          "p50": 299.0,
+          "p95": 501.0
+        },
+        "select": {
+          "p50": 50.0,
+          "p95": 109.0
+        },
+        "read": {
+          "p50": 48.0,
+          "p95": 94.0
+        },
+        "summarize": {
+          "p50": 41.0,
+          "p95": 84.0
+        },
+        "betweenStages": {
+          "p50": 269.0,
+          "p95": 495.0
+        },
+        "terminalCommit": {
+          "p50": 75.0,
+          "p95": 213.0
+        },
+        "persistedTotal": {
+          "p50": 823.0,
+          "p95": 1283.0
+        }
+      },
+      "throughputJobsPerSec": [
+        4.55818434421273,
+        3.8095693792126006,
+        4.963491551275829
+      ],
+      "idlePssKiB": [
+        41200,
+        42060,
+        40532
+      ],
+      "peakPssKiB": 55956,
+      "processCounts": [
+        3
+      ],
+      "requestBytes": [
+        46
+      ],
+      "canonicalResponseBytes": [
+        288
+      ],
+      "resultBytes": [
+        120
+      ],
+      "adapterAttempts": 96,
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay20",
+      "variant": "lookup",
+      "size": "small",
+      "concurrency": 4,
+      "adapterDelayMs": 20,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 787.9321200307459,
+        "p95": 976.0606579948216
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 767.7392290206626,
+        "p95": 955.8993870159612
+      },
+      "actualSleepMs": {
+        "p50": 20.161270978860557,
+        "p95": 20.33435396151617
+      },
+      "stagesMs": {
+        "queueToSelect": {
+          "p50": 301.0,
+          "p95": 426.0
+        },
+        "select": {
+          "p50": 47.0,
+          "p95": 71.0
+        },
+        "read": {
+          "p50": 61.0,
+          "p95": 97.0
+        },
+        "summarize": {
+          "p50": 39.0,
+          "p95": 65.0
+        },
+        "betweenStages": {
+          "p50": 231.0,
+          "p95": 330.0
+        },
+        "terminalCommit": {
+          "p50": 65.0,
+          "p95": 128.0
+        },
+        "persistedTotal": {
+          "p50": 755.0,
+          "p95": 948.0
+        }
+      },
+      "throughputJobsPerSec": [
+        5.335947604381662,
+        4.717593377483912,
+        4.918617817675886
+      ],
+      "idlePssKiB": [
+        41256,
+        40312,
+        40528
+      ],
+      "peakPssKiB": 53896,
+      "processCounts": [
+        3
+      ],
+      "requestBytes": [
+        46
+      ],
+      "canonicalResponseBytes": [
+        288
+      ],
+      "resultBytes": [
+        120
+      ],
+      "adapterAttempts": 96,
+      "passed": false
+    },
+    {
+      "cell": "lookup/bounded/c1/delay0",
+      "variant": "lookup",
+      "size": "bounded",
+      "concurrency": 1,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 307.06274596741423,
+        "p95": 559.3830299912952
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 307.06274596741423,
+        "p95": 559.3830299912952
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "queueToSelect": {
+          "p50": 98.0,
+          "p95": 309.0
+        },
+        "select": {
+          "p50": 19.0,
+          "p95": 28.0
+        },
+        "read": {
+          "p50": 15.0,
+          "p95": 26.0
+        },
+        "summarize": {
+          "p50": 16.0,
+          "p95": 31.0
+        },
+        "betweenStages": {
+          "p50": 85.0,
+          "p95": 140.0
+        },
+        "terminalCommit": {
+          "p50": 27.0,
+          "p95": 54.0
+        },
+        "persistedTotal": {
+          "p50": 293.0,
+          "p95": 537.0
+        }
+      },
+      "throughputJobsPerSec": [
+        3.3864059315825368,
+        2.2472890015597873,
+        2.931894664183791
+      ],
+      "idlePssKiB": [
+        40584,
+        38968,
+        40652
+      ],
+      "peakPssKiB": 42640,
+      "processCounts": [
+        3
+      ],
+      "requestBytes": [
+        181
+      ],
+      "canonicalResponseBytes": [
+        724
+      ],
+      "resultBytes": [
+        556
+      ],
+      "adapterAttempts": 96,
+      "passed": true
+    },
+    {
+      "cell": "lookup/bounded/c1/delay20",
+      "variant": "lookup",
+      "size": "bounded",
+      "concurrency": 1,
+      "adapterDelayMs": 20,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 305.28378195594996,
+        "p95": 567.7250560256653
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 285.0863859639503,
+        "p95": 547.5325760198757
+      },
+      "actualSleepMs": {
+        "p50": 20.16930899117142,
+        "p95": 20.33022901741788
+      },
+      "stagesMs": {
+        "queueToSelect": {
+          "p50": 88.0,
+          "p95": 309.0
+        },
+        "select": {
+          "p50": 19.0,
+          "p95": 30.0
+        },
+        "read": {
+          "p50": 35.0,
+          "p95": 47.0
+        },
+        "summarize": {
+          "p50": 15.0,
+          "p95": 22.0
+        },
+        "betweenStages": {
+          "p50": 86.0,
+          "p95": 124.0
+        },
+        "terminalCommit": {
+          "p50": 26.0,
+          "p95": 46.0
+        },
+        "persistedTotal": {
+          "p50": 292.0,
+          "p95": 553.0
+        }
+      },
+      "throughputJobsPerSec": [
+        2.761611858601111,
+        2.501649639360111,
+        3.1546267367619687
+      ],
+      "idlePssKiB": [
+        40364,
+        39809,
+        39717
+      ],
+      "peakPssKiB": 43688,
+      "processCounts": [
+        3
+      ],
+      "requestBytes": [
+        181
+      ],
+      "canonicalResponseBytes": [
+        724
+      ],
+      "resultBytes": [
+        556
+      ],
+      "adapterAttempts": 96,
+      "passed": true
+    },
+    {
+      "cell": "lookup/bounded/c4/delay0",
+      "variant": "lookup",
+      "size": "bounded",
+      "concurrency": 4,
+      "adapterDelayMs": 0,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 746.2109019979835,
+        "p95": 921.161153994035
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 746.2109019979835,
+        "p95": 921.161153994035
+      },
+      "actualSleepMs": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "stagesMs": {
+        "queueToSelect": {
+          "p50": 265.0,
+          "p95": 416.0
+        },
+        "select": {
+          "p50": 48.0,
+          "p95": 74.0
+        },
+        "read": {
+          "p50": 39.0,
+          "p95": 65.0
+        },
+        "summarize": {
+          "p50": 34.0,
+          "p95": 64.0
+        },
+        "betweenStages": {
+          "p50": 219.0,
+          "p95": 329.0
+        },
+        "terminalCommit": {
+          "p50": 67.0,
+          "p95": 114.0
+        },
+        "persistedTotal": {
+          "p50": 719.0,
+          "p95": 874.0
+        }
+      },
+      "throughputJobsPerSec": [
+        5.22900871205218,
+        5.216195210955965,
+        5.438544210885507
+      ],
+      "idlePssKiB": [
+        41149,
+        39712,
+        38800
+      ],
+      "peakPssKiB": 52516,
+      "processCounts": [
+        3
+      ],
+      "requestBytes": [
+        181
+      ],
+      "canonicalResponseBytes": [
+        724
+      ],
+      "resultBytes": [
+        556
+      ],
+      "adapterAttempts": 96,
+      "passed": false
+    },
+    {
+      "cell": "lookup/bounded/c4/delay20",
+      "variant": "lookup",
+      "size": "bounded",
+      "concurrency": 4,
+      "adapterDelayMs": 20,
+      "samples": 96,
+      "latencyMs": {
+        "p50": 733.634362986777,
+        "p95": 922.0605079899542
+      },
+      "excludingAdapterSleepMs": {
+        "p50": 712.717465008609,
+        "p95": 901.903157995548
+      },
+      "actualSleepMs": {
+        "p50": 20.159438019618392,
+        "p95": 20.378022047225382
+      },
+      "stagesMs": {
+        "queueToSelect": {
+          "p50": 283.0,
+          "p95": 388.0
+        },
+        "select": {
+          "p50": 43.0,
+          "p95": 66.0
+        },
+        "read": {
+          "p50": 60.0,
+          "p95": 93.0
+        },
+        "summarize": {
+          "p50": 36.0,
+          "p95": 57.0
+        },
+        "betweenStages": {
+          "p50": 212.0,
+          "p95": 280.0
+        },
+        "terminalCommit": {
+          "p50": 56.0,
+          "p95": 141.0
+        },
+        "persistedTotal": {
+          "p50": 703.0,
+          "p95": 891.0
+        }
+      },
+      "throughputJobsPerSec": [
+        5.4648556452669865,
+        5.276442934018905,
+        5.275675101152556
+      ],
+      "idlePssKiB": [
+        39824,
+        39880,
+        38843
+      ],
+      "peakPssKiB": 51176,
+      "processCounts": [
+        3
+      ],
+      "requestBytes": [
+        181
+      ],
+      "canonicalResponseBytes": [
+        724
+      ],
+      "resultBytes": [
+        556
+      ],
+      "adapterAttempts": 96,
+      "passed": false
+    }
+  ],
+  "cold": {
+    "direct": {
+      "p50": 27.145335043314844,
+      "p95": 42.31325600994751
+    },
+    "snapshot": {
+      "p50": 43.69196901097894,
+      "p95": 58.41034901095554
+    },
+    "lookup": {
+      "p50": 763.7866230215877,
+      "p95": 954.54529998824
+    }
+  },
+  "recoveryMs": [
+    45647.12118002353,
+    45548.33185300231,
+    45671.17745894939
+  ],
+  "denials": {
+    "expectedDenials": 2,
+    "physicalReads": 0,
+    "probes": [
+      {
+        "path": "/probe/fetch",
+        "status": 403,
+        "denied": true,
+        "elapsedMs": 2.551215991843492
+      },
+      {
+        "path": "/probe/filesystem",
+        "status": 403,
+        "denied": true,
+        "elapsedMs": 1.0455030133016407
+      }
+    ]
+  },
+  "warmMeasuredJobs": 1536,
+  "warmupJobs": 384,
+  "coldSamples": 60,
+  "warmPhysicalReadsIncludingWarmup": 960,
+  "cleanupChecks": 115,
+  "numericalChecks": 132,
+  "budgetMisses": [
+    {
+      "cell": "lookup/small/c4/delay0",
+      "metric": "warmP95Ms",
+      "actual": 1360.489893995691,
+      "limit": 1000,
+      "relation": "<=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay0",
+      "metric": "round0.p95Ms",
+      "actual": 1205.1947030122392,
+      "limit": 1000,
+      "relation": "<=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay0",
+      "metric": "round0.jobsPerSec",
+      "actual": 4.55818434421273,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay0",
+      "metric": "round1.p95Ms",
+      "actual": 1536.8081500055268,
+      "limit": 1000,
+      "relation": "<=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay0",
+      "metric": "round1.jobsPerSec",
+      "actual": 3.8095693792126006,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay0",
+      "metric": "round2.jobsPerSec",
+      "actual": 4.963491551275829,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay20",
+      "metric": "round0.jobsPerSec",
+      "actual": 5.335947604381662,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay20",
+      "metric": "round1.jobsPerSec",
+      "actual": 4.717593377483912,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/small/c4/delay20",
+      "metric": "round2.jobsPerSec",
+      "actual": 4.918617817675886,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/bounded/c4/delay0",
+      "metric": "round0.jobsPerSec",
+      "actual": 5.22900871205218,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/bounded/c4/delay0",
+      "metric": "round1.jobsPerSec",
+      "actual": 5.216195210955965,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/bounded/c4/delay0",
+      "metric": "round2.jobsPerSec",
+      "actual": 5.438544210885507,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/bounded/c4/delay20",
+      "metric": "round0.jobsPerSec",
+      "actual": 5.4648556452669865,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/bounded/c4/delay20",
+      "metric": "round1.jobsPerSec",
+      "actual": 5.276442934018905,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    },
+    {
+      "cell": "lookup/bounded/c4/delay20",
+      "metric": "round2.jobsPerSec",
+      "actual": 5.275675101152556,
+      "limit": 6,
+      "relation": ">=",
+      "passed": false
+    }
+  ]
+}

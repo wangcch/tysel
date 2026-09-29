@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "declaredAt": "2026-09-28T05:48:52.196552+00:00",
+  "objective": "User-selected higher concurrent throughput on the existing local Podman named volume; no new production SLO",
+  "hypothesis": "Completed dispatch futures can refill freed slots sooner than the fixed 250ms sleep; a bounded 50ms follow-up window catches successor admissions without continuously polling during slow/unresolved work",
+  "candidatePolicy": {
+    "wakeOnly": "HTTP 200 with status completed",
+    "activePollMs": 50,
+    "activeWindowAfterCompletionMs": 250,
+    "idlePollMs": 250,
+    "unresolvedPerJobRetryFloorMs": 250,
+    "slots": 8,
+    "statusPollMs": 5
+  },
+  "rejectedDirection": "Inline admission dispatch rejected before implementation: synchronous durable.start can block HTTP isolation slots and the 202 admission response",
+  "originalProtocolSha256": "62562d59185b04282aa10b15c81e981a883b27200cb23d532c10107e1d651fc1",
+  "volumeProtocol": "docs/agent-execution-evidence/2026-09-24-p52/protocol-volume.json",
+  "volumeProtocolSha256": "71229c2c1ab2bccc8e42d64f97b19ef7351ecc43e864e9f71516bb4d21faa8f2",
+  "baselineRelease": "/volume/o3-20260928/matrix-1/releases/lookup",
+  "baselineSupervisorSha256": "f6d71350927f1c797e84c6953fbb6e304dd92e31c594c54fdea5521b35ff8d78",
+  "sizes": [
+    "small",
+    "bounded"
+  ],
+  "adapterDelayMs": [
+    0,
+    20
+  ],
+  "primaryConcurrency": 4,
+  "primaryPairedBlocks": 4,
+  "guardConcurrency": 1,
+  "guardPairedBlocks": 2,
+  "order": "For each concurrency, block and cell, AB when (block+cellIndex) is even, BA otherwise; rotate cell traversal by block; each pair is adjacent",
+  "warmupRequests": 8,
+  "requestsPerRound": 32,
+  "expectedPairs": 24,
+  "expectedRounds": 48,
+  "selection": {
+    "eachC4Cell": {
+      "allPairedThroughputRatiosAtLeast": 1.0,
+      "medianThroughputRatioAtLeast": 1.15,
+      "medianP95RatioAtMost": 1.05,
+      "medianControlRequestsPerJobRatioAtMost": 2.0
+    },
+    "eachC1Cell": {
+      "medianThroughputRatioAtLeast": 0.95,
+      "medianP95RatioAtMost": 1.05,
+      "medianControlRequestsPerJobRatioAtMost": 2.0
+    },
+    "everyRound": "Original output/read/attempt/cleanup contracts and warm p95, throughput, PSS budgets pass",
+    "controlRequests": "internal pending plus internal dispatch; includes all 8 warmups and 32 measured jobs; both packages use identical Python HTTP observation",
+    "retainOnlyIf": "All paired criteria plus original full cost matrix, relevant product regression, dispatcher fault tests and exact-package lifecycle pass; otherwise restore both original supervisors and retain failed evidence"
+  },
+  "boundaries": [
+    "No TypeScript, native, SQLite, capability, lease, deadline, status polling or physical-attempt changes",
+    "Run baseline and candidate sequentially using their exact packaged deploy.py modules, whole namespaces on the same named volume",
+    "No statistical significance or dedicated-host claim",
+    "Paired observer counts traffic but final uninstrumented full matrix decides cost acceptance"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "paths": { "@tysel/types": ["../../packages/tysel-types/src/index.ts"] } },
+  "include": ["index.ts"]
+}

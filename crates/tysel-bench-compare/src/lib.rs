@@ -519,6 +519,51 @@ pub fn percentile(samples: &[f64], quantile: f64) -> f64 {
     sorted[index.min(sorted.len() - 1)]
 }
 
+/// Linux children can be owned by any thread (for example a Tokio worker).
+/// On other platforms this retains the comparison harness's root-only scope.
+pub fn process_tree_pids(root_pid: u32) -> Result<Vec<u32>> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut out = vec![root_pid];
+        let mut index = 0;
+        while index < out.len() {
+            if let Ok(tasks) = fs::read_dir(format!("/proc/{}/task", out[index])) {
+                for task in tasks.flatten() {
+                    if let Ok(text) = fs::read_to_string(task.path().join("children")) {
+                        for child in text.split_whitespace().filter_map(|v| v.parse::<u32>().ok()) {
+                            if !out.contains(&child) {
+                                out.push(child);
+                            }
+                        }
+                    }
+                }
+            }
+            index += 1;
+        }
+        Ok(out)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(vec![root_pid])
+    }
+}
+
+pub fn process_tree_memory(root_pid: u32) -> Result<MemoryMeasurement> {
+    let pids = process_tree_pids(root_pid)?;
+    let mut value_kb = 0_u64;
+    let mut kind = None;
+    let mut process_count = 0;
+    for pid in pids {
+        if let Ok((value, measured_kind)) = process_memory_kb(pid) {
+            value_kb = value_kb.saturating_add(value);
+            kind = Some(measured_kind);
+            process_count += 1;
+        }
+    }
+    let kind = kind.context("no process memory sample available")?;
+    Ok(MemoryMeasurement { value_kb, kind: kind.into(), process_count })
+}
+
 pub fn render_markdown(evidence: &ComparisonEvidence) -> String {
     let mut out = format!(
         "# Tysel runtime comparison\n\nRun `{}` on `{}` / `{}`. This is an internal engineering snapshot; it is not an architecture-aggregated score.\n\n## Source toolchain\n\n| Toolchain | Expected | Actual | Executable SHA-256 |\n| --- | --- | --- | --- |\n",

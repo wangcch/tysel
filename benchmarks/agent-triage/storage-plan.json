@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "declaredAt": "2026-09-24T11:50:36.996267+00:00",
+  "originalProtocolSha256": "62562d59185b04282aa10b15c81e981a883b27200cb23d532c10107e1d651fc1",
+  "scope": "P5.2 diagnostic selection; not complete cost acceptance. User selected Podman.",
+  "podmanVolume": "tysel-agent-p52-state",
+  "pairedBlocks": 4,
+  "sizes": [
+    "small",
+    "bounded"
+  ],
+  "concurrency": 4,
+  "adapterDelayMs": 0,
+  "rounds": 80,
+  "measuredJobs": 2560,
+  "warmups": 640,
+  "layouts": [
+    {
+      "name": "all-bind",
+      "volume": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "config-volume",
+      "volume": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "jobs-volume",
+      "volume": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "durable-volume",
+      "volume": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "name": "all-volume",
+      "volume": [
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "layoutFields": [
+    "config",
+    "applicationSqlite",
+    "durableSqlite"
+  ],
+  "callerArtifactSha256": {
+    "baseline": "da5a92e092639b869463c24d34801e23aac3ab3b2ce18d7c5df1be355382ed4b",
+    "candidate": "dff62daf4cbb2f840ddc60b8a2cd00fb3580f36ec03d8841ee4de26b14bfdf8e"
+  },
+  "callerStoreSha256": {
+    "baseline": "e9eafbc05ec77027bf20e8b54a3ed23c150eba899ab41218ebede79ca9a454a7",
+    "candidate": "7f039aa80f065e77f74b12946482b0d2f88b1cef13f95876a38bed5f2632cd92"
+  },
+  "selection": "Retain candidate only if both payloads on all-volume have 4/4 nondecreasing paired throughput, median throughput ratio >= 1.05, and median p95 ratio <= 1, with no correctness error. Otherwise restore original P5 store.ts. Five percent is an engineering decision, not significance.",
+  "order": "Rotate layouts each block; reverse sizes on odd blocks; adjacent source order balanced AB/BA per cell.",
+  "mechanism": "All five diagnostics use the same config/data directory symlinks and explicit existing Durable path override. Split layouts are not a supported backup topology. No TypeScript instrumentation. Actual open DB paths and mount metadata verified outside timers.",
+  "limits": "One-variable contrasts do not estimate all storage interactions. Warm 250 ms outbox ceiling can mask smaller code benefits. No power-loss or production SLO claim.",
+  "finalTarget": "Separate complete named-volume deployment: artifacts AND normal namespace stored on Podman local volume; release tool inputs remain bind-mounted. Only environment.storage changes in derived protocol; all workload/budget fields unchanged."
+}

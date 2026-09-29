@@ -41,6 +41,22 @@ jobs:
           python3 .github/scripts/release-notes.py > /dev/null
       - name: Validate acceptance failure handling
         run: python3 tests/acceptance/test_runner.py
+      - name: Validate retained agent cost evidence
+        run: python3 benchmarks/agent-triage/test_report.py
+      - name: Validate agent sampling failure handling
+        run: python3 benchmarks/agent-triage/test_sampling.py
+      - name: Validate diagnostic teardown evidence
+        run: python3 benchmarks/agent-triage/test_diagnostic_cleanup.py
+      - name: Validate snapshot failure cleanup
+        run: python3 tests/acceptance/test_snapshot_cleanup.py
+      - name: Validate agent dispatcher scheduling
+        run: python3 tests/acceptance/test_dispatcher.py
+      - name: Validate paired dispatcher evidence
+        run: python3 benchmarks/agent-triage/test_dispatch_ab.py
+      - name: Validate agent capacity accounting
+        run: python3 benchmarks/agent-triage/test_capacity.py
+      - name: Validate caller attribution sampling
+        run: python3 benchmarks/agent-triage/test_caller_memory.py
       - name: Classify changed files
         id: classify
         shell: bash

@@ -13,10 +13,10 @@ use anyhow::{Context, Result, anyhow, ensure};
 use clap::Parser;
 use tysel_bench_compare::{
     COMPARISON_SCHEMA_VERSION, CommandSpec, ComparisonEvidence, HttpRound, HttpWorkloadEvidence,
-    MemoryMeasurement, RuntimeEvidence, RuntimeSpec, ToolchainEvidence, ToolchainSpec,
-    benchmark_system, distribution, evidence_shell_command, expected_body, git_state, load_matrix,
-    load_runtime_lock, now_unix_ms, process_memory_kb, quick_matrix, render_markdown,
-    resolve_executable, sha256_file, workspace_root,
+    RuntimeEvidence, RuntimeSpec, ToolchainEvidence, ToolchainSpec, benchmark_system, distribution,
+    evidence_shell_command, expected_body, git_state, load_matrix, load_runtime_lock, now_unix_ms,
+    process_tree_memory, process_tree_pids, quick_matrix, render_markdown, resolve_executable,
+    sha256_file, workspace_root,
 };
 
 #[derive(Debug, Parser)]
@@ -382,45 +382,6 @@ fn spawn_ready(
 fn stop_server(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
-}
-
-fn process_tree_memory(root_pid: u32) -> Result<MemoryMeasurement> {
-    let pids = process_tree_pids(root_pid)?;
-    let mut value_kb = 0_u64;
-    let mut kind = None;
-    for pid in &pids {
-        if let Ok((value, measured_kind)) = process_memory_kb(*pid) {
-            value_kb = value_kb.saturating_add(value);
-            kind = Some(measured_kind);
-        }
-    }
-    let kind = kind.context("no process memory sample available")?;
-    Ok(MemoryMeasurement { value_kb, kind: kind.into(), process_count: pids.len() })
-}
-
-fn process_tree_pids(root_pid: u32) -> Result<Vec<u32>> {
-    #[cfg(target_os = "linux")]
-    {
-        let mut out = vec![root_pid];
-        let mut index = 0;
-        while index < out.len() {
-            let pid = out[index];
-            let path = format!("/proc/{pid}/task/{pid}/children");
-            if let Ok(text) = fs::read_to_string(path) {
-                for child in text.split_whitespace().filter_map(|value| value.parse::<u32>().ok()) {
-                    if !out.contains(&child) {
-                        out.push(child);
-                    }
-                }
-            }
-            index += 1;
-        }
-        Ok(out)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(vec![root_pid])
-    }
 }
 
 fn one_request(address: SocketAddr, path: &str, timeout_ms: u64) -> Result<Vec<u8>> {
