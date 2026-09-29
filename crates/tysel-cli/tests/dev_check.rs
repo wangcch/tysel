@@ -1446,8 +1446,124 @@ fn run_serves_hello_until_killed() {
 
 #[test]
 fn durable_agent_resumes_after_restart_without_repeating_effects() {
-    let (llm_addr, llm_calls, llm_stop) = spawn_fake_llm();
-    let dir = temp_app("durable-agent");
+    assert_durable_agent_decision_after_restart(true);
+}
+
+#[test]
+fn durable_agent_rejects_after_restart_without_repeating_effects() {
+    assert_durable_agent_decision_after_restart(false);
+}
+
+fn assert_durable_agent_decision_after_restart(approved: bool) {
+    let terminal_status = if approved { "completed" } else { "rejected" };
+    let (llm_addr, llm_calls, _llm) = spawn_fake_llm();
+    let dir = durable_agent_fixture(include_str!("../../../examples/durable-agent/src/index.ts"));
+
+    let mut first = spawn_durable_agent(&dir, &llm_addr);
+    let (first_addr, _first_log) = wait_listen(&mut first, Duration::from_secs(8));
+    let started = http_json(
+        &first_addr,
+        "POST",
+        "/runs",
+        Some(r#"{"customerId":"customer-1","prompt":"Summarize this account"}"#),
+    );
+    let run_id = started["runId"].as_str().expect("runId").to_owned();
+    assert_eq!(started["status"], "awaiting_approval");
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1);
+    first.kill().unwrap();
+    first.wait().unwrap();
+
+    let mut second = spawn_durable_agent(&dir, &llm_addr);
+    let (second_addr, _second_log) = wait_listen(&mut second, Duration::from_secs(8));
+    let waiting = http_json(&second_addr, "GET", &format!("/runs/{run_id}"), None);
+    assert_eq!(waiting["status"], "awaiting_approval");
+    assert_eq!(waiting["draft"], started["draft"], "approval must refer to the persisted draft");
+    assert_eq!(waiting["saveCount"], 0);
+    assert!(waiting["result"].is_null());
+    for invalid in [r#"{"approved":"true"}"#, "null", "{"] {
+        let (status, _) = http_json_response(
+            &second_addr,
+            "POST",
+            &format!("/runs/{run_id}/approval"),
+            Some(invalid),
+        );
+        assert_eq!(status, 400, "invalid approval: {invalid}");
+    }
+    let still_waiting = http_json(&second_addr, "GET", &format!("/runs/{run_id}"), None);
+    assert_eq!(still_waiting["status"], "awaiting_approval");
+    assert_eq!(still_waiting["saveCount"], 0);
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1, "LLM effect replayed after restart");
+    let queued = http_json(
+        &second_addr,
+        "POST",
+        &format!("/runs/{run_id}/approval"),
+        Some(if approved { r#"{"approved":true}"# } else { r#"{"approved":false}"# }),
+    );
+    assert_eq!(queued["status"], "approval_queued");
+
+    let started_wait = std::time::Instant::now();
+    let completed = loop {
+        let run = http_json(&second_addr, "GET", &format!("/runs/{run_id}"), None);
+        if run["status"] == terminal_status {
+            break run;
+        }
+        assert!(started_wait.elapsed() < Duration::from_secs(5), "run did not complete: {run}");
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(completed["result"]["approved"], approved);
+    assert_eq!(completed["saveCount"], 1);
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1, "LLM effect ran more than once");
+    second.kill().unwrap();
+    second.wait().unwrap();
+
+    let mut third = spawn_durable_agent(&dir, &llm_addr);
+    let (third_addr, _third_log) = wait_listen(&mut third, Duration::from_secs(8));
+    let replayed = http_json(&third_addr, "GET", &format!("/runs/{run_id}"), None);
+    assert_eq!(replayed["status"], terminal_status);
+    assert_eq!(replayed["saveCount"], 1, "save-result effect replayed after restart");
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(replayed["result"], completed["result"]);
+    for decision in [r#"{"approved":true}"#, r#"{"approved":false}"#] {
+        let (status, _) = http_json_response(
+            &third_addr,
+            "POST",
+            &format!("/runs/{run_id}/approval"),
+            Some(decision),
+        );
+        assert_eq!(status, 409, "terminal run must reject another decision");
+    }
+    let unchanged = http_json(&third_addr, "GET", &format!("/runs/{run_id}"), None);
+    assert_eq!(unchanged, replayed);
+    third.kill().unwrap();
+    third.wait().unwrap();
+}
+
+struct TemporaryApp(PathBuf);
+
+impl std::ops::Deref for TemporaryApp {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for TemporaryApp {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            if thread::panicking() {
+                eprintln!("temporary app cleanup failed: {error}");
+            } else {
+                panic!("temporary app cleanup failed: {error}");
+            }
+        }
+    }
+}
+
+fn durable_agent_fixture(source: &str) -> TemporaryApp {
+    static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+    let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+    let dir = TemporaryApp(temp_app(&format!("durable-agent-{id}")));
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::create_dir_all(dir.join("data")).unwrap();
     fs::write(
@@ -1473,64 +1589,113 @@ path = "./data/tysel.db"
 "#,
     )
     .unwrap();
-    fs::write(
-        dir.join("src/index.ts"),
-        include_str!("../../../examples/durable-agent/src/index.ts"),
-    )
-    .unwrap();
+    fs::write(dir.join("src/index.ts"), source).unwrap();
     fs::write(dir.join(".env"), "OPENAI_API_KEY=test-key\n").unwrap();
 
-    let mut first = spawn_durable_agent(&dir, &llm_addr);
-    let (first_addr, _first_log) = wait_listen(&mut first, Duration::from_secs(8));
-    let started = http_json(
-        &first_addr,
-        "POST",
-        "/runs",
-        Some(r#"{"customerId":"customer-1","prompt":"Summarize this account"}"#),
-    );
-    let run_id = started["runId"].as_str().expect("runId").to_owned();
-    assert_eq!(started["status"], "awaiting_approval");
-    assert_eq!(llm_calls.load(Ordering::SeqCst), 1);
-    first.kill().unwrap();
-    first.wait().unwrap();
+    dir
+}
 
-    let mut second = spawn_durable_agent(&dir, &llm_addr);
-    let (second_addr, _second_log) = wait_listen(&mut second, Duration::from_secs(8));
-    let waiting = http_json(&second_addr, "GET", &format!("/runs/{run_id}"), None);
-    assert_eq!(waiting["status"], "awaiting_approval");
-    assert_eq!(llm_calls.load(Ordering::SeqCst), 1, "LLM effect replayed after restart");
-    let queued = http_json(
-        &second_addr,
+#[test]
+fn durable_agent_recovers_after_business_commit_before_effect_record() {
+    assert_durable_agent_commit_window(true);
+}
+
+#[test]
+fn durable_agent_recovers_rejection_after_business_commit_before_effect_record() {
+    assert_durable_agent_commit_window(false);
+}
+
+fn assert_durable_agent_commit_window(approved: bool) {
+    let source = include_str!("../../../examples/durable-agent/src/index.ts");
+    // Hold inside the effect after the business commit. The marker survives the
+    // kill so the identical persisted program can finish on its second attempt.
+    let needle = "    return result;\n  });";
+    assert_eq!(source.matches(needle).count(), 1);
+    let source = source.replace(needle, r#"
+    await tysel.sqlite.exec("CREATE TABLE IF NOT EXISTS experiment_crash_gate (run_id TEXT PRIMARY KEY)");
+    const gate = await tysel.sqlite.query("SELECT run_id FROM experiment_crash_gate WHERE run_id = ?", [input.runId]);
+    if (gate.length === 0) {
+      await tysel.sqlite.exec("INSERT INTO experiment_crash_gate VALUES (?)", [input.runId]);
+      await new Promise((resolve) => setTimeout(resolve, 60000));
+    }
+    return result;
+  });"#);
+    let source = source.replace("    const url = new URL(request.url);", r#"
+    const url = new URL(request.url);
+    if (url.pathname === "/experiment/gate") {
+      await tysel.sqlite.exec("CREATE TABLE IF NOT EXISTS experiment_crash_gate (run_id TEXT PRIMARY KEY)");
+      return Response.json(await tysel.sqlite.query("SELECT run_id FROM experiment_crash_gate"));
+    }"#);
+    let dir = durable_agent_fixture(&source);
+    let (llm_addr, llm_calls, _llm) = spawn_fake_llm();
+    let mut first = spawn_durable_agent(&dir, &llm_addr);
+    let (addr, log) = wait_listen(&mut first, Duration::from_secs(8));
+    let started = http_json(&addr, "POST", "/runs", Some(r#"{"customerId":"crash-window"}"#));
+    let run_id = started["runId"].as_str().expect("runId");
+    let task_id =
+        tysel_task::TaskId(u128::from_str_radix(started["taskId"].as_str().unwrap(), 16).unwrap());
+    http_json(
+        &addr,
         "POST",
         &format!("/runs/{run_id}/approval"),
-        Some(r#"{"approved":true}"#),
+        Some(if approved { r#"{"approved":true}"# } else { r#"{"approved":false}"# }),
     );
-    assert_eq!(queued["status"], "approval_queued");
-
-    let started_wait = std::time::Instant::now();
-    let completed = loop {
-        let run = http_json(&second_addr, "GET", &format!("/runs/{run_id}"), None);
-        if run["status"] == "completed" {
-            break run;
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let gate = http_json(&addr, "GET", "/experiment/gate", None);
+        if gate.as_array().is_some_and(|rows| !rows.is_empty()) {
+            break;
         }
-        assert!(started_wait.elapsed() < Duration::from_secs(5), "run did not complete: {run}");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "business write not reached: {}",
+            log.lock().unwrap()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let committed = http_json(&addr, "GET", &format!("/runs/{run_id}"), None);
+    first.kill().unwrap();
+    first.wait().unwrap();
+    assert_eq!(committed["saveCount"], 1);
+    assert_eq!(committed["status"], if approved { "completed" } else { "rejected" });
+    let store = tysel_durable::SqliteStore::open(dir.join("data/durable-events.db")).unwrap();
+    let history = store.load_history(task_id).unwrap();
+    assert!(history.events.iter().any(|event| event.key == "draft-with-llm"));
+    assert!(
+        !history.events.iter().any(|event| event.key == "save-result"),
+        "kill must precede the effect record"
+    );
+    assert!(store.completion(task_id).unwrap().is_none());
+
+    let mut second = spawn_durable_agent(&dir, &llm_addr);
+    let (addr, log) = wait_listen(&mut second, Duration::from_secs(8));
+    // Recovery waits for the crashed execution's original lease to expire.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(completion) = store.completion(task_id).unwrap() {
+            let history = store.load_history(task_id).unwrap();
+            let effect = history
+                .events
+                .iter()
+                .find(|event| event.key == "save-result")
+                .expect("completion must include the save effect");
+            assert_eq!(effect.payload, committed["result"]);
+            assert_eq!(completion.value, committed["result"]);
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "effect did not recover: {}",
+            log.lock().unwrap()
+        );
         thread::sleep(Duration::from_millis(25));
-    };
-    assert_eq!(completed["result"]["approved"], true);
-    assert_eq!(completed["saveCount"], 1);
-    assert_eq!(llm_calls.load(Ordering::SeqCst), 1, "LLM effect ran more than once");
+    }
+    let recovered = http_json(&addr, "GET", &format!("/runs/{run_id}"), None);
+    assert_eq!(recovered["saveCount"], 1, "retry must not duplicate the business write");
+    assert_eq!(recovered, committed, "retry must preserve the complete business record");
+    assert_eq!(llm_calls.load(Ordering::SeqCst), 1);
     second.kill().unwrap();
     second.wait().unwrap();
-
-    let mut third = spawn_durable_agent(&dir, &llm_addr);
-    let (third_addr, _third_log) = wait_listen(&mut third, Duration::from_secs(8));
-    let replayed = http_json(&third_addr, "GET", &format!("/runs/{run_id}"), None);
-    assert_eq!(replayed["status"], "completed");
-    assert_eq!(replayed["saveCount"], 1, "save-result effect replayed after restart");
-    assert_eq!(llm_calls.load(Ordering::SeqCst), 1);
-    third.kill().unwrap();
-    third.wait().unwrap();
-    llm_stop.store(true, Ordering::SeqCst);
 }
 
 #[test]
@@ -2314,7 +2479,24 @@ fn spawn_header_echo() -> (String, std::sync::Arc<std::sync::Mutex<String>>) {
     (format!("127.0.0.1:{}", addr.port()), seen)
 }
 
-fn spawn_fake_llm() -> (String, Arc<AtomicUsize>, Arc<AtomicBool>) {
+struct FakeLlm {
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for FakeLlm {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.thread.take() {
+            let joined = handle.join();
+            if !thread::panicking() {
+                joined.expect("fake LLM thread cleanup");
+            }
+        }
+    }
+}
+
+fn spawn_fake_llm() -> (String, Arc<AtomicUsize>, FakeLlm) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fake LLM");
     listener.set_nonblocking(true).unwrap();
     let addr = listener.local_addr().unwrap();
@@ -2322,10 +2504,12 @@ fn spawn_fake_llm() -> (String, Arc<AtomicUsize>, Arc<AtomicBool>) {
     let stop = Arc::new(AtomicBool::new(false));
     let server_calls = calls.clone();
     let server_stop = stop.clone();
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         while !server_stop.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    stream.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+                    stream.set_write_timeout(Some(Duration::from_secs(1))).unwrap();
                     let mut request = [0u8; 8192];
                     let _ = stream.read(&mut request);
                     server_calls.fetch_add(1, Ordering::SeqCst);
@@ -2343,21 +2527,33 @@ fn spawn_fake_llm() -> (String, Arc<AtomicUsize>, Arc<AtomicBool>) {
             }
         }
     });
-    (format!("127.0.0.1:{}", addr.port()), calls, stop)
+    (format!("127.0.0.1:{}", addr.port()), calls, FakeLlm { stop, thread: Some(handle) })
 }
 
-fn spawn_durable_agent(dir: &std::path::Path, llm_addr: &str) -> std::process::Child {
-    Command::new(cli_exe())
-        .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
-        .env("TYSEL_LLM_ENDPOINT", format!("http://{llm_addr}/v1/responses"))
-        .env("TYSEL_LLM_MODEL", "demo-model")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn durable agent")
+fn spawn_durable_agent(dir: &std::path::Path, llm_addr: &str) -> ManagedChild {
+    ManagedChild::spawn(
+        Command::new(cli_exe())
+            .args(["run", "--manifest", dir.join("tysel.toml").to_str().unwrap()])
+            .env("TYSEL_LLM_ENDPOINT", format!("http://{llm_addr}/v1/responses"))
+            .env("TYSEL_LLM_MODEL", "demo-model")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        "durable agent",
+    )
 }
 
 fn http_json(addr: &str, method: &str, path: &str, body: Option<&str>) -> serde_json::Value {
+    let (status, value) = http_json_response(addr, method, path, body);
+    assert!(status == 200 || status == 202, "HTTP {status}: {value}");
+    value
+}
+
+fn http_json_response(
+    addr: &str,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> (u16, serde_json::Value) {
     let body = body.unwrap_or("");
     let mut stream = TcpStream::connect(addr).expect("connect");
     let request = format!(
@@ -2368,13 +2564,17 @@ fn http_json(addr: &str, method: &str, path: &str, body: Option<&str>) -> serde_
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     let (head, body) = response.split_once("\r\n\r\n").expect("HTTP response");
-    assert!(head.contains(" 200 ") || head.contains(" 202 "), "{response}");
+    let status = head.split_whitespace().nth(1).expect("HTTP status").parse().unwrap();
     let body = if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
         decode_chunked(body)
     } else {
         body.to_owned()
     };
-    serde_json::from_str(&body).unwrap_or_else(|error| panic!("invalid JSON {error}: {response}"))
+    (
+        status,
+        serde_json::from_str(&body)
+            .unwrap_or_else(|error| panic!("invalid JSON {error}: {response}")),
+    )
 }
 
 fn decode_chunked(mut encoded: &str) -> String {

@@ -114,10 +114,13 @@ const agent = async (ctx: DurableContext, input: AgentInput) => {
     savedAt: ctx.now().toISOString(),
   };
   await ctx.effect("save-result", async () => {
+    // The business commit can survive a crash before the effect is recorded.
+    // Use run_id as the idempotency key and guard the write in the same SQL
+    // statement, so retrying this effect cannot overwrite a saved decision.
     await tysel.sqlite.exec(
       `UPDATE durable_agent_runs
           SET status = ?, result_json = ?, save_count = save_count + 1, updated_at = ?
-        WHERE run_id = ?`,
+        WHERE run_id = ? AND result_json IS NULL`,
       [
         result.approved ? "completed" : "rejected",
         JSON.stringify(result),
@@ -169,8 +172,19 @@ export default {
       if (run === null || run.task_id === null) {
         return Response.json({ error: "run not found" }, { status: 404 });
       }
-      const body = (await request.json()) as { approved?: unknown };
-      if (typeof body.approved !== "boolean") {
+      if (run.status !== "awaiting_approval") {
+        return Response.json(
+          { error: "run is not awaiting approval", status: run.status },
+          { status: 409 },
+        );
+      }
+      let body: { approved?: unknown } | null;
+      try {
+        body = await request.json();
+      } catch {
+        return Response.json({ error: "approval must be valid JSON" }, { status: 400 });
+      }
+      if (body === null || typeof body !== "object" || typeof body.approved !== "boolean") {
         return Response.json({ error: "approved must be a boolean" }, { status: 400 });
       }
       runtime.durable.sendSignal(run.task_id, "approval", { approved: body.approved });

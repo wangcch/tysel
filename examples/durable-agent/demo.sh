@@ -91,7 +91,7 @@ curl --silent --fail \
   --data '{"approved":true}'
 echo
 
-echo "5/5 Waiting for the replayed task to save its result exactly once"
+echo "5/5 Waiting for the resumed task to finish with saveCount=1"
 for _ in {1..100}; do
   current="$(curl --silent --fail "$base_url/runs/$run_id")"
   status="$(printf '%s\n' "$current" \

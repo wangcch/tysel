@@ -1,0 +1,8 @@
+{
+  "adapterOrigin": "http://127.0.0.1:9000",
+  "adapterId": "local-ticket-fixture-v1",
+  "customers": [
+    {"id": "customer-a", "token": "demo-a", "tickets": [{"id": "a-01", "priority": 3}]},
+    {"id": "customer-b", "token": "demo-b", "tickets": [{"id": "b-01", "priority": 3}]}
+  ]
+}

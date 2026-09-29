@@ -38,6 +38,16 @@ class Case:
 def cases_for(suite):
     cases = [Case("workflows", "tests/workflows/run.py",
                   arguments=("--output", "workflow-report.json"))]
+    cases.append(Case("agent-triage", "tests/acceptance/agent_triage.py",
+                      arguments=("--output", "agent-triage-report.json")))
+    cases.append(Case("agent-triage-recovery", "tests/acceptance/agent_triage_recovery.py",
+                      timeout=360, arguments=("--output", "agent-triage-recovery-report.json")))
+    cases.append(Case("agent-triage-adversarial", "tests/acceptance/agent_triage_adversarial.py",
+                      timeout=360, arguments=("--output", "agent-triage-adversarial-report.json")))
+    cases.append(Case("agent-triage-deployment", "tests/acceptance/agent_triage_deployment.py",
+                      timeout=360, arguments=("--output", "agent-triage-deployment-report.json")))
+    cases.append(Case("agent-triage-initialization", "tests/acceptance/agent_triage_initialization.py",
+                      timeout=120, arguments=("--output", "agent-triage-initialization-report.json")))
     cases.extend([
         Case("http-runtime-run", "tests/p1/acceptance.py", environment={"TYSEL_P1_USE_RUN": "1"}),
         Case("http-runtime-standalone", "tests/p1/acceptance.py"),

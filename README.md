@@ -96,6 +96,7 @@ or a general-purpose JavaScript toolchain is the primary requirement.
 - **Durable LLM workflow** — [Durable agent](examples/durable-agent)
 - **MCP tool with a brokered secret** — [MCP tool](examples/mcp-tool)
 - **Isolated third-party code** — [Isolated plugin](examples/isolated-plugin)
+- **Bounded ticket agent with customer isolation** — [Agent triage](examples/agent-triage)
 - **Rust or Go Wasm task** — [Wasm Component guides](docs/reference/component/index.md)
 
 Browse the complete [example gallery](docs/guides/examples.md) for filesystem,

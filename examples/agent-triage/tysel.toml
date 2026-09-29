@@ -1,0 +1,31 @@
+schema_version = 1
+
+[app]
+name = "agent-triage"
+entry = "src/index.ts"
+profile = "service"
+
+[server]
+listen = "127.0.0.1:0"
+# Eight dispatches may wait on I/O; leave one isolate for admission/status.
+workers = 9
+
+[permissions]
+fetch = ["127.0.0.1"]
+fs_read = ["./config"]
+secrets = ["TRIAGE_FIXTURE_TOKEN"]
+
+[limits]
+memory_mb = 32
+cpu_ms_per_turn = 50
+request_timeout_ms = 40000
+max_in_flight = 32
+max_request_mb = 1
+max_response_mb = 1
+
+[durable]
+store = "sqlite"
+path = "./data/jobs.db"
+
+[tasks.verify]
+steps = [["check"]]

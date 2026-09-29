@@ -44,6 +44,46 @@ fn isolated_plugin_enforces_profile_and_recovers() {
         );
     }
 
+    // A trusted caller holds the full record and projects only the fields the
+    // plugin needs. No credential or authority crosses this request boundary.
+    let record = serde_json::json!({
+        "customerId": "customer-42", "name": "Acme", "openTickets": 3,
+        "email": "private@example.test", "apiToken": RAW_SECRET,
+    });
+    let snapshot = serde_json::json!({
+        "customerId": record["customerId"], "name": record["name"],
+        "openTickets": record["openTickets"],
+    })
+    .to_string();
+    assert!(!snapshot.contains(RAW_SECRET));
+    assert!(!snapshot.contains("private@example.test"));
+    let (status, summary) = http_request_json(&addr, "POST", "/summarize", &snapshot);
+    assert_eq!(status, 200, "{summary}");
+    assert_eq!(
+        summary,
+        serde_json::json!({
+            "customerId": "customer-42",
+            "summary": "Acme has 3 open support tickets.",
+            "needsAttention": true,
+        })
+    );
+    // An ID alone cannot cause the isolated plugin to look up host data.
+    for invalid in [
+        r#"{"customerId":"customer-42"}"#.to_owned(),
+        "null".to_owned(),
+        "{".to_owned(),
+        r#"{"customerId":"c","name":"Acme","openTickets":-1}"#.to_owned(),
+        r#"{"customerId":"c","name":"Acme","openTickets":1.5}"#.to_owned(),
+        r#"{"customerId":"c","name":"Acme","openTickets":10001}"#.to_owned(),
+        r#"{"customerId":"c","name":"Acme","openTickets":3,"extra":true}"#.to_owned(),
+    ] {
+        let (status, error) = http_request_json(&addr, "POST", "/summarize", &invalid);
+        assert_eq!(status, 400, "{error}");
+        assert!(!error.to_string().contains(RAW_SECRET));
+    }
+    let (status, _) = http_json(&addr, "/summarize");
+    assert_eq!(status, 405);
+
     // The CLI owns one long-lived HTTP worker after task inspection has settled.
     let original = wait_for_worker(child.id(), None, Duration::from_secs(5));
     let status = Command::new("kill")
@@ -66,6 +106,112 @@ fn isolated_plugin_enforces_profile_and_recovers() {
     assert_eq!(recovered["plugin"], "echo");
     let replacement = wait_for_worker(child.id(), Some(original), Duration::from_secs(5));
     assert_ne!(replacement, original);
+    let (status, after_restart) = http_request_json(&addr, "POST", "/summarize", &snapshot);
+    assert_eq!(status, 200);
+    assert_eq!(after_restart, summary);
+    let (status, denied) = http_json(&addr, "/probe/fetch");
+    assert_eq!(status, 403);
+    assert_eq!(denied["denied"], true);
+}
+
+// Trusted test caller: authorization comes from its own customer scope, never
+// from a customer ID, URL, or grant supplied by the plugin.
+struct TicketCaller {
+    remaining: usize,
+    reads: usize,
+}
+
+impl TicketCaller {
+    fn lookup(&mut self, request: &serde_json::Value) -> Result<serde_json::Value, &'static str> {
+        let fields = request.as_object().ok_or("invalid operation")?;
+        if fields.len() != 3 || request["kind"] != "lookup" || request["operation"] != "ticket.read"
+        {
+            return Err("invalid operation");
+        }
+        let id = request["ticketId"].as_str().ok_or("invalid ticket")?;
+        // These two records are the complete authorized scope for customer-42.
+        let subject = match id {
+            "ticket-low" => "Update contact details",
+            "ticket-urgent" => "Checkout unavailable",
+            _ => return Err("ticket outside customer scope"),
+        };
+        if self.remaining == 0 {
+            return Err("lookup budget exhausted");
+        }
+        self.remaining -= 1;
+        self.reads += 1;
+        // The real adapter would access its data source here. Only the selected
+        // fields are returned; credentials and private notes stay with caller.
+        Ok(serde_json::json!({"ticketId": id, "subject": subject}))
+    }
+}
+
+#[test]
+fn isolated_ticket_caller_rejects_untrusted_operations() {
+    let mut caller = TicketCaller { remaining: 1, reads: 0 };
+    for forged in [
+        serde_json::json!({"kind":"lookup","operation":"ticket.delete","ticketId":"ticket-urgent"}),
+        serde_json::json!({"kind":"lookup","operation":"ticket.read","ticketId":"other-customer-ticket"}),
+        serde_json::json!({"kind":"lookup","operation":"ticket.read","ticketId":"ticket-urgent","url":"https://example.test"}),
+        serde_json::json!({"kind":"lookup","operation":"ticket.read","ticketId":null}),
+    ] {
+        assert!(caller.lookup(&forged).is_err());
+    }
+    assert_eq!(caller.reads, 0, "rejection must precede data access");
+    let valid =
+        serde_json::json!({"kind":"lookup","operation":"ticket.read","ticketId":"ticket-urgent"});
+    assert!(caller.lookup(&valid).is_ok());
+    assert_eq!(caller.lookup(&valid), Err("lookup budget exhausted"));
+    assert_eq!(caller.reads, 1);
+}
+
+#[test]
+fn isolated_plugin_requests_scoped_data_across_worker_restart() {
+    let manifest = example_manifest("isolated-plugin");
+    let mut child = ManagedChild::spawn(
+        Command::new(cli_exe())
+            .args(["run", "--manifest", manifest.to_str().unwrap()])
+            .env("TYSEL_WORKER", ensure_worker())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+        "isolated triage experiment",
+    );
+    let (addr, _log) = wait_listen(&mut child, Duration::from_secs(8));
+    let mut snapshot = serde_json::json!({"customerId":"customer-42", "tickets":[
+        {"id":"ticket-low","priority":0}, {"id":"ticket-urgent","priority":3}
+    ]});
+    let (status, operation) = http_request_json(&addr, "POST", "/triage", &snapshot.to_string());
+    assert_eq!(status, 200);
+    assert_eq!(
+        operation,
+        serde_json::json!({"kind":"lookup","operation":"ticket.read","ticketId":"ticket-urgent"})
+    );
+    let mut caller = TicketCaller { remaining: 1, reads: 0 };
+    snapshot["detail"] = caller.lookup(&operation).unwrap();
+    let original = wait_for_worker(child.id(), None, Duration::from_secs(5));
+    assert!(
+        Command::new("kill").args(["-KILL", &original.to_string()]).status().unwrap().success()
+    );
+    wait_for_worker_exit(original, Duration::from_secs(5));
+    let (status, done) = http_request_json(&addr, "POST", "/triage", &snapshot.to_string());
+    assert_eq!(status, 200);
+    // The caller accepts only a final result at this stage, never another lookup.
+    assert_eq!(
+        done,
+        serde_json::json!({"kind":"done","customerId":"customer-42", "summary":"Prioritize ticket-urgent: Checkout unavailable"})
+    );
+    assert_eq!(caller.reads, 1);
+    assert_ne!(wait_for_worker(child.id(), Some(original), Duration::from_secs(5)), original);
+    let (status, denied) = http_json(&addr, "/probe/fetch");
+    assert_eq!(status, 403);
+    assert_eq!(denied["denied"], true);
+
+    snapshot["detail"]["ticketId"] = serde_json::json!("ticket-low");
+    assert_eq!(http_request_json(&addr, "POST", "/triage", &snapshot.to_string()).0, 400);
+    let empty = r#"{"customerId":"customer-42","tickets":[]}"#;
+    let (status, done) = http_request_json(&addr, "POST", "/triage", empty);
+    assert_eq!(status, 200);
+    assert_eq!(done["kind"], "done");
 }
 
 #[test]
@@ -134,8 +280,16 @@ fn workspace_root() -> PathBuf {
 }
 
 fn http_json(addr: &str, path: &str) -> (u16, serde_json::Value) {
+    http_request_json(addr, "GET", path, "")
+}
+
+fn http_request_json(addr: &str, method: &str, path: &str, body: &str) -> (u16, serde_json::Value) {
     let mut stream = TcpStream::connect(addr).expect("connect to example");
-    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
     stream.write_all(request.as_bytes()).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();

@@ -12,6 +12,15 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  examples/agent-triage:
+    devDependencies:
+      '@tysel/types':
+        specifier: workspace:*
+        version: link:../../packages/tysel-types
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   examples/durable-agent:
     devDependencies:
       '@tysel/types':

@@ -184,7 +184,7 @@ jobs:
           bash .github/scripts/test-container-example.sh
       - name: Run deployment and recovery smoke gates
         id: acceptance
-        timeout-minutes: 12
+        timeout-minutes: 15
         run: >-
           python3 tests/acceptance/run.py --suite smoke
           --bin-dir target/debug --profile debug --target linux-x64
@@ -289,6 +289,25 @@ jobs:
       - run: cargo test --locked -p tysel-engine-wasm --all-targets
       - run: cargo test --locked -p tysel-isolate --all-targets
       - run: cargo test --locked -p tysel-cap-fs --all-targets
+      - name: Build matching tools for packaged Agent deployment
+        env:
+          TYSEL_SOURCE_COMMIT: ${{ github.sha }}
+        run: cargo build --locked -p tysel-cli -p tysel-runtime -p tysel-isolate --bins
+      - name: Validate Agent initialization, packaged deployment and sandbox failures
+        id: agent-deployment
+        timeout-minutes: 8
+        run: >-
+          python3 tests/acceptance/run.py --suite smoke --case agent-triage-deployment --case agent-triage-initialization
+          --bin-dir target/debug --profile debug --target linux-arm64
+          --require-build-commit --output target/agent-deployment-arm64
+      - name: Retain packaged Agent deployment evidence
+        if: ${{ always() && steps.agent-deployment.outcome != 'skipped' && steps.agent-deployment.outcome != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-deployment-linux-arm64
+          path: target/agent-deployment-arm64
+          if-no-files-found: error
+          retention-days: 30
 
   javascript:
     runs-on: ubuntu-latest
