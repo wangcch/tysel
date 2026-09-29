@@ -49,13 +49,29 @@ pub(crate) fn io_handle() -> Handle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OpId(pub u64);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RedirectMode {
+    Follow,
+    Error,
+    Manual,
+}
+
+#[derive(Debug)]
+pub struct FetchRequest {
+    pub url: String,
+    pub method: String,
+    pub headers_json: String,
+    pub body: Bytes,
+    pub redirect: RedirectMode,
+}
+
 #[derive(Debug)]
 pub enum IoRequest {
     Sleep { id: OpId, millis: u64 },
     Echo { id: OpId, value: String },
     SecretRef { id: OpId, name: String },
     ReadBody { id: OpId },
-    HttpGet { id: OpId, url: String, method: String, headers_json: String, body: Bytes },
+    HttpGet { id: OpId, request: FetchRequest },
     HttpRead { id: OpId, body_id: u64 },
     ResponseClosed { id: OpId, tx: mpsc::Sender<Vec<u8>>, stop: tokio::sync::oneshot::Receiver<()> },
     ResponseWrite { id: OpId, tx: mpsc::Sender<Vec<u8>>, bytes: Vec<u8> },
@@ -85,8 +101,11 @@ impl IoRequest {
         let buffers = match self {
             Self::Echo { value, .. } => value.capacity(),
             Self::SecretRef { name, .. } => name.capacity(),
-            Self::HttpGet { url, method, headers_json, body, .. } => {
-                url.capacity() + method.capacity() + headers_json.capacity() + body.len()
+            Self::HttpGet { request, .. } => {
+                request.url.capacity()
+                    + request.method.capacity()
+                    + request.headers_json.capacity()
+                    + request.body.len()
             }
             Self::ResponseWrite { bytes, .. } => bytes.capacity(),
             Self::WsSend { data, .. } | Self::WsClientSend { data, .. } => data.capacity(),
@@ -1059,18 +1078,9 @@ async fn execute(
             result: read_http_chunk_interruptible(&slots.outbound, body_id, &cancel, deadline)
                 .await,
         },
-        IoRequest::HttpGet { id, url, method, headers_json, body } => IoCompletion {
+        IoRequest::HttpGet { id, request } => IoCompletion {
             id,
-            result: outbound_fetch(
-                &method,
-                &url,
-                &headers_json,
-                body,
-                cancel,
-                deadline,
-                slots.outbound,
-            )
-            .await,
+            result: outbound_fetch(request, cancel, deadline, slots.outbound).await,
         },
         IoRequest::WsRead { id } => {
             IoCompletion { id, result: read_chunk(&slots.ws_in, &cancel, deadline).await }
@@ -1337,23 +1347,26 @@ struct Hop {
 }
 
 async fn outbound_fetch(
-    method: &str,
-    url: &str,
-    headers_json: &str,
-    body: Bytes,
+    request: FetchRequest,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
     outbound: StreamRegistry,
 ) -> Result<Value, String> {
-    let mut method = normalize_method(method)?;
-    let mut headers = crate::fetch_policy::expand_headers_json(headers_json)?;
+    let FetchRequest { method, url, headers_json, body, redirect } = request;
+    let mut method = normalize_method(&method)?;
+    let mut headers = crate::fetch_policy::expand_headers_json(&headers_json)?;
     let mut body = request_body(&method, body)?;
-    let mut url = url.to_owned();
+    let mut url = url;
     for _ in 0..=MAX_REDIRECTS {
         let hop =
             fetch_hop(&method, &url, &headers.headers, body.clone(), &cancel, deadline).await?;
         let status = hop.response.status();
-        if status.is_redirection()
+        let is_redirect = matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308);
+        if is_redirect && redirect == RedirectMode::Error {
+            return Err("HTTP redirect rejected by redirect mode".into());
+        }
+        if is_redirect
+            && redirect == RedirectMode::Follow
             && let Some(location) = hop
                 .response
                 .headers()

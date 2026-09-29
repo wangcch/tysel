@@ -45,6 +45,13 @@ Fetch and streamed response reads expose cancellable native operation handles
 internally. AbortSignal cancellation reaches the Reactor token and releases the
 underlying request/body stream; the internal handles are not application APIs.
 
+Request/fetch redirect modes propagate through that host boundary. `follow`
+keeps the bounded redirect policy; `error` rejects the first redirect without
+sending another request; `manual` exposes the original status, headers and body.
+The manual response is the server-side subset, not a browser opaque-redirect
+response. Request copies/clones preserve the mode, and fetch options may override
+it. Invalid modes fail before an outbound operation is submitted.
+
 The URL and event implementations intentionally cover Tysel's tested subset of
 the Web Platform rather than claiming full browser conformance. Extend authored
 sources and QuickJS conformance tests together when adding supported behavior.

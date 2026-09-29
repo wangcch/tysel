@@ -2389,6 +2389,145 @@ async fn fetch_follows_http_redirect() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn fetch_redirect_modes_bound_physical_requests() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    let addr = spawn_origin(move |req| {
+        observed.fetch_add(1, AtomicOrdering::SeqCst);
+        let first = req.uri().path() == "/go";
+        async move {
+            let response = if first {
+                Response::builder().status(302).header("location", "/done")
+            } else {
+                Response::builder().status(200)
+            };
+            Ok::<_, Infallible>(
+                response.body(http_body_util::Full::new(Bytes::from_static(b"ok"))).unwrap(),
+            )
+        }
+    });
+    for (mode, expected, count) in
+        [("error", "rejected", 1), ("manual", "302:ok", 1), ("follow", "200:ok", 2)]
+    {
+        requests.store(0, AtomicOrdering::SeqCst);
+        let source = format!(
+            r#"(async () => {{
+            const request = new Request("http://{addr}/go", {{redirect:"{mode}"}}).clone();
+            try {{ const response = await fetch(request); return response.status + ":" + await response.text(); }}
+            catch (error) {{ if (!String(error).includes("redirect")) throw error; return "rejected"; }}
+        }})()"#
+        );
+        let result =
+            tokio::task::spawn_blocking(move || eval(&source, config())).await.unwrap().unwrap();
+        assert_eq!(result, Value::String(expected.into()), "{mode}");
+        assert_eq!(requests.load(AtomicOrdering::SeqCst), count, "{mode}");
+    }
+    requests.store(0, AtomicOrdering::SeqCst);
+    let source = format!(
+        r#"(async () => {{
+        for (const redirect of ["invalid", null, ""]) {{
+            try {{ await fetch("http://{addr}/go", {{redirect}}); return false; }}
+            catch (error) {{ if (!(error instanceof TypeError)) return false; }}
+        }}
+        const request = new Request("http://{addr}/go", {{redirect:"follow"}});
+        const response = await fetch(request, {{redirect:"manual"}});
+        return response.status === 302 && await response.text() === "ok";
+    }})()"#
+    );
+    let result =
+        tokio::task::spawn_blocking(move || eval(&source, config())).await.unwrap().unwrap();
+    assert_eq!(result, Value::Bool(true));
+    assert_eq!(requests.load(AtomicOrdering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_redirect_modes_without_location() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    let addr = spawn_origin(move |req| {
+        observed.fetch_add(1, AtomicOrdering::SeqCst);
+        let status = req.uri().path().trim_start_matches('/').parse::<u16>().unwrap();
+        async move {
+            Ok::<_, Infallible>(
+                Response::builder()
+                    .status(status)
+                    .body(http_body_util::Full::new(Bytes::from_static(b"ok")))
+                    .unwrap(),
+            )
+        }
+    });
+    for status in [301, 302, 303, 307, 308] {
+        for mode in ["error", "manual", "follow"] {
+            requests.store(0, AtomicOrdering::SeqCst);
+            let source = format!(
+                r#"(async () => {{
+                    try {{
+                        const response = await fetch("http://{addr}/{status}", {{redirect:"{mode}"}});
+                        return response.status + ":" + await response.text();
+                    }} catch (error) {{
+                        if (!String(error).includes("redirect")) throw error;
+                        return "rejected";
+                    }}
+                }})()"#
+            );
+            let result = tokio::task::spawn_blocking(move || eval(&source, config()))
+                .await
+                .unwrap()
+                .unwrap();
+            let expected = if mode == "error" { "rejected".into() } else { format!("{status}:ok") };
+            assert_eq!(result, Value::String(expected), "{status} {mode}");
+            assert_eq!(requests.load(AtomicOrdering::SeqCst), 1, "{status} {mode}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fetch_redirect_error_does_not_require_text_location() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    let addr = spawn_origin(move |req| {
+        observed.fetch_add(1, AtomicOrdering::SeqCst);
+        let status = req.uri().path().trim_start_matches('/').parse::<u16>().unwrap();
+        async move {
+            Ok::<_, Infallible>(
+                Response::builder()
+                    .status(status)
+                    .header("location", hyper::header::HeaderValue::from_bytes(b"/\xff").unwrap())
+                    .body(http_body_util::Full::new(Bytes::from_static(b"")))
+                    .unwrap(),
+            )
+        }
+    });
+    for (status, expected) in [
+        (200, "200"),
+        (301, "rejected"),
+        (302, "rejected"),
+        (303, "rejected"),
+        (304, "304"),
+        (307, "rejected"),
+        (308, "rejected"),
+    ] {
+        requests.store(0, AtomicOrdering::SeqCst);
+        let source = format!(
+            r#"(async () => {{
+                try {{
+                    const response = await fetch("http://{addr}/{status}", {{redirect:"error"}});
+                    await response.text();
+                    return String(response.status);
+                }} catch (error) {{
+                    if (!String(error).includes("redirect")) throw error;
+                    return "rejected";
+                }}
+            }})()"#
+        );
+        let result =
+            tokio::task::spawn_blocking(move || eval(&source, config())).await.unwrap().unwrap();
+        assert_eq!(result, Value::String(expected.into()), "{status}");
+        assert_eq!(requests.load(AtomicOrdering::SeqCst), 1, "{status}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn fetch_exposes_response_headers() {
     let addr = serve_header("x-request-id", "abc", Bytes::from_static(b"ok"));
     let url = format!("http://{addr}/");

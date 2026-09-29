@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 use tysel_engine::{InterruptReason, Value};
 
 use crate::DurableSession;
-use crate::queue::{IoHandle, IoRequest, OpId};
+use crate::queue::{FetchRequest, IoHandle, IoRequest, OpId, RedirectMode};
 
 const PENDING: &str = "__tysel_pending";
 const MAX_REDIS_TTL_SECONDS: f64 = 31_536_000.0;
@@ -125,7 +125,18 @@ fn install_inner(
         "_httpStart",
         Function::new(
             ctx.clone(),
-            move |ctx, url: String, method: String, headers_json: String, body: TypedArray<u8>| {
+            move |ctx,
+                  url: String,
+                  method: String,
+                  headers_json: String,
+                  body: TypedArray<u8>,
+                  redirect: rquickjs::function::Opt<String>| {
+                let redirect = match redirect.0.as_deref().unwrap_or("follow") {
+                    "follow" => RedirectMode::Follow,
+                    "error" => RedirectMode::Error,
+                    "manual" => RedirectMode::Manual,
+                    _ => return Err(Exception::throw_type(&ctx, "invalid redirect mode")),
+                };
                 io_http_start
                     .check_capacity(
                         body.len() + url.capacity() + method.capacity() + headers_json.capacity(),
@@ -137,10 +148,7 @@ fn install_inner(
                 );
                 submit_cancellable(ctx, &io_http_start, |id| IoRequest::HttpGet {
                     id,
-                    url,
-                    method,
-                    headers_json,
-                    body,
+                    request: FetchRequest { url, method, headers_json, body, redirect },
                 })
             },
         )?,

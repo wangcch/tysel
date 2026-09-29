@@ -48,6 +48,9 @@
     if (signal && signal.aborted) throw abortReason(signal);
     const url = typeof input === "string" ? input : input.url;
     const method = String(init.method || (input && input.method) || "GET").toUpperCase();
+    const requestedRedirect = init.redirect;
+    const redirect = String(requestedRedirect === undefined ? ((input && input.redirect) ?? "follow") : requestedRedirect);
+    if (!["follow", "error", "manual"].includes(redirect)) throw new TypeError("invalid redirect mode");
     const headers = new Headers(init.headers || (input && input.headers));
     const pairs = [];
     headers.forEach((value, key) => pairs.push([key, value]));
@@ -55,7 +58,7 @@
     if (init.body != null) body = globalThis.__tysel_bodyBytes(init.body);
     else if (input instanceof Request) body = await globalThis.__tysel_consumeBytes(input);
     else body = globalThis.__tysel_bodyBytes(input && typeof input !== "string" ? input.body : null);
-    const operation = tysel._httpStart(String(url), method, JSON.stringify(pairs), body);
+    const operation = tysel._httpStart(String(url), method, JSON.stringify(pairs), body, redirect);
     const started = await awaitOperation(operation, signal);
     let headerPairs = [];
     try { headerPairs = JSON.parse(started.headers || "[]"); } catch (_) {}

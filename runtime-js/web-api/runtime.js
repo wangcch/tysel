@@ -783,6 +783,10 @@ SOFTWARE.
   class Request {
     constructor(input, init) {
       init = init || {};
+      const requestedRedirect = init.redirect;
+      const redirect = String(requestedRedirect === undefined ? ((input && input.redirect) ?? "follow") : requestedRedirect);
+      if (!["follow", "error", "manual"].includes(redirect)) throw new TypeError("invalid redirect mode");
+      Object.defineProperty(this, "redirect", { value: redirect, enumerable: true });
       if (globalThis.__tysel_isReadableStream(init.body)) throw new TypeError("streaming uploads are not supported");
       if (typeof input === "string") {
         this.url = input;
@@ -825,6 +829,7 @@ SOFTWARE.
         headers: this.headers,
         body: this._body,
         signal: this.signal,
+        redirect: this.redirect,
       });
     }
   }

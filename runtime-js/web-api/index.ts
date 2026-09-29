@@ -112,6 +112,7 @@ export type TyselHeadersInit =
 export type TyselBodyInit = string | ArrayBuffer | ArrayBufferView;
 
 export interface TyselRequestInit {
+  redirect?: "follow" | "error" | "manual";
   method?: string;
   headers?: TyselHeadersInit;
   body?: TyselBodyInit | null;
@@ -132,6 +133,7 @@ export interface TyselBody {
 }
 
 export interface TyselRequest extends TyselBody {
+  readonly redirect: "follow" | "error" | "manual";
   readonly body: Streams.ReadableStream<Uint8Array> | null;
   readonly url: string;
   readonly method: string;
