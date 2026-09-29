@@ -14,6 +14,7 @@ not a substitute for the public API and operations contracts.
 8. [WIT capability ABI](008-wit-capability-abi.md)
 9. [No AOT requirement on the v1 path](009-no-aot-on-v1-path.md)
 10. [Static TypeScript frontend work in parallel](010-static-typescript-parallel.md)
+11. [Bounded Agent coordination stays in the application](011-bounded-agent-application.md)
 
 Start with the [architecture overview](../architecture/README.md) for the
 system boundaries and current implementation map.

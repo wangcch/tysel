@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-29T07:14:02.337608+00:00",
+  "scope": "Historical local Linux ARM64 Podman experiments; archived results do not certify the final submitted commit.",
+  "historyArchive": {
+    "path": "local-artifacts/agent-execution/history.tar.gz",
+    "sha256": "7eea4e5de97ab69800099c9df9a1fae622815d19f54d2d63e9dbb2d24efe57a7",
+    "bytes": 29298831,
+    "availability": "local-only; no shared download location has been published",
+    "originalEvidenceFiles": 1223,
+    "originalEvidenceBytes": 36852206,
+    "documentationSnapshots": 8,
+    "verifiedSourceFiles": 1231,
+    "nativeBinariesIncluded": false,
+    "manifestMember": "ARCHIVE-MANIFEST.json"
+  },
+  "datedDirectories": {
+    "2026-09-24": {
+      "files": 11,
+      "bytes": 38076
+    },
+    "2026-09-24-p2": {
+      "files": 9,
+      "bytes": 35897
+    },
+    "2026-09-24-p3": {
+      "files": 14,
+      "bytes": 58515
+    },
+    "2026-09-24-p4": {
+      "files": 18,
+      "bytes": 92473
+    },
+    "2026-09-24-p5": {
+      "files": 12,
+      "bytes": 438058
+    },
+    "2026-09-24-p51": {
+      "files": 67,
+      "bytes": 2192363
+    },
+    "2026-09-24-p52": {
+      "files": 56,
+      "bytes": 1758188
+    },
+    "2026-09-28-bootstrap-cache": {
+      "files": 118,
+      "bytes": 2362697,
+      "manifestSha256": "ecd3d5ead40a27323dea39ea2e1be0037c773a2629450da7da087d963e1e0ae1"
+    },
+    "2026-09-28-caller-assessment": {
+      "files": 4,
+      "bytes": 19746,
+      "manifestSha256": "6617ce69495ec67bcc5034949c64f39271f9850146e41d00c70112d5e1031130"
+    },
+    "2026-09-28-caller-optimization": {
+      "files": 190,
+      "bytes": 17137512,
+      "manifestSha256": "893bf92568303a9415ee8cae4cd3c64221576012628cf3217db875d4c6d1bc5f"
+    },
+    "2026-09-28-durable-tail": {
+      "files": 74,
+      "bytes": 2107587
+    },
+    "2026-09-28-o2": {
+      "files": 50,
+      "bytes": 610527
+    },
+    "2026-09-28-o3": {
+      "files": 42,
+      "bytes": 522273
+    },
+    "2026-09-28-o4": {
+      "files": 121,
+      "bytes": 3844398
+    },
+    "2026-09-28-o41": {
+      "files": 25,
+      "bytes": 2705831
+    },
+    "2026-09-28-review": {
+      "files": 14,
+      "bytes": 34398
+    },
+    "2026-09-28-runtime-v030": {
+      "files": 70,
+      "bytes": 432371
+    },
+    "2026-09-28-startup-validation": {
+      "files": 56,
+      "bytes": 512463,
+      "manifestSha256": "e792a868b9210088433a6f2c587eefc2617def121b575b2badf99e8acf4cbede"
+    },
+    "2026-09-29-diagnostic-cleanup": {
+      "files": 38,
+      "bytes": 298386,
+      "manifestSha256": "6d12dce63f42ff88e17a96aa77b75e1a1d527eb34c8ad0c02036a8692a5f3cda"
+    },
+    "2026-09-29-review-fixes": {
+      "files": 121,
+      "bytes": 1063963,
+      "manifestSha256": "948ffd9ff6935daad9efde77767d1c70d9a4ef43bed98ff117942548a53cefa6"
+    },
+    "2026-09-29-startup-cause": {
+      "files": 113,
+      "bytes": 586484,
+      "manifestSha256": "9ff23d5eb298f3fa7ec6872daa9ff7c9d6dcac9d3193411a0e733b7c1795ab37"
+    }
+  },
+  "selectedRecords": {
+    "2026-09-28-o4/retention.json": {
+      "bytes": 1294,
+      "sha256": "3487c304852f46429d85d2d3d6c93ac220727ced2f5ef943b68b9c998e6831f2"
+    },
+    "2026-09-28-o4/ab2-measurements.json.gz": {
+      "bytes": 1191417,
+      "sha256": "3e8fbb86429a1d9e001fbf535f3a25f66ccd416dd8353a2681eff2fd099289f2"
+    },
+    "2026-09-28-o4/ab1-measurements.json.gz": {
+      "bytes": 1174395,
+      "sha256": "fec4215262f1a072dd097454b7ba6e01a463a90950057b7ab0250aa813069b26"
+    },
+    "2026-09-28-bootstrap-cache/protocol.json": {
+      "bytes": 1368,
+      "sha256": "417ae788df31966e4ce21d9d4301bf4b696183d4d770c9f9176e47052e194b8b"
+    },
+    "2026-09-28-bootstrap-cache/summary.json": {
+      "bytes": 44603,
+      "sha256": "656bf50625f8f056b27e3f71324a14f5fa950fca4dd76e8dff1606f756ff7e72"
+    },
+    "2026-09-28-bootstrap-cache/retention.json": {
+      "bytes": 1296,
+      "sha256": "88adb40a88f73821cbb9bc1632bff83a87f293a98b5143749c9d7725a8ba54eb"
+    },
+    "2026-09-28-bootstrap-cache/binaries.json": {
+      "bytes": 852,
+      "sha256": "42253d14143e3c060fe99abab08694f86b85f928d35753b3324e1a178f5ddcbc"
+    },
+    "2026-09-28-bootstrap-cache/http-followup/summary.json": {
+      "bytes": 11114,
+      "sha256": "ec6fec12e028f3c0743551b8e0c6d103304b81ff4602a90790c933959038d9f0"
+    },
+    "2026-09-28-caller-optimization/retention.json": {
+      "bytes": 3210,
+      "sha256": "aef9946e366e47c253006e190dcca2f7b797121bfb6afe8e352b5698f2811c6a"
+    },
+    "2026-09-28-caller-optimization/paired-1/summary.json": {
+      "bytes": 4054,
+      "sha256": "8e71411db05c801667491939572df56d20fa4de5752550c3849587c107bb636a"
+    },
+    "2026-09-28-caller-optimization/long-memory-1/summary.json": {
+      "bytes": 4681,
+      "sha256": "9e532ee1a421e5ee2543ca9d20f0277961201b3195946f61be16ab76f5651581"
+    },
+    "2026-09-28-caller-optimization/matrix-1/measurements.json.gz": {
+      "bytes": 6251,
+      "sha256": "a9b28389b164a637c3d761ce9ef81d9a5eacf9a2a7d4ab1e33caff347becdfb5"
+    },
+    "2026-09-29-startup-cause/README.md": {
+      "bytes": 8258,
+      "sha256": "2cfdfd479434daa6056aae7179afcddc749e1a369eac755542acaf4e26287d8d"
+    },
+    "2026-09-29-review-fixes/README.md": {
+      "bytes": 5533,
+      "sha256": "f07d523ae085d0ece2f317ee6f92dcba8e9c3394aaebb12de5b0a0c352ae22de"
+    },
+    "2026-09-29-diagnostic-cleanup/README.md": {
+      "bytes": 3521,
+      "sha256": "c21d73750bbb0206acdbdd25490199b2fbf9be977d9c6d3bb59c19663c47abd5"
+    }
+  },
+  "stableInputs": {
+    "benchmarks/agent-triage/protocol-volume.json": {
+      "archiveMember": "docs/agent-execution-evidence/2026-09-24-p52/protocol-volume.json",
+      "bytes": 2087,
+      "sha256": "71229c2c1ab2bccc8e42d64f97b19ef7351ecc43e864e9f71516bb4d21faa8f2"
+    },
+    "benchmarks/agent-triage/storage-plan.json": {
+      "archiveMember": "docs/agent-execution-evidence/2026-09-24-p52/predeclared.json",
+      "bytes": 2606,
+      "sha256": "b282e30588c9a59f07fa08d7ea80a79221e42912cf519c899b5cef5f71fc5838"
+    }
+  },
+  "corrections": [
+    "The original caller matrix-1 failure occurred on the second snapshot startup; the older caller README incorrectly says first. The later startup-cause record corrects it without rewriting the original."
+  ],
+  "retentionPolicy": "Keep the archive and separately retained measured packages until a verified shared archival copy exists. CI consumes only committed fixtures and stable protocols."
+}

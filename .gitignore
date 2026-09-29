@@ -27,6 +27,11 @@ examples/*/data/
 
 # Test / bench artifacts
 /tmp
+/local-artifacts/
 __pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
 *.profraw
 *.profdata

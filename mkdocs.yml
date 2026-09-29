@@ -12,6 +12,9 @@ validation:
   unrecognized_links: warn
   anchors: warn
 exclude_docs: |
+  agent-execution-iteration-plan.md
+  agent-execution-handoff.md
+  agent-execution-improvement-plan.md
   website-plan.md
   documentation-roadmap.md
   editor-iteration-plan.md
@@ -91,6 +94,7 @@ nav:
       - Production: operations/production.md
       - Performance:
           - Overview: performance/README.md
+          - Agent iteration evidence: agent-execution-evidence/README.md
           - Redis: performance/redis.md
   - Internals:
       - Architecture: architecture/README.md
@@ -108,6 +112,7 @@ nav:
           - WIT capability ABI: adr/008-wit-capability-abi.md
           - No AOT requirement: adr/009-no-aot-on-v1-path.md
           - TypeScript frontend: adr/010-static-typescript-parallel.md
+          - Bounded Agent coordination: adr/011-bounded-agent-application.md
 markdown_extensions:
   - tables
   - fenced_code
